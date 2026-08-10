@@ -29,12 +29,19 @@ VITE_AGENTD_MOCK_MODE=true pnpm --filter @mobile-agent/web dev
 
 ## Pull requests
 
-1. Keep changes focused and explain the user-visible or architectural impact.
-2. Add or update table-driven tests for domain, application, adapter, and HTTP behavior.
-3. Add or update Storybook stories for meaningful view states.
-4. Update the architecture or security documentation when behavior or trust boundaries change.
-5. Run `pnpm audit:public`, `pnpm typecheck`, `pnpm test`, and `pnpm build` locally.
-6. Do not include generated output, local databases, logs, credentials, or machine-specific paths.
+All repository changes should be developed on a branch and merged through a pull request. Do not push directly to `main`.
+
+Pull request titles, descriptions, review replies, and linked issue references must be written in English. Keep the language clear and concise; code identifiers and command output may remain unchanged.
+
+1. Branch from the latest `main` and keep the branch focused.
+2. Explain the user-visible or architectural impact in English.
+3. Add or update table-driven tests for domain, application, adapter, and HTTP behavior.
+4. Add or update Storybook stories for meaningful view states.
+5. Update the architecture or security documentation when behavior or trust boundaries change.
+6. Run `pnpm audit:public`, `pnpm typecheck`, `pnpm test`, and `pnpm build` locally.
+7. Do not include generated output, local databases, logs, credentials, or machine-specific paths.
+
+The pull request should be ready for review before requesting merge. CI must pass, and author changes should be pushed as additional commits or a force-push to the same feature branch only; the target branch must not be updated directly.
 
 ## Agent plugins
 

@@ -1,6 +1,11 @@
+<!--
+  Pull request titles, descriptions, and review discussion must be written in English.
+  Open this pull request from a feature branch; do not target a direct push workflow.
+-->
+
 ## Summary
 
-<!-- What changed and why? -->
+<!-- What changed, why was it needed, and what is the user-visible impact? -->
 
 ## Verification
 

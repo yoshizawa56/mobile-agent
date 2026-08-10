@@ -1,36 +1,36 @@
 # Mobile Agent
 
-tmux上のエージェントやシェルを、iPhone向けに1ペイン単位で扱うためのモノレポです。
+Mobile Agent is a monorepo for operating tmux-hosted agents and shells one pane at a time from an iPhone.
 
-> **Pre-alpha:** 公開開発の初期段階です。設定・API・データ形式はまだ変更される可能性があります。現在のセキュリティ上の制約は [SECURITY.md](SECURITY.md) を確認してください。
+> **Pre-alpha:** This project is in the early stages of public development. Configuration, APIs, and data formats may change. See [SECURITY.md](SECURITY.md) for the current security boundaries and limitations.
 
 [![CI](https://github.com/yoshizawa56/mobile-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/yoshizawa56/mobile-agent/actions/workflows/ci.yml)
 
 ## OSS project files
 
 - [LICENSE](LICENSE): MIT License
-- [CONTRIBUTING.md](CONTRIBUTING.md): 開発環境、テスト、PRのルール
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): コミュニティ行動規範
-- [SECURITY.md](SECURITY.md): 脆弱性報告と現在のセキュリティ境界
+- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, testing, and pull request rules
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): community standards
+- [SECURITY.md](SECURITY.md): vulnerability reporting and current security boundaries
 
-公開前の追跡対象・未追跡ファイルを検査するには、次を実行します。
+Before publishing a branch or pull request, audit tracked and non-ignored files with:
 
 ```sh
 pnpm audit:public
 ```
 
-## 開発中の最小縦切り
+## Smallest vertical slice under development
 
-- `apps/agentd`: tmuxの対象paneへ`active-pane`付きでattachし、viewport leaseを管理しながら端末バイト列をWebSocketで中継
-- `apps/agentd`: HonoでHTTP APIを提供する常駐control-plane daemon
-- `apps/agent-cli`: SQLiteでagent lifecycleを管理する`agent` CLI
-- `apps/web`: xterm.jsで1ペインを描画し、端末サイズをagentdへ通知
-- `packages/agentd-client`: Hono RPC、Zod検証、agentd WebSocketをまとめたTypeScript client
-- `packages/domain`: Pane/Runの状態とagent待機状態のドメイン規則
-- `packages/application`: CLI/WebSocketが共有するUse Case/Port
-- `packages/persistence`: Drizzle + SQLiteのPane/Run/Audit/Workspace/Project/AgentSession永続化
-- `packages/agents`: AgentPlugin APIとshell plugin
-- `packages/protocol`: WebSocketとPane Board DTOをZodで定義
+- `apps/agentd`: attaches to the target tmux pane with `active-pane`, manages the viewport lease, and relays terminal bytes over WebSocket
+- `apps/agentd`: a long-running Hono control-plane daemon
+- `apps/agent-cli`: the `agent` CLI, with agent lifecycle state managed by SQLite
+- `apps/web`: renders one pane with xterm.js and sends terminal size changes to agentd
+- `packages/agentd-client`: the TypeScript client for Hono RPC, Zod validation, and the agentd terminal WebSocket
+- `packages/domain`: Pane/Run state and agent waiting-state rules
+- `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
+- `packages/persistence`: Drizzle + SQLite persistence for panes, runs, audits, workspaces, projects, and agent sessions
+- `packages/agents`: the AgentPlugin API and shell plugin
+- `packages/protocol`: Zod definitions for WebSocket and Pane Board DTOs
 
 ```sh
 mise install
@@ -38,41 +38,41 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`mise`はNode.js、pnpm、tmuxのツールチェーンを固定し、pnpmはJavaScript依存関係を`pnpm-lock.yaml`に固定します。
+`mise` pins the Node.js, pnpm, and tmux toolchain. pnpm pins JavaScript dependencies through `pnpm-lock.yaml`.
 
-依存関係を追加・更新するときは、npmのstable公開版と公式リリースを確認してから反映します。確認には`pnpm deps:check`を使います。alpha/beta/rcは原則採用しません。
+When adding or updating dependencies, verify the latest stable npm release and the project's official release information first. Use `pnpm deps:check` for the repository's dependency checks. Alpha, beta, and release-candidate versions are not used by default.
 
-agentdは`http://127.0.0.1:4317`でHTTP API、`ws://127.0.0.1:4317/terminal`で端末WebSocketを提供します。セッション一覧・ペイン一覧・セッション作成・ペイン作成はHTTP API、端末入出力とresizeはWebSocketを使います。agentdはtmux・agent plugin・SQLiteをホスト上で管理する常駐control-plane daemonです。
+agentd exposes an HTTP API at `http://127.0.0.1:4317` and a terminal WebSocket at `ws://127.0.0.1:4317/terminal`. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use WebSocket. agentd is the host-side control-plane daemon for tmux, agent plugins, and SQLite.
 
-HTTP APIは`createAgentdApp(deps)`でDIされるHono appから作られ、`ReturnType<typeof createAgentdApp>`を`AgentdApp`としてTypeScript clientへ共有します。Tailscale ServeとSSH port forwardingは同じagentdへ到達するための経路であり、Web側のAPI clientは経路を意識しません。
+The HTTP API is built from a dependency-injected Hono app returned by `createAgentdApp(deps)`. Its type, `ReturnType<typeof createAgentdApp>`, is shared with the TypeScript client as `AgentdApp`. Tailscale Serve and SSH port forwarding are connection routes to the same agentd instance; the web client does not need to know which route established the connection.
 
-ブラウザ版はTailscale Serve URLだけを接続設定として保存できます。秘密鍵やパスワードはブラウザへ保存しません。Storybookはモックデータで動き、通常のVite開発サーバーはagentdへ接続します。
+The browser build stores only a Tailscale Serve URL as its connection setting. It does not store private keys or passwords. Storybook runs with mock data, while the regular Vite development server connects to agentd.
 
 ```sh
 pnpm --filter @mobile-agent/web dev
-# agentdを使わず見た目だけ確認するとき
+# Use this mode to inspect the UI without agentd.
 VITE_AGENTD_MOCK_MODE=true pnpm --filter @mobile-agent/web dev
 ```
 
-Serve接続を使う場合はWeb画面の`settings`から、ホスト上で公開したServe URLを登録します。
+To use a Serve connection, register the Serve URL from the web app's `settings` screen after exposing the host-side service:
 
 ```sh
-agentd  # 127.0.0.1:4317で常駐
+agentd  # long-running service on 127.0.0.1:4317
 tailscale serve --bg 4317
 ```
 
-ブラウザ版の標準経路はHTTPS/WSSのTailscale Serveです。SSH踏み台経路はnative版の将来adapterとして設計だけを確保しており、現在のWeb bundleにはSSHや秘密鍵管理を含めません。
+The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
 
-Viteの開発proxyを別のagentdへ向ける場合は、`VITE_AGENTD_PROXY_TARGET`を指定します。SSH port forwardingをnative bridgeで開始した後は、同じ`AgentdConnection`へlocalhostのHTTP/WebSocket URLを渡します。
+To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.
 
-Storybookでは画面を単体で確認できます。Storybookは`0.0.0.0:6006`で起動し、Tailscale Serveの設定後は`https://<このMacのtailnet hostname>:8448/`で閲覧できます。
+Storybook can be used to inspect individual screens. It listens on `0.0.0.0:6006`; after configuring Tailscale Serve, open it at `https://<this-Mac's-tailnet-hostname>:8448/`.
 
 ```sh
 pnpm --filter @mobile-agent/web storybook
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8448 6006
 ```
 
-Viteの実アプリをtailnetから確認する場合は、ViteのHostチェックにtailnet hostnameを追加して別ポートへ公開します。既存のStorybook公開設定は残ります。
+To inspect the real app from the tailnet, add the tailnet hostname to Vite's host allow-list and expose a separate port. The existing Storybook Serve configuration can remain in place.
 
 ```sh
 VITE_AGENTD_PROXY_TARGET=http://127.0.0.1:4318 \
@@ -81,9 +81,9 @@ pnpm --filter @mobile-agent/web dev --host 127.0.0.1 --port 5227
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 5227
 ```
 
-## agent CLI
+## Agent CLI
 
-dotfiles側の`bin/agent`が持っていた実行ライフサイクルは、SQLiteを正規の状態源としてTypeScriptへ移植しています。旧`.state`ファイルは読みません。
+The lifecycle previously implemented by `bin/agent` in dotfiles has been migrated to TypeScript in this repository. SQLite is the canonical state source; the legacy `.state` format is intentionally not read.
 
 ```sh
 agent run codex --worktree review
@@ -96,13 +96,12 @@ agent project list
 agent doctor --verbose
 ```
 
-`--worktree`では`agent/<name>`ブランチを作成し、project定義の`agent/setup`・`agent/cleanup` hookを実行します。終了時に変更があるworktreeは確認後に削除し、Codexのmanaged Remote Controlを利用している場合はthreadの名前付け・archiveもCLIが管理します。
+With `--worktree`, the CLI creates an `agent/<name>` branch and runs the project-defined `agent/setup` and `agent/cleanup` hooks. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-状態DBの既定値は`~/.local/state/mobile-agent/agentd.sqlite`です。`AGENTD_DB_FILE`、`AGENT_PROJECTS_ROOT`、`AGENT_WORKTREE_ROOT`、`AGENT_HOOK_OUTPUT_DIR`で変更できます。ライフサイクル状態はSQLiteだけに保存し、旧`.state`ファイルは読みません。hookのstdoutログはDB状態とは分離した一時的な実行成果物として保存し、セッションのcleanup成功時に削除します。
+The default state database is `~/.local/state/mobile-agent/agentd.sqlite`. Override it with `AGENTD_DB_FILE`, `AGENT_PROJECTS_ROOT`, `AGENT_WORKTREE_ROOT`, or `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state is stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 
-tailnet内へ公開するときは、agentdをlocalhostで起動したままTailscale Serve/ACLで4317番ポートを公開します。現MVPの認証境界はTailscale Serve/ACLです。identity header検証とdeviceごとのpairing tokenは次のセキュリティ実装として追加します。
+When publishing inside a tailnet, keep agentd bound to localhost and expose port 4317 through Tailscale Serve and ACLs. The current MVP uses Tailscale Serve/ACL as its authentication boundary. Identity-header verification and per-device pairing tokens are planned security improvements.
 
-このMVPではスマホ接続中だけ対象windowをスマホサイズへ変更し、対象paneをzoom表示します。PC操作を検知するとdesktop ownerへ戻り、PCサイズとlayoutを復元します。ツイン方式による完全な独立pane描画は将来の拡張です。
+For the MVP, the target window is resized to the mobile viewport and the target pane is zoomed only while a phone is connected. When desktop activity is detected, ownership returns to the desktop and its size and layout are restored. A fully independent twin session is a future extension.
 
-Pane Boardはagentdの`/api/panes`をTanStack Queryで取得し、ペイン選択後に1ペインのcontrol roomを開きます。
-control roomの端末ヘッダーにある`＋`からも新しいpaneを作成でき、`new window`、既存paneの`right`分割、`bottom`分割と分割元paneを選べます。セッション概要からはshell、Codex、Claudeの新しいpaneを作成でき、worktreeを選ぶ場合はホスト側の`agent run` commandへ委譲します。
+Pane Board loads `/api/panes` through TanStack Query and opens the one-pane control room after selection. The `+` action in the terminal header also creates a pane. The form supports a new window, a right split, or a bottom split, and lets the user choose the source pane. The session overview can create shell, Codex, or Claude panes; worktree creation delegates to the host-side `agent run` command.

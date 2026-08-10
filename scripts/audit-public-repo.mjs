@@ -43,6 +43,7 @@ const forbiddenContentPatterns = [
 const failures = [];
 const warnings = [];
 const homeDirectory = os.homedir();
+const githubActionUsePattern = /^\s*uses:\s*([^\s#]+)/gm;
 
 for (const relativeFile of files) {
   const absoluteFile = path.join(root, relativeFile);
@@ -83,6 +84,20 @@ for (const relativeFile of files) {
   for (const { label, pattern } of forbiddenContentPatterns) {
     if (pattern.test(text)) {
       failures.push(`${normalizedFile}: possible ${label}`);
+    }
+  }
+
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(normalizedFile)) {
+    for (const match of text.matchAll(githubActionUsePattern)) {
+      const actionReference = match[1];
+      if (actionReference.startsWith("./")) continue;
+
+      const atIndex = actionReference.lastIndexOf("@");
+      const ref = atIndex === -1 ? "" : actionReference.slice(atIndex + 1);
+      const line = text.slice(0, match.index).split("\n").length;
+      if (!/^[0-9a-f]{40}$/i.test(ref)) {
+        failures.push(`${normalizedFile}:${line}: GitHub Action is not pinned to a full commit SHA (${actionReference})`);
+      }
     }
   }
 

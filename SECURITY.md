@@ -21,6 +21,15 @@ Known limitations in the current MVP:
 - agentd can control the host user's tmux sessions and processes;
 - plugin code runs with the privileges of the agentd host process.
 
+## Supply-chain controls
+
+The repository applies two baseline controls to dependency and CI supply chains:
+
+- pnpm will not install a newly published package until it is at least seven days old. The policy is strict and fails when no eligible version exists or registry publication-time metadata is missing.
+- GitHub Actions references are pinned to full commit SHAs rather than mutable version tags. The public-repository audit checks workflow files and fails if a future action reference is not SHA-pinned.
+
+These controls reduce exposure to short-lived malicious releases and moved action tags, but they do not replace review of dependency updates, lockfile changes, action provenance, or runner security.
+
 Do not use the MVP with untrusted tailnet users or with a public, unauthenticated proxy.
 
 ## Reporting a vulnerability

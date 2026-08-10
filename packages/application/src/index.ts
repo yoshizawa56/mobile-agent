@@ -1,0 +1,84 @@
+import type {
+  AgentSessionRecord,
+  PaneId,
+  PaneRecord,
+  ProjectRecord,
+  RunRecord,
+  RunState,
+  WorkspaceRecord,
+} from "@mobile-agent/domain";
+
+export type PaneFilter = {
+  state?: RunState;
+  kind?: PaneRecord["kind"];
+  sessionName?: string;
+};
+
+export interface PaneRepository {
+  list(filter?: PaneFilter): Promise<PaneRecord[]>;
+  findById(id: PaneId): Promise<PaneRecord | undefined>;
+  findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined>;
+  upsert(record: PaneRecord): Promise<void>;
+}
+
+export interface RunRepository {
+  findById(id: string): Promise<RunRecord | undefined>;
+  upsert(record: RunRecord): Promise<void>;
+}
+
+export interface WorkspaceRepository {
+  findById(id: string): Promise<WorkspaceRecord | undefined>;
+  upsert(record: WorkspaceRecord): Promise<void>;
+}
+
+export interface ProjectRepository {
+  findByName(name: string): Promise<ProjectRecord | undefined>;
+  list(): Promise<ProjectRecord[]>;
+  upsert(record: ProjectRecord): Promise<void>;
+}
+
+export interface AgentSessionRepository {
+  findById(id: string): Promise<AgentSessionRecord | undefined>;
+  findByName(workspaceId: string, name: string): Promise<AgentSessionRecord | undefined>;
+  list(workspaceId?: string): Promise<AgentSessionRecord[]>;
+  insert(record: AgentSessionRecord): Promise<void>;
+  update(record: AgentSessionRecord): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
+export interface PaneGateway {
+  sendInput(paneId: PaneId, input: string): Promise<void>;
+  resize(paneId: PaneId, cols: number, rows: number): Promise<void>;
+  close(paneId: PaneId): Promise<void>;
+}
+
+export class ListPanes {
+  public constructor(private readonly panes: PaneRepository) {}
+
+  public execute(filter?: PaneFilter): Promise<PaneRecord[]> {
+    return this.panes.list(filter);
+  }
+}
+
+export class SendPaneInput {
+  public constructor(private readonly panes: PaneRepository, private readonly gateway: PaneGateway) {}
+
+  public async execute(paneId: PaneId, input: string): Promise<void> {
+    const pane = await this.panes.findById(paneId);
+    if (!pane) throw new Error(`Pane not found: ${paneId}`);
+    await this.gateway.sendInput(paneId, input);
+  }
+}
+
+export class ResizePane {
+  public constructor(private readonly panes: PaneRepository, private readonly gateway: PaneGateway) {}
+
+  public async execute(paneId: PaneId, cols: number, rows: number): Promise<void> {
+    if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
+      throw new Error("Terminal dimensions must be positive integers");
+    }
+    const pane = await this.panes.findById(paneId);
+    if (!pane) throw new Error(`Pane not found: ${paneId}`);
+    await this.gateway.resize(paneId, cols, rows);
+  }
+}

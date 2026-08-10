@@ -1,0 +1,10 @@
+node_modules
+.pnpm-store
+dist
+storybook-static
+.turbo
+*.log
+.env
+.env.*
+!.env.example
+apps/web/vite.config.timestamp-*.mjs

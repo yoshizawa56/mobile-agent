@@ -2,6 +2,7 @@
   "name": "@mobile-agent/agentd",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "agentd": "dist/index.js"

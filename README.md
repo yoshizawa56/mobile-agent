@@ -2,6 +2,23 @@
 
 tmux上のエージェントやシェルを、iPhone向けに1ペイン単位で扱うためのモノレポです。
 
+> **Pre-alpha:** 公開開発の初期段階です。設定・API・データ形式はまだ変更される可能性があります。現在のセキュリティ上の制約は [SECURITY.md](SECURITY.md) を確認してください。
+
+[![CI](https://github.com/yoshizawa56/mobile-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/yoshizawa56/mobile-agent/actions/workflows/ci.yml)
+
+## OSS project files
+
+- [LICENSE](LICENSE): MIT License
+- [CONTRIBUTING.md](CONTRIBUTING.md): 開発環境、テスト、PRのルール
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): コミュニティ行動規範
+- [SECURITY.md](SECURITY.md): 脆弱性報告と現在のセキュリティ境界
+
+公開前の追跡対象・未追跡ファイルを検査するには、次を実行します。
+
+```sh
+pnpm audit:public
+```
+
 ## 開発中の最小縦切り
 
 - `apps/agentd`: tmuxの対象paneへ`active-pane`付きでattachし、viewport leaseを管理しながら端末バイト列をWebSocketで中継
@@ -16,9 +33,12 @@ tmux上のエージェントやシェルを、iPhone向けに1ペイン単位で
 - `packages/protocol`: WebSocketとPane Board DTOをZodで定義
 
 ```sh
-pnpm install
+mise install
+pnpm install --frozen-lockfile
 pnpm dev
 ```
+
+`mise`はNode.js、pnpm、tmuxのツールチェーンを固定し、pnpmはJavaScript依存関係を`pnpm-lock.yaml`に固定します。
 
 依存関係を追加・更新するときは、npmのstable公開版と公式リリースを確認してから反映します。確認には`pnpm deps:check`を使います。alpha/beta/rcは原則採用しません。
 

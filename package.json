@@ -1,7 +1,18 @@
 {
   "name": "mobile-agent",
+  "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@11.20.0",
+  "description": "A mobile control room for tmux-hosted agents and shells.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yoshizawa56/mobile-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yoshizawa56/mobile-agent/issues"
+  },
+  "homepage": "https://github.com/yoshizawa56/mobile-agent#readme",
+  "packageManager": "pnpm@11.21.0",
   "engines": {
     "node": ">=22"
   },
@@ -9,6 +20,7 @@
     "build": "turbo run build",
     "deps:check": "pnpm outdated --recursive",
     "dev": "turbo run dev --parallel",
+    "audit:public": "node scripts/audit-public-repo.mjs",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck"

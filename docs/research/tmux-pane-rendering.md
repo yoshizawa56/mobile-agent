@@ -1,73 +1,73 @@
-# tmuxペイン描画の継続調査
+# Ongoing Research: tmux Pane Rendering
 
-最終更新: 2026-08-09
+Last updated: 2026-08-09
 
-## 現時点の実装方針
+## Current implementation direction
 
-MVPは、同じtmux paneをPCとモバイルで共有し、モバイル接続中だけviewport leaseを取得する方式で開始する。接続時に対象paneを選択し、モバイルclientを`active-pane`付きでattachしてzoomを有効にする。
+The MVP shares the same tmux pane between desktop and mobile and acquires a viewport lease only while a mobile client is connected. The user selects a target pane, then the mobile client attaches with active-pane and enables zoom.
 
-```text
+~~~text
 xterm.js
-  ⇅ WebSocket（制御JSON + 端末バイト列）
+  <-> WebSocket (control JSON + terminal bytes)
 agentd
-  ⇅ node-pty
+  <-> node-pty
 tmux attach-session -t <target>
-  ⇅
-tmux window / pane内のTUI
-```
+  <->
+tmux window / pane TUI
+~~~
 
-端末のエスケープシーケンスの解釈、カーソル、スクロールバック、コピー選択、マウス入力は、Web側のxterm.jsに任せる。agentdは端末バイト列を意味解釈せず、PTYのサイズ変更と入出力の中継に加えて、tmuxのviewport leaseだけを担当する。
+xterm.js is responsible for interpreting terminal escape sequences, cursor state, scrollback, copy selection, and mouse input. agentd does not interpret terminal bytes. It forwards PTY input and output, resizes the PTY, and manages the tmux viewport lease.
 
-接続時にはxterm.jsの現在の`cols/rows`をPTYへ渡す。つまり、TUIはスマホ向けの実際の端末サイズで描画される。初期実装では、同じtmuxセッションに接続しているPC側にもこのサイズ変更が見える可能性がある。
+When connecting, the current xterm.js cols and rows are sent to the PTY. The TUI therefore renders at the actual mobile terminal size. The initial implementation may expose that size change to a desktop client attached to the same tmux session.
 
-## Control Modeを表示経路にしない理由
+## Why Control Mode is not the display route
 
-tmux Control Modeは、ペイン一覧、ライフサイクル、入力、リサイズ、メタデータ監視の管理経路として有用である。一方、モバイルの対話端末を成立させるには、PTYを持つ端末クライアントと端末エミュレーターの組み合わせが自然である。
+tmux Control Mode is useful for pane discovery, lifecycle management, input, resize, metadata monitoring, and recovery. A terminal client with a PTY and a terminal emulator is the natural way to provide an interactive mobile terminal.
 
-そのため、端末データ経路と管理経路を分ける。
+The terminal data route and the management route are therefore separate:
 
-- 端末データ経路: `node-pty`で`tmux attach-session`を実行し、raw bytesをWebSocketへ中継
-- 管理経路: 将来のagentd内部でtmux Control Modeを使い、ペインの発見、user option、Run状態、イベントを扱う
-- Web側: xterm.jsでraw bytesを解釈・描画する
+- terminal data route: run tmux attach-session through node-pty and relay raw bytes over WebSocket;
+- management route: use tmux Control Mode inside agentd for pane discovery, user options, Run state, and events;
+- web client: interpret and render terminal bytes with xterm.js.
 
-## 個別paneをPCと干渉せずに表示する候補
+## Candidates for rendering an individual pane without desktop interference
 
-### A. tmuxのzoomを使う（MVP）
+### A. Use tmux zoom (MVP)
 
-`resize-pane -Z`相当のzoomと、対象paneを選択した通常のtmux clientを使う。実装が単純で、TUIの実際の端末サイズも一致する。`attach-session -f active-pane`により、モバイルclientのactive paneはPC clientから分離する。一方、zoomとwindowサイズはwindow単位なので、viewport lease中はPC側も狭くなる。
+Use zoom equivalent to resize-pane -Z and a normal tmux client connected to the selected pane. This is simple and makes the TUI's actual terminal size match the viewport. attach-session with the active-pane flag isolates the mobile client's active pane from the desktop client. Zoom and window size remain window-level properties, so the desktop view becomes narrow while the lease is active.
 
-lease取得時にはlayout、zoom、active pane、window-size、window幅・高さを保存する。既存のPC clientには一時的に`active-pane` flagを付け、モバイルのpane選択でPC clientのカーソル位置が動かないようにする。PCのclient-active/client-resized/client-focus-inを受けたらdesktop ownerへ遷移し、zoom解除とPCサイズ復元を行う。切断時は、PC takeoverがなければsnapshotを完全復元し、takeover後はPCの状態を優先する。
+When acquiring the lease, snapshot the layout, zoom state, active pane, window-size setting, and window dimensions. Add a temporary active-pane flag to existing desktop clients so mobile pane selection does not move their cursor. When client-active, client-resized, or client-focus-in activity is observed, transition ownership to the desktop, remove zoom, and restore the desktop dimensions. When the lease ends, restore the original snapshot unless the desktop has already taken over.
 
-### B. 専用tmux clientを作る
+### B. Create a dedicated tmux client
 
-agentdがモバイル専用のtmux clientを別に持つ点はMVPでも採用する。ただし、これは別のagent Runを起動するツイン方式ではなく、同じpaneへ接続するclientである。`active-pane`でpane選択を分離し、window-levelのzoom/サイズはleaseで管理する。
+agentd should own a dedicated mobile tmux client even in the MVP. This is not a twin agent Run; it is another client attached to the same pane. The active-pane flag isolates pane selection, while the lease manages window-level zoom and size.
 
-### C. Control Mode + xterm headlessでpaneごとに再描画する
+### C. Control Mode plus a headless xterm instance per pane
 
-tmuxからraw outputを受け取り、paneごとに独自の端末エミュレーター状態を持つ。PCのレイアウトとは独立できるが、tmux Control Modeから来る出力はそのclientのサイズに依存する。スマホ幅の別サイズでTUIを正しく再構築するには、agentを別PTYで実行するか、TUI側がマルチビューポートを理解する必要がある。
+Receive raw output from tmux and keep an independent terminal-emulator state for every pane. This can be independent of the desktop layout, but Control Mode output depends on the size of its client. Correctly rebuilding a TUI at a different mobile width requires running the agent in another PTY or having the TUI support multiple viewports.
 
-### D. エージェントごとにモバイル専用Runを起動する
+### D. Start a mobile-only Run for each agent
 
-完全に独立したサイズで対話できるが、PCとモバイルで同じプロセスを共有できない。履歴、作業状態、同時入力の競合を別途定義する必要があり、現段階では採用しない。
+This provides completely independent dimensions, but the desktop and mobile processes are no longer the same process. History, work state, and simultaneous input conflicts require separate semantics, so this is not selected at the current stage.
 
-## 次に検証するケース
+## Cases to validate next
 
-- 同じwindowへPC clientとモバイルclientを接続し、異なる幅で`resize`した場合のTUI表示（実装済み）
-- `active-pane`付きmobile clientがPCのactive paneを変更しないこと（実装済み）
-- 対象paneのzoom中にPC clientが入力・resizeした場合のdesktop takeover（実装済み）
-- 既存PC clientへの`active-pane`一時付与と元flag復元（実装済み）
-- `window-size latest|largest|smallest|manual`とlease復元の組み合わせ
-- tmux Control Modeの`%output`と`capture-pane`を、xterm.js / `@xterm/headless`へ供給した場合の初期同期
-- copy mode、マウス入力、alternate screen、IME、Unicode幅、画像プロトコル
-- paneごとに専用clientを持った場合のclient数、CPU、再接続、終了処理
+- Connect desktop and mobile clients to the same window and resize them to different widths (implemented).
+- Verify that a mobile client using active-pane does not change the desktop active pane (implemented).
+- Verify desktop takeover when a desktop client inputs or resizes during mobile zoom (implemented).
+- Verify temporary active-pane flags on existing desktop clients and restoration of their original flags (implemented).
+- Test combinations of window-size latest, largest, smallest, and manual with lease restoration.
+- Feed tmux Control Mode percent-output and capture-pane data into xterm.js or @xterm/headless for initial synchronization.
+- Test copy mode, mouse input, alternate screen, IME, Unicode width, and image protocols.
+- Measure client count, CPU use, reconnect behavior, and cleanup with one dedicated client per pane.
 
-## 保留している設計
+## Deferred design
 
-MVPではviewport leaseを導入し、ownerを明示する。ツイン方式は、同時操作やagentごとの独立サイズが必要になった場合に再検討する。
+The MVP introduces an explicit viewport lease and owner. Revisit twin sessions if simultaneous operation or independent agent dimensions become necessary.
 
-```text
+~~~text
 viewportOwner: none | desktop | mobile
 mode: interactive | observer
-```
+~~~
 
-owner以外は表示・入力を許可しても、サイズ変更やフォーカス変更を行わないobserver modeにできるようにする。
+The design should allow a non-owner to observe output without changing size or focus. This makes it possible to add an observer mode later without weakening ownership rules.

@@ -2,10 +2,9 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  better-sqlite3: true
   esbuild: true
   node-pty: true
-minimumReleaseAgeExclude:
-  - '@tanstack/router-core@1.171.20'
-  - '@tanstack/router-generator@1.167.26'
-  - '@tanstack/router-plugin@1.168.28'
-  - '@tanstack/react-router@1.170.24'
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false

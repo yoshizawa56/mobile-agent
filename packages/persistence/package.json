@@ -2,6 +2,7 @@
   "name": "@mobile-agent/persistence",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": {
@@ -23,7 +24,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.1.2",
     "drizzle-kit": "^0.31.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

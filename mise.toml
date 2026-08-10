@@ -1,0 +1,12 @@
+[tools]
+node = "24.19.0"
+pnpm = "11.21.0"
+tmux = "3.7b"
+
+[tasks.install]
+description = "Install the locked workspace dependencies"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.check]
+description = "Run the public-repository audit and project checks"
+run = "pnpm audit:public && pnpm typecheck && pnpm test && pnpm build"

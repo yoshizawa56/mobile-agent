@@ -1,104 +1,104 @@
-# Mobile Agent / agentd 設計・仕様書
+# Mobile Agent / agentd Architecture and Specification
 
-最終更新: 2026-08-10
-ステータス: 実装ベースライン + 継続設計
+Last updated: 2026-08-10
 
-## 1. 概要
+Status: implementation baseline and ongoing design
 
-Mobile Agentは、開発ホスト上で動作する`agentd`と、iPhoneから接続するモバイルUIで、tmuxペイン単位のエージェント実行環境を管理するためのシステムである。
+## 1. Overview
 
-主な目的は、デスクトップのtmux環境を壊さずに、iPhoneから次の操作をできるようにすること。
+Mobile Agent is a system for managing agent runtimes on tmux panes from a mobile UI. A long-running TypeScript and Node.js process named agentd runs on the development host, while an iPhone connects through the web client.
 
-- ペイン単位でエージェントやシェルを一覧・選択する
-- 1ペインだけをモバイル向けに表示する
-- エージェント名、プロジェクト、worktree、状態を確認する
-- 入力待ち・承認待ちのペインを見つける
-- ペインへ入力を送る、リサイズする、停止する
-- 入力待ちへの遷移を通知・Live Activityで知らせる
-- 任意のエージェントツールをプラグインで追加する
+The primary goal is to let a phone operate an existing desktop tmux environment without replacing the desktop workflow:
 
-### 決定事項
+- list and select agents and shells by pane;
+- display one pane in a mobile-sized terminal;
+- inspect the agent name, project, worktree, and state;
+- find panes waiting for input or approval;
+- send input, resize, and stop a pane;
+- notify the user about waiting-state transitions through notifications and Live Activity;
+- add arbitrary agent tools through plugins.
 
-- ホスト側の常駐プロセスはTypeScript/Node.jsの`agentd`とする
-- `agentd`のHTTP APIはHonoで実装し、`createAgentdApp(deps)`がDI済みのHono appを返す。プロセス起動、SQLite、tmux、PTY、WebSocketはこの外側で構成する
-- `ReturnType<typeof createAgentdApp>`を`AgentdApp`として公開し、`@mobile-agent/agentd-client`のHono RPC clientからWeb/Capacitor/React Nativeへ共有する
-- モバイルのAPI client、接続状態管理、WebSocket、xterm.js連携はTypeScriptで統一する。SSH port forwardingだけは必要に応じてnative bridgeが接続を作り、TypeScript clientへURLを渡す
-- `agent` CLIも同じリポジトリで管理し、SQLiteをライフサイクル状態の唯一の正規状態源にする
-- dotfiles側の旧`.state`形式は互換対象にせず、移植後のSQLiteモデルを前提に実装する
-- ペインの実体はtmuxに置き、端末表示はPTY経由の`tmux attach-session`、管理・監視はtmux Control Modeで行う
-- ペイン識別子はtmuxの`%12`などに依存せず、独自のUUIDを持つ
-- エージェントの状態はプラグインが正規化し、モバイルUIは共通状態だけを扱う
-- ホストとモバイルの通信はHTTP API + WebSocketを基本とし、ブラウザ版の標準経路はTailscale Serveとする
-- ブラウザ版はServe接続設定だけを保存し、SSH秘密鍵・パスワード・Keychainへアクセスしない
-- SSHは踏み台ホストとagentdホストが異なる場合などの将来経路として、`RouteProvider`の追加実装に閉じ込める
-- モバイルUIはReact/TypeScript + xterm.jsを中心にWebとして実装し、必要に応じてCapacitorでiOSアプリ化する
-- MVPではPCとモバイルが同じtmux paneを共有し、モバイル接続中だけ`TmuxViewportLease`がviewport ownerになる
-- モバイルclientは`active-pane`付きでattachし、ペイン選択はclient単位に分離する。zoomとwindowサイズはwindow単位なので、モバイル操作中にPC側が狭くなることは仕様とする
-- viewport lease取得時は既存のPC clientにも一時的に`active-pane`を付与し、モバイル側のpane選択がPC clientへ波及しないようにする。lease終了時に元のclient flagへ戻す
-- PCの`client-active`、`client-resized`、利用可能なら`client-focus-in`を検知し、desktop ownerへ戻してzoom/layout/サイズを復元する
-- 既存PC clientのpaneはlease取得前のactive paneを基準に復元し、PC clientが存在しない間は後からattachしたclientの操作をdesktop takeoverとして扱う
-- ツイン方式やagentごとの独立Runは、同時操作や独立サイズが必要なplugin向けの将来拡張とする
-- Live Activity、Widget、KeychainなどのOS拡張はclient本体の必須依存にせず、必要になった時点で薄いnative bridgeとして追加する
-- デスクトップ側はまず既存ターミナル、tmux attach、TUIを利用する
-- デスクトップGUIは必要性が見えてからWeb UI/Tauriとして追加する
+### Decisions
 
-## 2. スコープ
+- The host daemon is a TypeScript and Node.js process named agentd.
+- The agentd HTTP API is implemented with Hono. createAgentdApp(deps) returns a dependency-injected Hono app. Process startup, SQLite, tmux, PTY, and WebSocket wiring live outside that function.
+- ReturnType<typeof createAgentdApp> is exported as AgentdApp and shared with the Hono RPC client in the agentd-client package.
+- The mobile API client, connection state, WebSocket handling, and xterm.js integration are implemented in TypeScript. An SSH port-forwarding native bridge may create a route and hand its URLs to the TypeScript client.
+- The agent CLI is maintained in this repository. SQLite is the single canonical state source for lifecycle data.
+- The legacy dotfiles state-file format is not a compatibility target.
+- tmux remains the owner of the real panes. Terminal display uses a PTY connected to tmux attach-session, while administration and monitoring use tmux Control Mode.
+- Pane identity uses a Mobile Agent UUID instead of depending on tmux identifiers.
+- Plugins normalize agent state. The mobile UI consumes only the common state model.
+- HTTP API plus WebSocket is the primary host/mobile protocol. The browser build uses Tailscale Serve as its standard route.
+- The browser build stores only a Serve connection profile. It does not access SSH private keys, passwords, or the native Keychain.
+- SSH is a future RouteProvider implementation for cases such as a bastion host between the phone and the agentd host.
+- The mobile UI is React and TypeScript with xterm.js and can be packaged as an iOS app with Capacitor when needed.
+- In the MVP, desktop and mobile share the same tmux pane. While a mobile client is connected, a TmuxViewportLease makes the mobile client the viewport owner.
+- The mobile client attaches with active-pane. Pane selection is isolated per client. Because zoom and window size are window-level tmux properties, the desktop view may temporarily become narrow while the phone owns the viewport.
+- When a viewport lease is acquired, the existing desktop client receives a temporary active-pane flag so mobile pane selection does not move the desktop cursor. The original client flags are restored when the lease ends.
+- tmux client-active, client-resized, and, when available, client-focus-in events return ownership to the desktop and restore its zoom, layout, and size.
+- Existing desktop panes are restored from the pre-lease active pane. If no desktop client exists, a client attaching later is treated as a desktop takeover.
+- Twin sessions and independent agent Runs are future extensions for plugins that require simultaneous operation or independent sizes.
+- Live Activity, Widget, and Keychain integrations are optional native extensions rather than required dependencies of the client.
+- The first desktop experience uses an existing terminal, tmux attach, and the TUI. A desktop GUI is added only when demand becomes clear.
 
-### 対象
+## 2. Scope
 
-- macOS/Linuxなどの開発ホスト
-- tmux上で動作するAIエージェント、通常のシェル、任意のコマンド
-- iPhoneからの1ペイン表示・入力・状態確認
-- Tailscaleネットワーク内での安全な接続
-- SQLiteによるホスト側の設定・実行履歴管理
-- Codex、Claude Codeなどを含むエージェントプラグイン
+### In scope
 
-### 初期リリースで対象外とするもの
+- Development hosts such as macOS and Linux.
+- AI agents, regular shells, and arbitrary commands running inside tmux.
+- One-pane display, input, and state inspection from an iPhone.
+- Secure connections inside a Tailscale network.
+- Host-side configuration and execution-history management with SQLite.
+- Agent plugins, including Codex and Claude Code integrations.
 
-- iPhone上でのTailscale VPNクライアントの完全な内蔵
-- デスクトップGUIによるフルターミナルエミュレーターの再実装
-- Live Activityからの任意のターミナル入力
-- すべてのエージェントの出力を完全に画面解析だけで判定すること
-- 信頼できない第三者プラグインの完全なサンドボックス実行
+### Out of scope for the initial release
 
-## 3. 用語とドメインモデル
+- A fully embedded Tailscale VPN client on the iPhone.
+- Reimplementing a complete desktop terminal emulator as a native desktop GUI.
+- Arbitrary terminal input from a Live Activity.
+- Determining every agent state solely by parsing rendered screen text.
+- Full sandboxing for untrusted third-party plugins.
+
+## 3. Terms and domain model
 
 ### Host
 
-tmux、エージェント、`agentd`が動作する開発マシン。SQLiteもホスト側に置く。
+The development machine running tmux, agents, and agentd. SQLite also lives on the host.
 
 ### Session
 
-tmuxのセッション。人間が`tmux attach`で接続する単位。Mobile Agentの管理単位ではない。
+A tmux session. It is the unit a person joins with tmux attach; it is not the primary Mobile Agent management unit.
 
 ### Pane
 
-tmux上のペイン。Mobile Agentが一覧・選択する基本単位。
+A tmux pane. This is the basic unit that Mobile Agent lists and selects.
 
 ### Run
 
-ペイン内で実行されている論理的な作業単位。1つのペインを再利用して複数のRunを実行できる。
+A logical unit of work executing inside a pane. A pane can be reused for multiple Runs over time.
 
 ### AgentPlugin
 
-特定のエージェントツールを起動し、出力やイベントを共通の状態へ変換するホスト側プラグイン。
+A host-side plugin that starts a particular agent tool and converts its output and events into the common state model.
 
 ### Profile
 
-既存プラグインの起動コマンド、環境変数、検出ルール、通知ルールなどを上書きする設定。
+Configuration that overrides an existing plugin command, environment, detection rules, notification rules, and other behavior.
 
 ### Workspace
 
-プロジェクトの作業ディレクトリ。通常の作業ディレクトリ、git worktree、その他の作業環境を含む。
+The working directory for a project. This includes a regular checkout, a git worktree, or another managed work environment.
 
-### PaneとRunの分離
+### Separating Pane and Run
 
-tmuxペインは長く存在し、Runはペイン内で入れ替わる。そのため、ペインとエージェントを直接1対1で保存しない。
+tmux panes are long-lived, while Runs are replaced within a pane. Therefore a pane must not be persisted as a direct one-to-one relationship with an agent.
 
-```text
+~~~
 Pane
   id: mobile-pane-uuid
-  tmuxPaneId: %12
+  tmuxPaneId: tmux-pane-id
   session: project
   window: 0
   currentRunId: run-uuid
@@ -112,13 +112,13 @@ Run
   workspaceId: string | null
   state: starting | running | waiting_input | waiting_approval |
          completed | failed | shell | unknown
-```
+~~~
 
-通常のシェルは`kind=shell`、`agentId=null`として同じモデルで扱う。
+Regular shells use kind=shell and agentId=null in the same model.
 
-tmuxのペインIDは再生成や移動で変化する可能性があるため、`mobilePaneId`を主キーとする。tmux側には次のようなuser optionを保存し、agentd再起動後の復元に利用する。
+tmux pane identifiers can change after a pane is recreated or moved, so mobilePaneId is the primary key. agentd stores user options on the tmux side to support recovery after a restart:
 
-```text
+~~~
 @agentd.pane_id
 @agentd.pane_name
 @agentd.kind
@@ -127,127 +127,126 @@ tmuxのペインIDは再生成や移動で変化する可能性があるため�
 @agentd.project_id
 @agentd.workspace_id
 @agentd.profile_id
-```
+~~~
 
-## 4. 全体アーキテクチャ
+## 4. System architecture
 
-```text
-                              ┌─────────────────────┐
-                              │ iPhone              │
-                              │ TypeScript client   │
-                              │ Web + xterm.js      │
-                              │ Capacitor shell     │
-                              └─────────┬───────────┘
-                                        │ HTTPS / WSS
-                    Tailscale Serve (標準) / SSH forwarding (将来)
-                                        │
-┌───────────────────────────────────────▼──────────────────────────┐
-│ 開発ホスト                                                       │
-│                                                                  │
-│  ┌──────────────┐     ┌───────────────────────────────────────┐  │
-│  │ agent CLI/TUI│────▶│ agentd                                │  │
-│  └──────────────┘     │                                       │  │
-│                       │ Hono HTTP / WebSocket / PTY             │  │
-│  desktop terminal    │ Domain / Application / Ports            │  │
-│  ── tmux attach ────▶│ Plugin manager / recovery               │  │
-│                       └──────────┬───────────────┬────────────┘  │
-│                                  │               │                │
-│                    tmux Control Mode / PTY   SQLite/Drizzle      │
-│                                  │               │                │
-│                         tmux sessions/panes  config/history      │
-└──────────────────────────────────────────────────────────────────┘
-```
+~~~
+                              +---------------------+
+                              | iPhone              |
+                              | TypeScript client   |
+                              | Web + xterm.js      |
+                              | Capacitor shell     |
+                              +----------+----------+
+                                         | HTTPS / WSS
+                    Tailscale Serve (standard) / SSH forwarding (future)
+                                         |
++----------------------------------------v-------------------------+
+| Development host                                             |
+|                                                              |
+|  +--------------+     +-----------------------------------+  |
+|  | agent CLI/TUI|---->| agentd                            |  |
+|  +--------------+     | Hono HTTP / WebSocket / PTY       |  |
+|                       | Domain / Application / Ports      |  |
+|  desktop terminal    | Plugin manager / recovery          |  |
+|  -- tmux attach ---->|                                   |  |
+|                       +-------------+-------------+---------+  |
+|                                     |             |            |
+|                         tmux Control Mode / PTY  SQLite/Drizzle|
+|                                     |             |            |
+|                           tmux sessions/panes  config/history |
++--------------------------------------------------------------+
+~~~
 
-`agentd`はビジネスロジックの唯一の実行主体とする。CLI、TUI、WebSocket、将来のDesktop UIは、すべて同じApplication Use Caseを呼び出す。
+agentd is the only process that owns business-logic execution. The CLI, TUI, WebSocket handlers, and future desktop UI all call the same application use cases.
 
-## 5. リポジトリ構成案
+## 5. Repository layout
 
-```text
+~~~
 apps/
-  agent-cli/              # agentコマンド、CLI、TUI
-  agentd/                 # 常駐プロセス
-  web/                    # React + xterm.js。Capacitorからも利用するUI
-  desktop-web/            # 将来のデスクトップWeb UI
+  agent-cli/              # agent command, CLI, and TUI
+  agentd/                 # long-running daemon
+  web/                    # React + xterm.js UI, also consumed by Capacitor
+  desktop-web/            # future desktop web UI
 
 packages/
-  agentd-client/          # Hono RPC、HTTP DTO検証、WebSocket client
-  domain/                 # エンティティ、値オブジェクト、状態機械
-  application/            # Use Case、ポート
-  protocol/               # WebSocket DTO、イベント、Zod schema
-  persistence/            # SQLite、Drizzle
+  agentd-client/          # Hono RPC, HTTP DTO validation, WebSocket client
+  domain/                 # entities, value objects, and state machines
+  application/            # use cases and ports
+  protocol/               # WebSocket DTOs, events, and schemas
+  persistence/            # SQLite and Drizzle
   tmux/                   # tmux Control Mode adapter
-  agents/                 # AgentPlugin APIと組み込みプラグイン
-  workspaces/             # project/worktree adapter
-  notifications/          # NotificationPort実装
-  tailscale/              # Serve/identity/bootstrap補助
-  config/                 # config読み込み・検証
+  agents/                 # AgentPlugin API and built-in plugins
+  workspaces/             # project and worktree adapters
+  notifications/          # NotificationPort implementations
+  tailscale/               # Serve, identity, and bootstrap helpers
+  config/                 # configuration loading and validation
 
 ios/
-  MobileAgentNative/      # SSH port forwarding bridge（必要な場合のみ）
-  MobileAgentWidget/      # 将来のOS拡張。client本体からは分離
+  MobileAgentNative/      # SSH port-forwarding bridge, if needed
+  MobileAgentWidget/      # future OS extension, separate from the client
 
 docs/
   architecture.md
-  research/               # tmux個別pane描画などの継続調査
-```
+  research/               # ongoing tmux and individual-pane rendering research
+~~~
 
-ドメイン層はtmux、SQLite、WebSocket、Capacitorを直接参照しない。各実装はポートを介して接続する。
+The domain layer does not reference tmux, SQLite, WebSocket, or Capacitor directly. Implementations connect through ports.
 
-### agentd HTTP appとDI
+### agentd HTTP app and dependency injection
 
-`createAgentdApp`はプロセスを起動せず、HTTP APIの依存だけを受け取ってHono appを構築する。
+createAgentdApp does not start a process. It receives only the dependencies needed by the HTTP API and constructs the Hono app.
 
-```text
+~~~
 createAgentdServer()
-  ├─ SQLite / Drizzle
-  ├─ TmuxAdapter
-  ├─ TmuxViewportManager
-  ├─ application use cases
-  └─ createAgentdApp({ ...deps })
-        └─ AgentdApp = ReturnType<typeof createAgentdApp>
+  |-- SQLite / Drizzle
+  |-- TmuxAdapter
+  |-- TmuxViewportManager
+  |-- application use cases
+  |-- createAgentdApp({ ...deps })
+       |-- AgentdApp = ReturnType<typeof createAgentdApp>
 
-@mobile-agent/agentd-client
-  └─ hc<AgentdApp>(connection.httpBaseUrl)
-```
+agentd-client
+  |-- hc<AgentdApp>(connection.httpBaseUrl)
+~~~
 
-Tailscale ServeとSSH port forwardingは、どちらも同じagentd APIへ到達するための接続経路である。API clientやユースケースは経路を意識しない。ブラウザ版にはSSH adapterを含めず、Serve routeだけを公開する。
+Tailscale Serve and SSH port forwarding both reach the same agentd API. The API client and use cases do not know which route is in use. The browser build does not include an SSH adapter; it exposes only the Serve route.
 
-```text
-Browser / Serve:  https://host.tailnet/... ─┐
-Native / Serve:   https://host.tailnet/... ──┼─ AgentdClient
-Native / SSH:     http://127.0.0.1:xxxxx ───┘  (将来)
-                                                ├─ HTTP API
-                                                └─ terminal WebSocket
-```
+~~~
+Browser / Serve:  https://host.tailnet/... ----+
+Native / Serve:   https://host.tailnet/... ----+-- AgentdClient
+Native / SSH:     http://127.0.0.1:xxxxx -----+       |-- HTTP API
+                                                        |-- terminal WebSocket
+~~~
 
-### 接続経路の責務
+### Responsibilities of connection routes
 
-```ts
+~~~ts
 type AgentdRoute = {
   kind: "serve" | "same-origin" | "lan" | "ssh"
   httpBaseUrl: string
   websocketUrl: string
   close?: () => Promise<void>
 }
-```
+~~~
 
-- `serve`: ブラウザ・Capacitorの標準経路。HTTPS/WSS、Tailscale ACL、Serveのネットワーク境界を利用する
-- `same-origin`: Vite proxyやagentdと同一originでの開発経路。公開環境の標準設定にはしない
-- `lan`: 将来の明示的なLAN接続経路。TLS、認証、CORS、端末発見を別途設計する
-- `ssh`: 将来のネイティブ専用経路。踏み台からagentdホストへのport forwardingを作り、ローカルURLを返す
+- serve: the standard browser and Capacitor route using HTTPS/WSS and Tailscale ACLs;
+- same-origin: a Vite proxy or development route where agentd shares the origin;
+- lan: a future explicitly configured LAN route with its own TLS, authentication, CORS, and discovery design;
+- ssh: a future native-only route that creates port forwarding through a bastion.
 
-`AgentdClient`は`AgentdRoute`を受け取るだけで、経路の確立・秘密情報・Tailscale CLI・SSHを参照しない。経路の確立はWebまたはnative側の`RouteProvider`が担当する。agentdの起動も経路の責務ではなく、launchd/systemdまたは明示的なbootstrapコマンドで管理する。
+AgentdClient receives an AgentdRoute. It does not know how the route was established and does not reference secrets, the Tailscale CLI, or SSH. A web or native RouteProvider establishes the route. Starting agentd is also outside the route responsibility and is managed by launchd, systemd, or an explicit bootstrap command.
 
-agentdは単発CLIではなく、tmux・agent plugin・SQLiteを同じホストで管理する常駐control-plane daemonである。`agentd`という名前は、Unix系の常駐サービスを表す`d`の慣習にも合い、`agent` CLIと役割を分けられるため適切とする。
+agentd is a long-running control-plane daemon, not a one-shot CLI. It manages tmux, agent plugins, and SQLite on the same host. The name agentd follows the Unix convention of using d for a daemon and clearly separates the daemon from the agent CLI.
 
-## 6. Clean / Hexagonal Architecture
+## 6. Clean / hexagonal architecture
 
-```text
+~~~
 Adapters
   CLI / TUI / WebSocket / PTY / SSH / tmux / SQLite / APNs
-                         │
-                         ▼
-Application Use Cases
+                         |
+                         v
+Application use cases
   ListPanes
   OpenPane
   ClosePane
@@ -257,12 +256,12 @@ Application Use Cases
   CreateWorkspace
   ConfigureAgent
   AcknowledgeWaiting
-                         │
-                         ▼
+                         |
+                         v
 Domain
   Pane / Run / Workspace / AgentState / Plugin / Event
-                         │
-                         ▼
+                         |
+                         v
 Ports
   TmuxGateway
   TerminalTransport
@@ -273,80 +272,80 @@ Ports
   EventPublisher
   NotificationGateway
   SecretStore
-```
+~~~
 
-### Application Use Caseの原則
+### Application use-case principles
 
-- CLIとモバイルで同じUse Caseを使う
-- WebSocket handlerに業務ロジックを書かない
-- TUIがSQLiteを直接更新しない
-- tmuxの管理出力をそのまま外部APIへ露出せず、共通イベントへ変換する。端末表示経路のPTYバイト列は別のデータプレーンとして扱う
-- コマンドは可能な限りidempotentにする
-- 外部イベントは`seq`を持ち、再接続後に再開できるようにする
+- Use the same use cases from the CLI and the mobile client.
+- Do not put business logic in a WebSocket handler.
+- Do not let the TUI update SQLite directly.
+- Convert tmux management output into common events instead of exposing it directly through the public API. PTY bytes for terminal rendering are a separate data plane.
+- Make commands idempotent whenever possible.
+- Attach a seq value to external events so a client can resume after reconnecting.
 
-### Webの実装規約
+### Web implementation conventions
 
-TanStack Routerのファイルベースルーティングを使い、feature単位で次の3ファイルを基本形にする。
+Use TanStack Router file-based routing. Each feature should generally have the following three files:
 
-```text
+~~~
 feature/
-  pane-viewmodel.ts  # ViewModelのinterfaceとusePaneViewModel
-  pane-view.tsx      # ViewModelをpropsで受け取る純粋なView
+  pane-viewmodel.ts  # ViewModel interface and usePaneViewModel
+  pane-view.tsx      # pure View receiving the ViewModel as props
   pane-view.stories.tsx
-```
+~~~
 
-`route.tsx`は`useHogeViewModel`を呼び、パス・search paramsを処理してViewへ渡すだけにする。ViewModelは単体テスト、ViewはStorybookのstate storyで網羅する。
+route.tsx should call useHogeViewModel, process path and search parameters, and pass the result to the View. ViewModels receive unit tests; Views receive comprehensive Storybook state stories.
 
-サーバー状態の一覧、Runメタデータ、設定、mutationにはTanStack Queryを使う。一方、PTY/WebSocketの端末バイト列、接続状態、xterm.jsのインスタンスはQueryのキャッシュに入れず、ViewModelと端末transportのライフサイクルで管理する。
+Use TanStack Query for server state such as pane lists, Run metadata, settings, and mutations. Do not put PTY/WebSocket terminal bytes, connection state, or xterm.js instances in the Query cache. Manage those through the ViewModel and terminal-transport lifecycle.
 
-### バックエンドのテスト規約
+### Backend testing conventions
 
-Domain、Application、adapter、protocolのテストはtable testを基本にし、正常系・異常系で同じ実行形を使う。
+Use table-driven tests for domain, application, adapter, and protocol behavior. Normal and error cases should use the same execution shape.
 
-```ts
+~~~ts
 type TestCase<When, Result, Context> = {
   given: () => Promise<unknown> | unknown
   when: (given: unknown) => When
   check: Array<(result: Result) => Promise<unknown> | unknown>
   assert: Array<(context: Context) => void>
 }
-```
+~~~
 
-共通runnerが`given → when → check（ctxへ格納）→ assert`を実行する。外部adapterのfixtureも同じ形式にし、テスト対象のact部分をケースごとに重複させない。
+A shared runner performs given -> when -> check, storing values in ctx, -> assert. Adapter fixtures use the same format so that the act portion does not need to be duplicated across cases.
 
-## 7. AgentPlugin設計
+## 7. AgentPlugin design
 
-### 7.1 拡張の二段構成
+### 7.1 Two levels of extension
 
-#### 宣言型Profile
+#### Declarative profiles
 
-コードを書かずに既存エージェントの動作を変更する。
+Profiles change an existing agent's behavior without writing code:
 
-- 起動コマンド、引数、cwd
-- 環境変数
-- プロジェクト/worktreeの選択方法
-- 出力に対する状態判定ルール
-- 通知対象の状態
-- 起動時に送る初期入力
-- 利用可能なアクション
+- launch command, arguments, and cwd;
+- environment variables;
+- project and worktree selection;
+- state-detection rules;
+- notification states;
+- initial input;
+- available actions.
 
-```yaml
+~~~yaml
 profiles:
   mobile-codex:
     extends: codex
     command: codex
     args: ["--profile", "mobile"]
     env:
-      AGENTD_RUN_ID: "${run.id}"
+      AGENTD_RUN_ID: "<run-id>"
     notifications:
       states: [waiting_input, waiting_approval, failed]
-```
+~~~
 
-#### Code Plugin
+#### Code plugins
 
-任意のTypeScriptコードで、独自のエージェントや高度な状態解析を実装する。
+TypeScript code plugins can implement a custom agent or advanced state analysis:
 
-```ts
+~~~ts
 interface AgentPluginV1 {
   manifest: {
     id: string
@@ -368,42 +367,42 @@ interface AgentObserver {
   onOutput(chunk: OutputChunk): AgentObservation[]
   onExit(result: ProcessExit): AgentObservation[]
 }
-```
+~~~
 
-プラグインが返すのは、次のような正規化された観測結果とする。
+Plugins return normalized observations:
 
-```ts
+~~~ts
 type AgentObservation =
   | { type: "state_changed"; state: AgentState; reason?: string }
   | { type: "title_changed"; title: string }
   | { type: "progress"; value?: number; message?: string }
   | { type: "action_requested"; action: ActionDescriptor }
   | { type: "log"; level: "debug" | "info" | "warn" | "error"; message: string }
-```
+~~~
 
-### 7.2 状態検出の優先順位
+### 7.2 State-detection priority
 
-1. エージェントが提供する構造化イベント、JSONL、App Server、WebSocket
-2. エージェントプロセスの終了、シグナル、標準ストリーム
-3. tmux/PTY出力の状態パーサー
-4. Profileで定義した正規表現ルール
-5. ユーザーによる手動状態変更
+1. Structured events, JSONL, an app server, or WebSocket exposed by the agent.
+2. Agent process exit, signals, and standard streams.
+3. tmux/PTY output state parsers.
+4. Regular-expression rules declared by a profile.
+5. Manual state changes by the user.
 
-画面文字列の解析はエージェントのUI変更に弱いため、組み込みプラグインでも構造化イベントを優先する。
+Screen-text parsing is fragile when an agent changes its UI, so built-in plugins should prefer structured events.
 
-### 7.3 プラグインの実行方式
+### 7.3 Plugin execution
 
-- 組み込み・信頼済みプラグイン: agentdプロセス内のTypeScript module
-- 自作・他言語プラグイン: 子プロセスをJSONL/stdinで起動
-- プラグインのインストール先: npm package、リポジトリ内package、ユーザーのXDG config配下
-- モバイルアプリにはプラグインコードを配布しない
-- プラグインはtmuxやSQLiteを直接操作せず、agentdが提供するContext/Portを利用する
+- Built-in and trusted plugins run as TypeScript modules inside agentd.
+- Custom or other-language plugins run as child processes using JSONL over stdin/stdout.
+- Plugins can be installed from npm packages, repository packages, or the user's XDG configuration directory.
+- Plugin code is never distributed to the mobile app.
+- Plugins do not access tmux or SQLite directly; they use Context and Port objects provided by agentd.
 
-外部プラグインはクラッシュの影響をagentd本体から分離できる。一方、ホスト上でコマンド実行やファイル読み取りができる場合、完全なサンドボックスではない。インストール時には信頼境界を明示する。
+External plugins isolate crashes from the agentd process. They are not fully sandboxed when they can execute host commands or read files. The installation flow must make this trust boundary explicit.
 
 ### 7.4 CLI
 
-```sh
+~~~sh
 agent plugin list
 agent plugin add npm:@example/agent-plugin
 agent plugin enable example
@@ -412,150 +411,150 @@ agent plugin doctor example
 agent agent list
 agent profile list
 agent profile create mobile-codex --extends codex
-```
+~~~
 
-## 8. tmux連携
+## 8. tmux integration
 
-### 8.1 管理・監視経路
+### 8.1 Management and monitoring route
 
-agentdはtmux Control Modeを管理・監視に利用する。
+agentd uses tmux Control Mode for management and monitoring:
 
-- `%output`などのペイン出力イベントを受け取る
-- ペインIDを指定して入力・リサイズ・選択を行う
-- ペイン生成・終了・移動を監視する
-- 必要に応じて`capture-pane`で状態確認や復旧を行う
+- receive pane output events such as percent output;
+- send input, resize, and selection commands for a pane;
+- observe pane creation, exit, and movement;
+- use capture-pane for inspection and recovery when necessary.
 
-ただし、初期のモバイル端末表示はControl Modeのイベントを直接画面へ投影しない。端末の画面状態を正しく解釈する責務はxterm.jsへ寄せる。
+The initial mobile terminal does not project Control Mode events directly onto the screen. xterm.js owns the responsibility for interpreting terminal screen state.
 
-### 8.2 モバイル端末データ経路
+### 8.2 Mobile terminal data route
 
-モバイルの1ペイン表示は、agentdがPTYを作成して、同じtmux sessionへ`active-pane`付きのclientとして`tmux attach-session`する。
+For the one-pane mobile view, agentd creates a PTY and attaches a client to the same tmux session with active-pane.
 
-```text
-xterm.js ⇄ WebSocket ⇄ agentd ⇄ node-pty ⇄ tmux attach-session -t <target>
-```
+~~~text
+xterm.js <-> WebSocket <-> agentd <-> node-pty <-> tmux attach-session -t <target>
+~~~
 
-- PTYから出た端末バイト列は、agentdが意味解釈せずWebSocketのバイナリフレームで転送する
-- xterm.jsがANSI/VTシーケンス、alternate screen、カーソル、スクロールバック、選択を解釈する
-- WebSocketのテキストフレームは`attach`、`resize`、`detach`などの制御に限定する
-- xterm.jsの`cols/rows`をPTYへ返し、TUIをスマホ画面幅で実行する
-- モバイル接続時は対象windowの`window-size`を一時的に`manual`へ変更し、スマホのサイズを明示的に`resize-window`へ反映する
-- `active-pane`によりモバイル側のactive paneはPC clientのactive paneと分離する
-- `resize-pane -Z`のzoomとwindowサイズはwindow単位なので、モバイル操作中にPC側が小さくなることは許容する
-- agentdはviewport取得時にlayout、zoom、active pane、windowサイズ設定、実サイズをsnapshotする
-- PC clientの操作を検知したらmobile ownerをdesktop ownerへ遷移させ、対象windowをPCサイズへ戻す
-- モバイル切断時、PC takeover前ならsnapshotを完全復元し、takeover後ならPC側の変更を優先して古いsnapshotを上書きしない
+- agentd forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
+- xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, scrollback, and selection;
+- WebSocket text frames are reserved for control messages such as attach, resize, and detach;
+- xterm.js cols/rows are sent back to the PTY so the TUI runs at the phone's actual width;
+- while mobile is connected, the target window's window-size is temporarily set to manual and the phone size is applied through resize-window;
+- active-pane keeps the mobile active pane separate from the desktop client's active pane;
+- zoom and window size are window-level tmux properties, so the desktop may temporarily become narrow while mobile owns the viewport;
+- agentd snapshots the layout, zoom, active pane, window-size setting, and actual dimensions when the viewport is acquired;
+- desktop activity moves ownership back to the desktop and restores its size;
+- when mobile disconnects before a desktop takeover, the snapshot is fully restored; after a takeover, desktop changes win and the old snapshot is not applied over them.
 
-PC操作の検知は、agentdがtmux hookを登録し、localhostの内部HTTP endpointへ通知する方式を基本とする。hookが登録できない環境では、agentdのclient監視pollingをfallbackとして使う。フォーカスイベントは端末側の対応に依存するため、キー入力またはリサイズも必ず復帰トリガーにする。
+The preferred desktop-activity detection method is for agentd to register a tmux hook that calls an internal localhost HTTP endpoint. If hooks are unavailable, agentd falls back to polling client state. Focus events depend on terminal support, so keyboard input and resize must also trigger restoration.
 
-### 8.3 デスクトップからの連携
+### 8.3 Desktop integration
 
-既存の端末からは通常どおり操作できる。
+Existing terminals continue to work normally:
 
-```sh
+~~~sh
 tmux attach-session -t project
-```
+~~~
 
-リモートホストへSSH接続してから接続する場合は、TTYを割り当てる。
+When connecting to a remote host over SSH, allocate a TTY:
 
-```sh
+~~~sh
 ssh -tt host 'tmux attach-session -t project'
-```
+~~~
 
-同じtmuxセッションへ複数クライアントが接続できるため、デスクトップの端末とagentd経由のモバイル操作は併存できる。ただし、`tmux attach`はセッション単位であり、agentdが持つペインのメタデータや状態判定を置き換えるものではない。
+Multiple clients can attach to one tmux session, so desktop terminal use and agentd-mediated mobile use can coexist. tmux attach is session-oriented; it does not replace the pane metadata or state detection managed by agentd.
 
-### 8.4 tmux optionと復旧
+### 8.4 tmux options and recovery
 
-agentd起動時にtmuxをスキャンし、次の情報を再構成する。
+At startup, agentd scans tmux and rebuilds:
 
-- `@agentd.*` user option
-- session/window/pane構造
-- cwd、command、process
-- 保存済みSQLiteのPane/Run情報
+- agentd user options;
+- session, window, and pane structure;
+- cwd, command, and process information;
+- saved Pane and Run records from SQLite.
 
-手動で作られたペインや情報が不完全なペインは`kind=shell`または`unknown`として表示する。
+Manually created panes and panes with incomplete metadata are shown as kind=shell or unknown.
 
-viewport leaseは次の状態を持つ。
+A viewport lease has the following state flow:
 
-```text
+~~~text
 idle
-  └─ mobile attach → mobile-owned
-       ├─ PC client-active/resized/focus-in → desktop-owned
-       ├─ mobile claim/foreground → mobile-owned
-       └─ mobile disconnect → snapshot restore
-```
+  |-- mobile attach -> mobile-owned
+       |-- desktop client-active/resized/focus-in -> desktop-owned
+       |-- mobile claim/foreground -> mobile-owned
+       |-- mobile disconnect -> snapshot restore
+~~~
 
-同じwindowに対して同時に複数のmobile leaseは作らず、既存leaseを壊さない。複数デバイス同時操作が必要になった場合は、別の競合ポリシーをplugin/attachment層で追加する。
+Only one mobile lease is created for a given window; an existing lease is not silently replaced. If simultaneous operation from multiple devices becomes necessary, a separate conflict policy is added at the plugin or attachment layer.
 
-## 9. WebSocketプロトコル
+## 9. WebSocket protocol
 
-JSONの制御フレームと、端末バイト列を載せるバイナリフレームを分離する。端末出力をJSONへ変換したり、WebSocket層でANSIを解釈したりしない。
+Separate JSON control frames from binary terminal-byte frames. Do not convert terminal output to JSON or interpret ANSI at the WebSocket layer.
 
-```text
-Client → attach { target, cols, rows }
-Server → ready { target, cols, rows }
-Client → binary terminal input
-Server → binary terminal output
-Client → resize { cols, rows }
-Client → detach
-```
+~~~text
+Client -> attach { target, cols, rows }
+Server -> ready { target, cols, rows }
+Client -> binary terminal input
+Server -> binary terminal output
+Client -> resize { cols, rows }
+Client -> detach
+~~~
 
-将来の管理接続では、次のイベントプロトコルを別途追加する。
+A future management connection can add the following event protocol:
 
-```text
-Client → hello { protocolVersion, clientId, resumeFrom }
-Server → snapshot { seq, panes, capabilities }
-Server → event { seq, type, data }
-Client → command { requestId, method, params }
-Server → response { requestId, result | error }
-```
+~~~text
+Client -> hello { protocolVersion, clientId, resumeFrom }
+Server -> snapshot { seq, panes, capabilities }
+Server -> event { seq, type, data }
+Client -> command { requestId, method, params }
+Server -> response { requestId, result | error }
+~~~
 
-### 必須要件
+### Required properties
 
-- すべてのイベントに単調増加する`seq`を付ける
-- 切断後に`resumeFrom`から再送できるようにする
-- `requestId`でコマンド応答を対応付ける
-- 入力・アクションは権限と対象ペインを検証する
-- 高頻度の端末出力はPTYバイト列として適切にバッチ化し、WebSocketのbackpressureを扱う
-- 端末の再接続時は、まず`tmux attach-session`のPTYから現在画面を再描画する。管理イベントのresumeとは別の仕組みとする
-- SQLiteのDrizzle型をモバイルへ共有せず、`packages/protocol`のDTO/schemaだけを共有する
+- Every event has a monotonically increasing seq.
+- A client can request replay from resumeFrom after disconnecting.
+- requestId correlates command responses.
+- Input and actions validate both authorization and the target pane.
+- High-volume terminal output is batched as PTY bytes and applies WebSocket backpressure.
+- On terminal reconnect, the current screen is redrawn from the tmux attach-session PTY. This is separate from management-event resumption.
+- Drizzle types are not shared with the mobile app; only DTOs and schemas from packages/protocol are shared.
 
-tRPCのような型安全な発想は採用する。ただし、長時間接続、イベント再開、バイナリ出力を扱うため、通常のrequest/responseだけでなくイベントプロトコルを明示的に設計する。
+The design uses the type-safe idea behind tRPC. However, long-lived connections, event resumption, and binary terminal output require an explicit event protocol in addition to request/response calls.
 
-### 現行HTTP API
+### Current HTTP API
 
-`AgentdApp`が現在公開するHTTP APIは次の通り。HTTPのDTOと入力検証は`packages/protocol`、clientは`packages/agentd-client`に集約する。
+The current AgentdApp exposes:
 
-```text
+~~~text
 GET  /health
 GET  /api/capabilities
 GET  /api/terminals
 GET  /api/sessions
-POST /api/sessions              # tmux sessionを作成
+POST /api/sessions              # create a tmux session
 GET  /api/panes?session=<name>
-POST /api/panes                 # shell / codex / claude paneを作成
-WS   /terminal                  # attach / input / resize / detach
-```
+POST /api/panes                 # create a shell, codex, or claude pane
+WS   /terminal                  # attach, input, resize, and detach
+~~~
 
-`POST /api/panes`はcwdの存在、sessionの存在、agent/shellとagentIdの整合性をagentd側で検証する。agent paneの起動はホスト側の`agent` commandへ委譲し、ブラウザは任意のホストコマンドを直接実行しない。
+POST /api/panes validates cwd existence, session existence, and agent/agentId consistency on the agentd side. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 
-### Workspace directory picker（次段階）
+### Workspace directory picker
 
-workspaceのdirectoryは、モバイルからホストの絶対パスを直接入力させるより、agentd側で管理するworkspace rootを起点に選択させる。候補は次の順で提供する。
+Rather than making a mobile user type arbitrary host absolute paths, select workspace directories below workspace roots managed by agentd. Candidates are provided in this order:
 
-- 最近使ったworkspace、favorite、現在のsessionのcwd
-- Git repository rootと、その配下のdirectory
-- `AGENTD_WORKSPACE_ROOTS`またはSQLiteで許可したroot配下のdirectory
+- recently used workspaces, favorites, and the current session cwd;
+- git repository roots and directories below them;
+- directories below roots allowed by AGENTD_WORKSPACE_ROOTS or SQLite.
 
-APIはパス文字列ではなくworkspace/directory IDを返し、agentdが`realpath`後に許可rootから脱出していないことを検証する。UIは「最近使ったもの」「Git projects」「フォルダを開く」の3段階にし、検索とbreadcrumbで深いdirectoryを選べるようにする。iOSのFiles pickerはiPhone側のファイルを選ぶ機能なので、リモートMacのworkspace選択には使わない。
+The API returns workspace and directory IDs instead of raw path strings. agentd resolves the path with realpath and verifies that it remains below an allowed root. The UI has Recent, Git Projects, and Browse folders stages, with search and breadcrumbs for deeper directories. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
 
 ## 10. Persistence
 
-SQLite + Drizzleをホスト側の永続化に使う。
+Use SQLite and Drizzle for host-side persistence.
 
-### 主なテーブル
+### Main tables
 
-```text
+~~~text
 projects
 workspaces
 panes
@@ -567,75 +566,75 @@ devices
 notification_preferences
 event_offsets
 audit_events
-```
+~~~
 
-### 保存方針
+### Storage policy
 
-- 現在状態はSQLiteに保存する。agent lifecycleは`agent_sessions`、workspace/project定義は`workspaces`/`projects`で管理する
-- 重要な状態遷移はイベント履歴として保存する
-- ターミナル出力の全バイト列は原則保存しない
-- 必要に応じて最新のcaptureや短いring bufferだけを保存する
-- tmuxが実行状態のsource of truth、SQLiteは管理メタデータと復旧情報のsource of truthとする
+- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; workspace and project definitions belong to workspaces and projects.
+- Persist important state transitions as an event history.
+- Do not store every terminal output byte by default.
+- Store only the latest capture or a short ring buffer when needed.
+- tmux is the source of truth for live execution; SQLite is the source of truth for management metadata and recovery information.
 
-## 11. モバイルアプリ
+## 11. Mobile application
 
-### 11.1 技術選定
+### 11.1 Technology choice
 
-Web UIはReact/TypeScript + xterm.jsで実装し、iOSアプリとして配布するときはCapacitorでラップする。
+Implement the web UI with React, TypeScript, and xterm.js, then wrap it with Capacitor when distributing an iOS app.
 
-理由:
+Reasons:
 
-- Vite/HMRによるWeb開発の快適さを維持できる
-- `agentd`のprotocol型をTypeScriptで共有できる
-- WebSocketはWeb APIで利用できる
-- xterm.jsがANSI/VT、スクロール、選択、マウス入力を端末エミュレーターとして担当できる
-- UIが1ペイン中心で、Web UIでも成立しやすい
-- ネイティブ処理をSwift pluginとWidget Extensionに限定できる
+- retain the fast Vite and HMR web development loop;
+- share agentd protocol types in TypeScript;
+- use the WebSocket Web API;
+- let xterm.js handle ANSI/VT, scrollback, selection, and mouse input as the terminal emulator;
+- keep the UI focused on one pane, where a web implementation is a good fit;
+- limit native work to Swift plugins and Widget Extensions.
 
-React Nativeは、ターミナル描画やiOS固有UIをネイティブViewとして組み込みたくなった場合の候補とする。現時点では、UIとagentd protocolを分離しておけば、xterm.jsをSwiftUI/native terminalへ差し替えられる。
+React Native remains an option if terminal rendering or iOS-specific UI must be embedded as a native View. By keeping the UI and agentd protocol separate, xterm.js can later be replaced with a SwiftUI or native terminal implementation.
 
-### 11.2 画面構成
+### 11.2 Screens
 
 1. Pane Board
-   - ペイン一覧
-   - agent名、run名、プロジェクト、worktree
-   - running / waiting_input / waiting_approval / failedの表示
+   - pane list;
+   - agent name, Run name, project, and worktree;
+   - running, waiting_input, waiting_approval, and failed states.
 2. Pane Picker Overlay
-   - tmuxの元レイアウトを簡略化して表示
-   - ペインを選択すると1ペイン画面へ遷移
+   - simplified representation of the original tmux layout;
+   - selecting a pane opens the one-pane view.
 3. Pane View
-   - xterm.jsによるターミナル出力
-   - 入力欄・送信
-   - リサイズ
-   - agent固有アクション
+   - terminal output rendered by xterm.js;
+   - input and send controls;
+   - resize;
+   - agent-specific actions.
 4. Open Pane
-   - agentまたはshell
-   - name
-   - project
-   - worktreeの有無・作成方法
-   - profile
-   - `new window`、既存paneの右分割、下分割
-   - 分割時の基準pane
+   - agent or shell;
+   - name;
+   - project;
+   - whether and how to create a worktree;
+   - profile;
+   - new window, right split, or bottom split;
+   - source pane for a split.
 5. Settings
-   - host接続
-   - 通知ルール
-   - plugin/profile
-   - キー管理
+   - host connection;
+   - notification rules;
+   - plugins and profiles;
+   - key management.
 
-### 11.3 Swiftで担当する部分
+### 11.3 Swift responsibilities
 
-- ActivityKitのLive Activity開始・更新・終了
-- WidgetKitのホーム画面Widget
-- App GroupによるWidgetとのスナップショット共有
-- Keychain、必要に応じて生体認証
-- APNs tokenや通知アクションの不足部分
-- Capacitor pluginのiOS実装
+- start, update, and end ActivityKit Live Activities;
+- render WidgetKit home-screen widgets;
+- share snapshots with widgets through an App Group;
+- use Keychain and, when appropriate, biometric authentication;
+- handle APNs tokens and notification actions that are not available through Capacitor;
+- implement Capacitor's iOS plugins.
 
 ### 11.4 Live Activity
 
-ペインごとにLive Activityを作らず、1つの集約Activityを基本とする。
+Use one aggregate Activity as the default instead of creating one Live Activity per pane.
 
-```text
+~~~text
 AgentBoardActivity
   waitingCount
   runningCount
@@ -644,112 +643,116 @@ AgentBoardActivity
   attentionProject
   reason
   updatedAt
-```
+~~~
 
-`running → waiting_input`や`running → waiting_approval`の遷移時だけalert/soundを発生させる。通常の出力更新では通知しない。
+Trigger an alert or sound only when running changes to waiting_input or waiting_approval. Do not notify for ordinary output updates.
 
-Live Activityから実行するアクションは、アプリを開く、確認済みのApprove/Rejectなど安全な構造化アクションに限定する。任意のターミナル文字列を直接送らない。
+Actions from a Live Activity are limited to safe structured actions such as opening the app or confirming an already authorized Approve or Reject operation. Do not send arbitrary terminal strings directly from a Live Activity.
 
-WebSocketはフォアグラウンド時のリアルタイム表示用であり、iOSバックグラウンドの接続維持手段とはしない。バックグラウンド通知はAPNs/ActivityKit pushを使う。
+The WebSocket is for real-time foreground display, not for keeping an iOS background connection alive. Use APNs and ActivityKit push updates for background notifications.
 
-## 12. Tailscaleと接続
+## 12. Tailscale and connectivity
 
-### 基本構成（MVP）
+### Basic MVP topology
 
-```text
+~~~text
 Browser / Capacitor
-      ↓ HTTPS / WSS
+      |
+      v HTTPS / WSS
 Tailscale Serve
-      ↓ localhost
+      |
+      v localhost
 agentd: 127.0.0.1:4317
-```
+~~~
 
-### 方針
+### Policy
 
-- Tailscale ACLを最初のネットワーク境界とする
-- ブラウザ版はServe URL以外の接続設定やクレデンシャルを要求しない
-- Serve URL、表示名、最後に接続した日時などの非機密設定だけをWeb Storageへ保存する
-- 秘密鍵、SSH password、pairing secretなどはブラウザ版へ持ち込まず、SSH実装時のnative Keychainへ限定する
-- iPhoneにTailscale管理API tokenを持たせない
-- SSHは初回bootstrap、Serve起動、復旧、踏み台経路が必要な場合の将来adapterとする。MVPでは実装しない
-- SSH秘密鍵はnative実装時もKeychainを使い、API clientやWeb bundleには含めない
-- Tailscale ServeのHTTP upgradeと長時間WebSocketが実環境で動くか、初期spikeで確認する
-- 現行は`tailscale serve --bg 4317`などの管理方式を利用できる。Serve起動をCLIへ統合する場合も、業務ロジックはagentdへ委譲する
-- Serveのidentity header（`Tailscale-User-Login`など）をlocalhostのagentdで検証し、pairing token/権限と組み合わせる
-- Serveで問題がある場合の代替候補は、まず同じagentd APIを通すSSH port forwardingとする
+- Use Tailscale ACLs as the first network boundary.
+- The browser build must not require connection settings or credentials beyond a Serve URL.
+- Store only non-sensitive settings such as the Serve URL, display name, and last-connected time in Web Storage.
+- Do not bring private keys, SSH passwords, or pairing secrets into the browser build; keep them in the native Keychain when SSH is implemented.
+- Never put a Tailscale administration API token on the iPhone.
+- Treat SSH as a future adapter for bootstrap, starting Serve, recovery, or bastion routing. It is not part of the MVP.
+- Even in a native SSH implementation, keep private keys in Keychain and out of the API client and web bundle.
+- Verify in an early spike that Tailscale Serve supports HTTP upgrades and long-lived WebSocket connections in the target environment.
+- The current setup can use tailscale serve --bg 4317. If Serve startup is integrated into a CLI, business logic still belongs in agentd.
+- Verify Serve identity headers such as Tailscale-User-Login at the localhost agentd boundary and combine them with pairing and authorization.
+- If Serve has an operational limitation, first consider SSH port forwarding to the same agentd API.
 
-SSHはagentdを起動する仕組みではない。agentdがすでに稼働している場合、同一tailnet上ではServeが単純である。SSHが必要になるのは、たとえばスマホから見える踏み台`bastion`とagentdが動く`workstation`が異なり、`bastion`から`workstation`へSSH接続する場合である。
+SSH does not start agentd. When agentd is already running and the phone can reach the host on the same tailnet, Serve is simpler. SSH becomes useful when, for example, the bastion visible to the phone and the workstation running agentd are different hosts and the bastion must open an SSH connection to the workstation.
 
-Tailscale自体をモバイルアプリへ内蔵することは初期対象外とする。公式Tailscale iOSアプリを利用し、iPhoneからtailnet内のホストへ接続する方式を優先する。
+Do not embed Tailscale itself in the mobile app initially. Prefer the official Tailscale iOS app and connect to a host already present in the tailnet.
 
-### ブラウザ版の接続設定
+### Browser connection profile
 
-ブラウザ版の接続プロファイルは次の情報だけを保存する。
+The browser connection profile stores only:
 
-```ts
+~~~ts
 type BrowserConnectionProfile = {
   id: string
   name: string
   serveUrl: string
   updatedAt: string
 }
-```
+~~~
 
-保存先は`localStorage`などのWeb Storageでよい。秘密情報を保存しないため、Keychain相当の機能は不要である。Tailscaleの認証・ACLはTailscaleアプリとtailnet側に置き、agentdはlocalhost bindを維持する。将来、Serve identity headerやpairing tokenを導入する場合も、ブラウザへ長期秘密を渡さず短命セッションとして扱う。
+localStorage or another Web Storage implementation is sufficient because no secret is stored. Tailscale authentication and ACLs remain in the Tailscale app and tailnet. agentd continues to bind to localhost. If Serve identity headers or pairing tokens are added later, keep them short-lived and do not turn them into long-lived browser secrets.
 
-### ネイティブ版の追加責務
+### Additional native responsibilities
 
-ネイティブ版はブラウザ版のServe経路をそのまま利用できる。SSHを有効にした場合だけ、次の薄いadapterを追加する。
+The native app can use the browser build's Serve route without change. Only an SSH-enabled build adds this thin adapter:
 
-```text
+~~~text
 SSH RouteProvider
-  ├─ Keychainから鍵参照を取得
-  ├─ bastion → agentd hostのlocal forwardを開始
-  ├─ localhostのhttpBaseUrl / websocketUrlを生成
-  └─ closeでforwardと秘密情報の利用を終了
-```
+  |-- obtain a key reference from Keychain
+  |-- start local forwarding from bastion to the agentd host
+  |-- generate localhost httpBaseUrl / websocketUrl
+  |-- close the forward and end secret use
+~~~
 
-このadapterは`@mobile-agent/agentd-client`へ依存せず、接続URLだけを返す。Web bundle、Hono RPC、domain、applicationにはSSH依存を入れない。
+This adapter returns connection URLs and does not depend on the agentd-client package. SSH dependencies do not enter the web bundle, Hono RPC, domain, or application packages.
 
-## 13. 通知
+## 13. Notifications
 
-```text
+~~~text
 agent plugin observation
-        ↓
+        |
+        v
 agentd state transition
-        ↓
+        |
+        v
 NotificationPolicy
-        ├─ WebSocket event
-        ├─ Live Activity update
-        ├─ APNs alert
-        └─ local notification（フォアグラウンド補助）
-```
+        |-- WebSocket event
+        |-- Live Activity update
+        |-- APNs alert
+        |-- local notification (foreground assistance)
+~~~
 
-通知対象の例:
+Example notification states:
 
-- `waiting_input`
-- `waiting_approval`
-- `failed`
-- `completed`（ユーザー設定で有効化）
-- ホストまたはagentdの切断
+- waiting_input;
+- waiting_approval;
+- failed;
+- completed, when enabled by the user;
+- host or agentd disconnected.
 
-通知は`runId + transitionId`で重複排除する。通知・Live Activityには秘密情報やエージェント出力全文を含めず、agent名・プロジェクト名・理由の短い要約だけを表示する。
+Deduplicate notifications by runId and transitionId. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, project name, and reason.
 
-## 14. デスクトップ体験
+## 14. Desktop experience
 
-### 初期方針
+### Initial policy
 
-デスクトップネイティブアプリは作らず、次を組み合わせる。
+Do not build a desktop native app initially. Combine:
 
-- 既存ターミナルからの`tmux attach`
-- `agent` CLI
-- `agent tui`
-- tmux status line連携
-- `agent doctor`などの診断コマンド
+- tmux attach from an existing terminal;
+- the agent CLI;
+- agent tui;
+- tmux status-line integration;
+- diagnostic commands such as agent doctor.
 
-### TUIの役割
+### TUI role
 
-```sh
+~~~sh
 agent tui
 agent pane list
 agent pane focus --waiting
@@ -758,40 +761,40 @@ agent config edit
 agent plugin list
 agent workspace list
 agent doctor
-```
+~~~
 
-TUIはagentdのUnix socketへ接続し、モバイルと同じUse Caseを利用する。tmuxやSQLiteを直接操作する実装にはしない。
+The TUI connects to agentd through a Unix socket and uses the same use cases as mobile. It must not directly manipulate tmux or SQLite.
 
-### 将来のDesktop UI
+### Future desktop UI
 
-次の需要が出た場合に、`desktop-web`を追加する。
+Add desktop-web if these needs emerge:
 
-- ペインレイアウトの視覚的な編集
-- 実行履歴・イベント履歴の検索
-- worktree作成・削除の一覧操作
-- 通知ルールやprofileのフォーム編集
-- システムトレイ、グローバルショートカット
+- visual editing of pane layouts;
+- searching execution and event history;
+- listing and managing worktree creation and deletion;
+- forms for notification rules and profiles;
+- a system tray and global shortcuts.
 
-まずWeb UIとして作り、システムトレイやOS統合が必要になったらTauriでラップする。デスクトップUIもモバイルと同じ`packages/protocol`を使う。
+Build it as a web UI first. Wrap it with Tauri only when system-tray or OS integration is needed. The desktop UI also uses the protocol package shared with mobile.
 
-## 15. CLIコマンド
+## 15. CLI commands
 
-現在実装しているagent lifecycleコマンドは次の通り。state fileを経由せず、すべて`agent_sessions`を読み書きする。
+The currently implemented agent lifecycle commands read and write agent_sessions rather than a state file:
 
-```sh
+~~~sh
 agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
 agent resume [--global] NAME [-- BACKEND_ARGS...]
 agent list [--global] [--names|--json]
 agent cleanup [--global] [--force] NAME
 agent project list [--json]
 agent doctor [--verbose]
-```
+~~~
 
-`run`はworktree、project hook、Claude session ID、Codex Remote Controlのthread name/archiveまで一つのSQLite sessionに紐付ける。`--no-worktree`では暗黙のproject hookを実行せず、必要な場合だけ`--setup-hook`/`--cleanup-hook`で明示する。
+run associates the worktree, project hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --no-worktree, implicit project hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
 
-以下はagentd/TUIを拡張するときのコマンド案。
+The following commands are planned as agentd and TUI extensions:
 
-```sh
+~~~sh
 agent daemon run
 agent daemon status
 agent daemon stop
@@ -820,148 +823,148 @@ agent tui
 agent config get
 agent config edit
 agent doctor
-```
+~~~
 
-`agent mobile serve --stdio`などの未実装コマンドは将来の薄いtransport adapterとし、業務ロジックは永続的な`agentd`へ委譲する。
+Unimplemented commands such as agent mobile serve --stdio remain thin transport adapters. Business logic is delegated to the long-running agentd process.
 
-## 16. セキュリティ
+## 16. Security
 
-- WebSocket endpointはlocalhost bind + Tailscale Serveを基本とする
-- Tailscale ACLでホスト単位・ユーザー単位のアクセスを制御する
-- ブラウザ版はServe URLなどの非機密設定だけをWeb Storageへ保存する
-- pairing tokenを追加する場合はデバイス単位で発行・失効できるようにする
-- device token、秘密鍵、refresh tokenはnative Keychainまたはホスト側に保存し、Web bundleへ含めない
-- Live Activityや通知にエージェントの出力全文を載せない
-- `sendInput`、Approve、Rejectなどは対象Runの権限を確認する
-- 重要な操作はaudit eventに記録する
-- プラグインはホスト上で任意コードを実行できるため、インストール時に信頼確認を要求する
-- 外部プラグインはJSONL/stdinプロセスに分離し、タイムアウト・クラッシュ・再起動を管理する
-- 将来のサンドボックスはコンテナ、OS sandbox、専用ユーザーなどを検討する
+- Bind the WebSocket endpoint to localhost and use Tailscale Serve as the default route.
+- Use Tailscale ACLs to control access by host and user.
+- Store only non-sensitive settings such as the Serve URL in browser storage.
+- If pairing tokens are added, issue and revoke them per device.
+- Store device tokens, private keys, and refresh tokens in native Keychain or on the host; never include them in the web bundle.
+- Never put complete agent output in Live Activities or notifications.
+- Check authorization for sendInput, Approve, Reject, and similar operations against the target Run.
+- Record important actions as audit events.
+- Make the plugin trust requirement explicit because plugins can execute arbitrary code on the host.
+- Isolate external plugins in JSONL/stdin child processes and manage timeout, crash, and restart behavior.
+- Consider containers, OS sandboxing, or a dedicated host user for future sandboxing.
 
-## 17. 非機能要件
+## 17. Non-functional requirements
 
-### 接続
+### Connectivity
 
-- ブラウザ版はTailscale ServeのHTTPS/WSSで接続できる
-- WebSocketは切断後に指数バックオフで自動再接続できる
-- snapshotとevent sequenceから状態を復元できる
-- agentd再起動後にtmuxペインを再発見できる
-- オフライン中の未送信入力は無制限にキューしない
+- The browser build connects through Tailscale Serve over HTTPS/WSS.
+- WebSocket reconnects automatically with exponential backoff.
+- State can be restored from a snapshot and event sequence.
+- tmux panes can be rediscovered after agentd restarts.
+- Unsent input is not queued without a bound while offline.
 
-### 性能
+### Performance
 
-- ターミナル出力を小さなイベント単位で無制限に送らない
-- モバイルには表示中ペインの出力を優先して送る
-- ペイン一覧や状態更新は軽量なJSONにする
-- 端末出力と状態イベントを分離する
+- Do not send terminal output as an unbounded stream of tiny events.
+- Prioritize the visible pane's output on mobile.
+- Keep pane lists and state updates as lightweight JSON.
+- Keep terminal output separate from state events.
 
-### テスト
+### Testing
 
-- Domain/Applicationはtmuxなしでテストする
-- tmux adapterはfixture用のtmux sessionで統合テストする
-- AgentPluginはエージェントごとの出力fixtureで状態遷移をテストする
-- WebSocketは再接続、重複、欠落、sequence resumeをテストする
-- Live Activityは実機で入力待ち遷移と通知音を確認する
+- Test Domain and Application without tmux.
+- Run tmux adapter integration tests against fixture tmux sessions.
+- Test AgentPlugin state transitions with per-agent output fixtures.
+- Test WebSocket reconnect, duplication, loss, and sequence resumption.
+- Verify Live Activity waiting transitions and notification sounds on a real device.
 
-## 18. 実装フェーズ
+## 18. Implementation phases
 
-### Phase 0: 契約と骨格
+### Phase 0: contracts and skeleton
 
-- Turborepo + pnpm monorepo構成
-- Domain/Application/Protocol package
-- Pane/Run/AgentStateの型
-- WebSocket frame schema
-- Plugin API v1の最小版
-- fake tmux/agent fixture
+- Turborepo and pnpm monorepo;
+- Domain, Application, and Protocol packages;
+- Pane, Run, and AgentState types;
+- WebSocket frame schemas;
+- minimal Plugin API v1;
+- fake tmux and agent fixtures.
 
-### Phase 1: ホストMVP
+### Phase 1: host MVP
 
-- agentdの起動・停止・status
-- Tailscale Serve経由のブラウザ接続設定
-- tmux hook + client pollingによるviewport監視（Control Modeの管理経路は次段階）
-- `node-pty` + `tmux attach-session -f active-pane`によるshellペインの表示・入力・resize
-- viewport leaseによるスマホzoom、PC takeover、サイズ/layout復元
-- xterm.jsのスマホviewport表示
-- SQLite/Drizzle
-- `agent pane list` CLIとPane Board
-- tmux再起動復旧
+- agentd start, stop, and status;
+- browser connection settings through Tailscale Serve;
+- viewport monitoring through tmux hooks and client polling, with Control Mode management as the next step;
+- shell-pane display, input, and resize through node-pty and tmux attach-session -f active-pane;
+- viewport lease with mobile zoom, desktop takeover, and size/layout restoration;
+- xterm.js mobile viewport;
+- SQLite and Drizzle;
+- agent pane list CLI and Pane Board;
+- tmux restart recovery.
 
-### Phase 2: デスクトップTUI
+### Phase 2: desktop TUI
 
-- `agent tui`
-- waitingペインの一覧
-- ペイン選択後のattach/switch-client
-- plugin/profile/workspaceの管理
-- tmux status line連携
+- agent tui;
+- waiting-pane list;
+- attach or switch-client after pane selection;
+- plugin, profile, and workspace management;
+- tmux status-line integration.
 
-### Phase 3: モバイルPoC
+### Phase 3: mobile proof of concept
 
-- Web + xterm.js（必要に応じてCapacitorでiOS化）
-- Serve URLを保存・切り替えできるブラウザ接続設定
-- WSS接続
-- 1ペイン表示
-- キーボード、選択、コピー、スクロール
-- ペイン一覧とoverlay
+- Web and xterm.js, optionally packaged as iOS with Capacitor;
+- browser connection settings for saving and switching Serve URLs;
+- WSS connection;
+- one-pane display;
+- keyboard, selection, copy, and scroll;
+- pane list and overlay.
 
-### Phase 4: 通知とiOS拡張
+### Phase 4: notifications and iOS extensions
 
-- Swift Capacitor plugin
-- ActivityKit aggregate Live Activity
-- WidgetKit snapshot
-- Keychain
-- APNs通知
+- Swift Capacitor plugin;
+- aggregate ActivityKit Live Activity;
+- WidgetKit snapshot;
+- Keychain;
+- APNs notifications.
 
-### Phase 5: エージェント拡張
+### Phase 5: agent extensions
 
-- shell plugin
-- Codex plugin
-- Claude plugin
-- 宣言型Profile
-- 外部JSONL plugin
-- plugin doctorと権限表示
+- shell plugin;
+- Codex plugin;
+- Claude plugin;
+- declarative profiles;
+- external JSONL plugins;
+- plugin doctor and permission display.
 
-### Phase 6: Desktop UI（必要な場合のみ）
+### Phase 6: desktop UI, only if needed
 
-- Desktop Web UI
-- イベント履歴、レイアウト、設定フォーム
-- Tauri wrapper、tray、global shortcut
+- desktop web UI;
+- event history, layouts, and settings forms;
+- Tauri wrapper, tray, and global shortcut.
 
-### Phase 7: 踏み台SSH経路（将来）
+### Phase 7: future bastion SSH route
 
-- `SshRouteProvider`のnative実装
-- bastionからagentdホストへのlocal port forwarding
-- Keychain参照、接続診断、切断時の確実なcleanup
-- Serve経路と同じHTTP/WebSocket契約での統合テスト
+- native SshRouteProvider;
+- local port forwarding from bastion to the agentd host;
+- Keychain references, connection diagnostics, and reliable cleanup;
+- integration tests using the same HTTP/WebSocket contract as Serve.
 
-## 19. 主なリスクと判断ポイント
+## 19. Main risks and decision points
 
-| リスク | 判断方法 | 対応 |
+| Risk | How to decide | Response |
 |---|---|---|
-| Tailscale ServeでWebSocketが安定しない | 実機から長時間接続・再接続を検証 | SSH port forwardまたは別proxy |
-| WKWebViewで端末操作が不快 | xterm.jsのIME、選択、外部キーボードを先に検証 | SwiftUI/native terminal部分へ差し替え |
-| エージェントの入力待ち検出が不安定 | 構造化イベントの有無を調査 | Plugin observer + fallback parser |
-| Live Activity pluginが要件不足 | aggregate ActivityのPoCを作る | Swift extensionを自前実装 |
-| 外部pluginの権限が大きい | install/doctorで権限表示 | 子プロセス、専用ユーザー、sandbox |
-| tmuxとagentdの状態がずれる | 再起動・手動変更・pane移動をテスト | tmux option + recovery scan |
-| 出力が多くモバイルが重い | 大量ログ・長時間接続を測定 | batch、rate limit、capture分離 |
+| Tailscale Serve is unstable for WebSocket | Test long-lived connections and reconnects from a real device | SSH port forwarding or another proxy |
+| Terminal interaction is uncomfortable in WKWebView | Test xterm.js IME, selection, and external keyboards first | Replace the terminal portion with SwiftUI or native code |
+| Agent waiting-state detection is unreliable | Investigate structured event support | AgentPlugin observer plus fallback parser |
+| Live Activity APIs are insufficient | Build an aggregate Activity proof of concept | Implement a Swift extension |
+| External plugins require too many privileges | Show permissions in install and doctor flows | Child process, dedicated user, or sandbox |
+| tmux and agentd state diverge | Test restart, manual changes, and pane movement | tmux options plus recovery scan |
+| High output volume makes mobile slow | Measure large logs and long connections | Batching, rate limits, and capture separation |
 
-## 20. 参考資料
+## 20. References
 
 - [tmux Control Mode](https://github.com/tmux/tmux/wiki/Control-Mode)
 - [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
 - [Tailscale SSH](https://tailscale.com/docs/features/tailscale-ssh)
 - [Tailscale identity headers](https://tailscale.com/docs/concepts/tailscale-identity)
-- [Capacitor plugin作成](https://capacitorjs.com/docs/plugins/creating-plugins)
+- [Creating Capacitor plugins](https://capacitorjs.com/docs/plugins/creating-plugins)
 - [Capacitor Push Notifications](https://capacitorjs.com/docs/apis/push-notifications)
 - [React Native Turbo Modules with Swift](https://reactnative.dev/docs/the-new-architecture/turbo-modules-with-swift)
 - [Expo Widgets](https://docs.expo.dev/versions/latest/sdk/widgets/)
 - [Capacitor Live Activities](https://github.com/Cap-go/capacitor-live-activities)
 - [Capacitor WidgetKit](https://github.com/Cap-go/capacitor-widget-kit)
-- [Mobilecode-open: Capacitor + Tailscale Serveの実装例](https://github.com/elkir0/Mobilecode-open)
+- [Mobilecode-open: Capacitor and Tailscale Serve example](https://github.com/elkir0/Mobilecode-open)
 
-## 21. 依存管理方針
+## 21. Dependency policy
 
-- 依存を追加・更新する前に、npmの公開stableと各プロジェクトの公式リリースを確認する
-- alpha、beta、rcなどのpre-releaseは、明示的な採用理由がない限り使わない
-- 更新後は`pnpm deps:check`、`pnpm typecheck`、`pnpm test`、`pnpm build`を実行する
-- 最新版同士で互換性がない場合は、古い版を黙って固定せず、代替ライブラリまたは標準機能への置き換えを検討し、理由を設計書へ記録する
+- Before adding or updating a dependency, verify the public stable npm release and the project's official release information.
+- Do not use alpha, beta, or release-candidate versions unless there is an explicit adoption reason.
+- After an update, run pnpm deps:check, pnpm typecheck, pnpm test, and pnpm build.
+- If the latest versions are incompatible, do not silently pin an older version. Consider a replacement library or a platform feature and record the reason in the architecture documentation.

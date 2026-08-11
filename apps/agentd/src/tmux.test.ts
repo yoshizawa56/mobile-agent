@@ -25,6 +25,29 @@ describe("tmux adapter client switching", () => {
   });
 });
 
+describe("tmux adapter mobile attach redraw", () => {
+  it("attaches to the resolved pane target", () => {
+    const adapter = new RecordingTmuxAdapter();
+
+    expect(adapter.attachArgs("%1")).toEqual([
+      "-S",
+      "/private/tmp/mobile-agent-test.sock",
+      "attach-session",
+      "-f",
+      "active-pane",
+      "-t",
+      "%1",
+    ]);
+  });
+
+  it("resets and fully redraws a client after viewport reconciliation", () => {
+    const adapter = new RecordingTmuxAdapter();
+    adapter.refreshClient("/dev/ttys016");
+
+    expect(adapter.lastArgs).toEqual(["refresh-client", "-rS", "-t", "/dev/ttys016"]);
+  });
+});
+
 class RecordingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];
 

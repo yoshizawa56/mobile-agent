@@ -100,14 +100,14 @@ export class TmuxViewportManager {
     if (!record || record.released || record.owner !== "mobile") return;
 
     try {
-      this.enterMobileViewport(record, record.mobileCols, record.mobileRows);
+      this.reconcileMobileViewport(record, record.mobileCols, record.mobileRows);
     } catch {
       // The pane may disappear immediately after a desktop-side split/exit.
       // The next terminal attach or claim will retry from a fresh snapshot.
     }
   }
 
-  public prepare(target: string, cwd: string): PreparedViewport {
+  public prepare(target: string, cwd: string, cols = 80, rows = 24): PreparedViewport {
     if (this.disposed) throw new Error("Viewport manager has been disposed");
 
     let pane: TmuxPaneRef;
@@ -129,12 +129,24 @@ export class TmuxViewportManager {
       pane,
       snapshot,
       owner: "mobile",
-      mobileCols: 80,
-      mobileRows: 24,
+      mobileCols: cols,
+      mobileRows: rows,
       desktopClientFlags: new Map(),
       released: false,
     };
     this.leases.set(pane.windowId, record);
+
+    // Establish the exact mobile window state before a PTY is attached. tmux
+    // sends its first screen immediately when attach-session starts; waiting
+    // until after the client appears allows the old split layout to reach the
+    // terminal emulator and leaves a redraw race for the later zoom command.
+    try {
+      this.primeMobileViewport(record, cols, rows);
+    } catch (error) {
+      this.releaseRecord(record);
+      throw error;
+    }
+
     this.startMonitor();
 
     return {
@@ -182,7 +194,10 @@ export class TmuxViewportManager {
       (current) => current.pane.windowId === client.windowId && current.pane.sessionName === client.sessionName,
     );
     if (!candidate) return;
-    if (candidate.ptyPid === client.pid) return;
+    // A prepared lease has already staged the shared window, but its mobile
+    // PTY has not necessarily appeared in tmux yet. Ignore desktop hooks in
+    // that small interval; there is no mobile client to hand control back to.
+    if (!candidate.mobileClient || candidate.ptyPid === client.pid) return;
 
     const reason: ViewportReason =
       event === "client-resized"
@@ -267,7 +282,7 @@ export class TmuxViewportManager {
     record.mobileClient = client;
 
     this.protectDesktopClients(record);
-    this.enterMobileViewport(record, options.cols, options.rows);
+    this.reconcileMobileViewport(record, options.cols, options.rows);
     this.rememberLatestDesktop(record);
     this.emit(record, "mobile", "attached");
 
@@ -287,7 +302,12 @@ export class TmuxViewportManager {
     };
   }
 
-  private enterMobileViewport(record: LeaseRecord, cols: number, rows: number): void {
+  private primeMobileViewport(record: LeaseRecord, cols: number, rows: number): void {
+    this.protectDesktopClients(record);
+    this.reconcileMobileViewport(record, cols, rows);
+  }
+
+  private reconcileMobileViewport(record: LeaseRecord, cols: number, rows: number): void {
     record.owner = "mobile";
     record.mobileCols = cols;
     record.mobileRows = rows;
@@ -296,18 +316,28 @@ export class TmuxViewportManager {
     this.adapter.resizeWindow(record.pane.windowId, cols, rows);
 
     const current = this.adapter.snapshotWindow(record.pane);
-    if (current.zoomed && current.activePaneId === record.pane.paneId) {
-      this.adapter.switchClient(record.mobileClient?.name ?? "", record.pane.paneId, true);
-      return;
+    if (!current.zoomed || current.activePaneId !== record.pane.paneId) {
+      if (current.zoomed) this.adapter.selectLayout(record.pane.windowId, current.layout);
+      this.adapter.selectPane(record.pane.paneId);
+      this.adapter.zoomPane(record.pane.paneId);
     }
 
-    if (current.zoomed) {
-      this.adapter.selectLayout(record.pane.windowId, current.layout);
-    }
     if (record.mobileClient) {
-      this.adapter.switchClient(record.mobileClient.name, record.pane.paneId);
+      let client = record.mobileClient;
+      try {
+        client = this.adapter.clientView(record.mobileClient.name);
+      } catch {
+        // The client may disappear during a reconnect. The final refresh below
+        // will fail and the caller can release this lease for a clean retry.
+      }
+      if (client.windowId !== record.pane.windowId || client.paneId !== record.pane.paneId) {
+        this.adapter.switchClient(record.mobileClient.name, record.pane.paneId, true);
+      }
+      // The viewport commands above can be delivered as incremental terminal
+      // updates. Reset and redraw once after the authoritative state is in
+      // place so xterm cannot retain cells from the pre-zoom split.
+      this.adapter.refreshClient(record.mobileClient.name);
     }
-    this.adapter.zoomPane(record.pane.paneId);
   }
 
   private claimMobile(record: LeaseRecord, cols?: number, rows?: number): void {
@@ -319,7 +349,7 @@ export class TmuxViewportManager {
       record.snapshot = this.adapter.snapshotWindow(record.pane);
       record.owner = "mobile";
       this.protectDesktopClients(record);
-      this.enterMobileViewport(record, nextCols, nextRows);
+      this.reconcileMobileViewport(record, nextCols, nextRows);
       this.emit(record, "mobile", "mobile_claim");
       return;
     }
@@ -333,14 +363,27 @@ export class TmuxViewportManager {
       this.claimMobile(record, cols, rows);
       return;
     }
-    record.mobileCols = cols;
-    record.mobileRows = rows;
-    this.adapter.setWindowSize(record.pane.windowId, "manual");
-    this.adapter.resizeWindow(record.pane.windowId, cols, rows);
+    this.reconcileMobileViewport(record, cols, rows);
   }
 
   private claimDesktop(record: LeaseRecord, client: TmuxClient, reason: ViewportReason): void {
-    if (record.released || record.mobileClient?.name === client.name) return;
+    if (record.released || !record.mobileClient || record.mobileClient.name === client.name) return;
+
+    if (record.owner === "desktop") {
+      const previous = record.latestDesktop;
+      record.latestDesktop = client;
+      if (
+        !previous ||
+        previous.name !== client.name ||
+        previous.width !== client.width ||
+        previous.height !== client.height
+      ) {
+        this.adapter.setWindowSize(record.pane.windowId, "manual");
+        this.adapter.resizeWindow(record.pane.windowId, client.width, client.height);
+        this.adapter.refreshClient(client.name);
+      }
+      return;
+    }
 
     if (record.owner === "mobile") {
       const current = this.adapter.snapshotWindow(record.pane);
@@ -369,12 +412,15 @@ export class TmuxViewportManager {
     record.latestDesktop = client;
     this.adapter.setWindowSize(record.pane.windowId, "manual");
     this.adapter.resizeWindow(record.pane.windowId, client.width, client.height);
+    this.adapter.refreshClient(client.name);
     this.emit(record, "desktop", reason);
   }
 
   private releaseRecord(record: LeaseRecord): void {
     if (record.released) return;
     record.released = true;
+    const clientsToRefresh = new Set(record.desktopClientFlags.keys());
+    if (record.latestDesktop) clientsToRefresh.add(record.latestDesktop.name);
 
     try {
       if (record.owner === "mobile") {
@@ -388,6 +434,13 @@ export class TmuxViewportManager {
     } catch {
       // Best effort during disconnect/shutdown. The periodic reconciliation on
       // the next attach will take a fresh snapshot.
+    }
+    for (const clientName of clientsToRefresh) {
+      try {
+        this.adapter.refreshClient(clientName);
+      } catch {
+        // The desktop client may have detached already.
+      }
     }
 
     this.leases.delete(record.pane.windowId);
@@ -447,6 +500,7 @@ export class TmuxViewportManager {
         ) {
           record.latestDesktop = desktop;
           this.adapter.resizeWindow(record.pane.windowId, desktop.width, desktop.height);
+          this.adapter.refreshClient(desktop.name);
         }
       }
     } catch {
@@ -472,7 +526,6 @@ export class TmuxViewportManager {
   }
 
   private protectDesktopClients(record: LeaseRecord): void {
-    record.desktopClientFlags = new Map();
     try {
       const clients = this.adapter.listClients().filter(
         (client) =>
@@ -481,8 +534,10 @@ export class TmuxViewportManager {
           client.sessionName === record.pane.sessionName,
       );
       for (const client of clients) {
-        record.desktopClientFlags.set(client.name, client.flags);
-        if (!client.flags.split(",").includes("active-pane")) {
+        if (!record.desktopClientFlags.has(client.name)) {
+          record.desktopClientFlags.set(client.name, client.flags);
+        }
+        if (!hasTmuxClientFlag(client, "active-pane")) {
           this.adapter.setClientFlags(client.name, "active-pane");
         }
       }

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { serverControlMessageSchema } from "@mobile-agent/protocol";
+import {
+  serverControlMessageSchema,
+  terminalProtocolVersion,
+  type ClientControlMessage,
+  type ServerControlMessage,
+} from "@mobile-agent/protocol";
 import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import { getAgentdWebSocketEndpoint } from "../api/agentd-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
@@ -9,6 +14,12 @@ import { installTerminalFlickInput } from "./terminal-flick";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
+
+export type PaneResumeState = {
+  sessionId: string;
+  resumeToken: string;
+  target: string;
+};
 
 export type PaneViewModel = {
   target: string;
@@ -19,6 +30,7 @@ export type PaneViewModel = {
   terminalContainerRef: RefCallback<HTMLDivElement>;
   reconnect: () => void;
   claim: () => void;
+  detach: () => void;
 };
 
 export function usePaneViewModel({ target, connection }: { target: string; connection?: AgentdConnection }): PaneViewModel {
@@ -30,37 +42,47 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
   const [viewportReason, setViewportReason] = useState<string | null>(null);
-  const [connectionVersion, setConnectionVersion] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
+  const connectRef = useRef<(() => void) | null>(null);
+  const detachRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
+  const resumeRef = useRef<PaneResumeState | null>(null);
+  const terminalClosedRef = useRef(false);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current === null) return;
+    window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  }, []);
 
   const reconnect = useCallback(() => {
     retryCountRef.current = 0;
-    if (retryTimerRef.current !== null) {
-      window.clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-    setConnectionVersion((version) => version + 1);
-  }, []);
+    terminalClosedRef.current = false;
+    clearRetryTimer();
+    setStatus("connecting");
+    setErrorMessage(null);
+    connectRef.current?.();
+  }, [clearRetryTimer]);
 
   const claim = useCallback(() => {
-    const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "claim" }));
-    }
+    sendControl(socketRef.current, { type: "claim", version: terminalProtocolVersion });
   }, []);
+
+  const detach = useCallback(() => {
+    terminalClosedRef.current = true;
+    clearRetryTimer();
+    detachRef.current?.();
+  }, [clearRetryTimer]);
 
   useEffect(() => {
     // The terminal surface is mounted by the control-room route. The hook lives
     // above that route, so the DOM ref is the reliable lifecycle signal here;
     // gating on the route stage can race with the ref callback during SPA
     // navigation and leave the surface permanently uninitialized.
-    if (!target) return;
+    if (!target || !terminalContainer) return;
 
     const container = terminalContainer;
-    if (!container) return;
-
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: '"SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, monospace',
@@ -78,23 +100,167 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     terminal.open(container);
     fitAddon.fit();
 
+    const endpoint = getAgentdWebSocketEndpoint(connection);
+    const storageKey = terminalResumeStorageKey(endpoint, target);
+    resumeRef.current = readTerminalResumeState(storageKey, target);
+    terminalClosedRef.current = false;
+    let disposed = false;
+    let resizeFrame: number | null = null;
+    let retryScheduled = false;
+    let socketGeneration = 0;
+
+    const scheduleReconnect = () => {
+      if (disposed || terminalClosedRef.current || retryScheduled || retryCountRef.current >= 8) return;
+      retryScheduled = true;
+      const attempt = retryCountRef.current++;
+      const delay = Math.min(1_000 * 2 ** attempt, 10_000);
+      setStatus("connecting");
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        retryScheduled = false;
+        if (!disposed) connect();
+      }, delay);
+    };
+
+    const sendResize = () => {
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        if (disposed) return;
+
+        fitAddon.fit();
+        sendControl(socketRef.current, {
+          type: "resize",
+          version: terminalProtocolVersion,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        });
+      });
+    };
+
+    const sendAttach = (socket: WebSocket) => {
+      const resume = resumeRef.current?.target === target ? resumeRef.current : null;
+      const message = createTerminalAttachMessage({
+        target,
+        cols: terminal.cols,
+        rows: terminal.rows,
+        resume,
+      });
+      socket.send(JSON.stringify(message));
+    };
+
+    const connect = () => {
+      if (disposed || terminalClosedRef.current) return;
+
+      const previousSocket = socketRef.current;
+      if (previousSocket && (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)) {
+        socketRef.current = null;
+        closeNetworkSocket(previousSocket);
+      }
+
+      const socket = new WebSocket(endpoint);
+      const generation = ++socketGeneration;
+      const isCurrentSocket = () => !disposed && socketRef.current === socket && generation === socketGeneration;
+      const resumeAttempt = Boolean(resumeRef.current?.target === target);
+      let fallbackAttachSent = false;
+
+      socketRef.current = socket;
+      socket.binaryType = "arraybuffer";
+      setStatus("connecting");
+      setErrorMessage(null);
+
+      socket.addEventListener("open", () => {
+        if (!isCurrentSocket()) return;
+        fitAddon.fit();
+        sendAttach(socket);
+      });
+
+      socket.addEventListener("message", (event) => {
+        if (!isCurrentSocket()) return;
+        if (typeof event.data === "string") {
+          handleControlMessage(event.data, {
+            onReady: (message) => {
+              retryCountRef.current = 0;
+              terminalClosedRef.current = false;
+              setStatus("connected");
+              setErrorMessage(null);
+              const nextResume = resumeStateFromReady(message, target);
+              resumeRef.current = nextResume;
+              writeTerminalResumeState(storageKey, nextResume);
+            },
+            onClosed: (message) => {
+              terminalClosedRef.current = true;
+              clearTerminalResumeState(storageKey);
+              resumeRef.current = null;
+              setStatus("closed");
+              setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
+            },
+            onError: ({ code, message, retryable }) => {
+              if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
+                fallbackAttachSent = true;
+                resumeRef.current = null;
+                clearTerminalResumeState(storageKey);
+                setStatus("connecting");
+                sendAttach(socket);
+                return;
+              }
+
+              setStatus("error");
+              setErrorMessage(message);
+              if (retryable) scheduleReconnect();
+            },
+            onViewport: (owner, reason) => {
+              setViewportOwner(owner);
+              setViewportReason(reason);
+            },
+          });
+          return;
+        }
+
+        terminal.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+      });
+
+      socket.addEventListener("error", () => {
+        if (!isCurrentSocket() || terminalClosedRef.current) return;
+        setStatus("error");
+        setErrorMessage("WebSocket connection failed");
+        scheduleReconnect();
+      });
+
+      socket.addEventListener("close", () => {
+        if (!isCurrentSocket()) return;
+        socketRef.current = null;
+        if (terminalClosedRef.current) return;
+        setStatus("connecting");
+        scheduleReconnect();
+      });
+    };
+
+    connectRef.current = connect;
+    detachRef.current = () => {
+      const socket = socketRef.current;
+      resumeRef.current = null;
+      clearTerminalResumeState(storageKey);
+      if (socket?.readyState === WebSocket.OPEN) {
+        sendControl(socket, {
+          type: "detach",
+          version: terminalProtocolVersion,
+        });
+      } else if (socket?.readyState === WebSocket.CONNECTING) {
+        closeNetworkSocket(socket, "detached");
+      }
+      setStatus("closed");
+    };
+
     if (isMockMode()) {
       setStatus("connected");
       setViewportReason("attached");
       terminal.write(mockTerminalOutputForTarget(target));
 
-      let resizeFrame: number | null = null;
-      const resize = () => {
-        if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-        resizeFrame = requestAnimationFrame(() => {
-          resizeFrame = null;
-          fitAddon.fit();
-        });
-      };
-      const resizeObserver = new ResizeObserver(resize);
+      const resizeObserver = new ResizeObserver(sendResize);
       resizeObserver.observe(container);
-      window.addEventListener("resize", resize);
-      resize();
+      window.addEventListener("resize", sendResize);
+      sendResize();
       const flickCleanup = installTerminalFlickInput(container, () => {
         // The mock is intentionally read-only. Real input is wired to agentd below.
       });
@@ -103,8 +269,12 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       });
 
       return () => {
+        disposed = true;
+        connectRef.current = null;
+        detachRef.current = null;
+        clearRetryTimer();
         resizeObserver.disconnect();
-        window.removeEventListener("resize", resize);
+        window.removeEventListener("resize", sendResize);
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
         flickCleanup();
         inputDisposable.dispose();
@@ -112,114 +282,20 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       };
     }
 
-    const endpoint = getAgentdWebSocketEndpoint(connection);
-    const socket = new WebSocket(endpoint);
-    socketRef.current = socket;
-    socket.binaryType = "arraybuffer";
-    setStatus("connecting");
-    setErrorMessage(null);
-    setViewportOwner("mobile");
-    setViewportReason(null);
-
-    let lastWidth = -1;
-    let lastHeight = -1;
-    let resizeFrame: number | null = null;
-    let disposed = false;
-    let retryScheduled = false;
-    const scheduleReconnect = () => {
-      if (disposed || retryScheduled || retryCountRef.current >= 8) return;
-      retryScheduled = true;
-      const attempt = retryCountRef.current++;
-      const delay = Math.min(1_000 * 2 ** attempt, 10_000);
-      setStatus("connecting");
-      retryTimerRef.current = window.setTimeout(() => {
-        retryTimerRef.current = null;
-        retryScheduled = false;
-        if (!disposed) setConnectionVersion((version) => version + 1);
-      }, delay);
-    };
-    const sendInput = (data: string) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
-    };
-    const sendResize = () => {
-      if (resizeFrame !== null) return;
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = null;
-        if (disposed) return;
-
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        if (width === lastWidth && height === lastHeight) return;
-        lastWidth = width;
-        lastHeight = height;
-        fitAddon.fit();
-        if (socket.readyState !== WebSocket.OPEN) return;
-        socket.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          }),
-        );
-      });
-    };
-
     const resizeObserver = new ResizeObserver(sendResize);
     resizeObserver.observe(container);
+    window.addEventListener("resize", sendResize);
 
     const inputDisposable = terminal.onData((data) => {
-      sendInput(data);
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
     });
-    const flickCleanup = installTerminalFlickInput(container, sendInput);
+    const flickCleanup = installTerminalFlickInput(container, (data) => {
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+    });
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "resize", cols, rows }));
-      }
-    });
-
-    socket.addEventListener("open", () => {
-      fitAddon.fit();
-      socket.send(
-        JSON.stringify({
-          type: "attach",
-          target,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }),
-      );
-    });
-
-    socket.addEventListener("message", (event) => {
-      if (typeof event.data === "string") {
-        handleControlMessage(event.data, {
-          onReady: () => {
-            retryCountRef.current = 0;
-            setStatus("connected");
-          },
-          onClosed: () => setStatus("closed"),
-          onError: (message) => {
-            setStatus("error");
-            setErrorMessage(message);
-            scheduleReconnect();
-          },
-          onViewport: (owner, reason) => {
-            setViewportOwner(owner);
-            setViewportReason(reason);
-          },
-        });
-        return;
-      }
-
-      terminal.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
-    });
-    socket.addEventListener("error", () => {
-      setStatus("error");
-      setErrorMessage("WebSocket connection failed");
-      scheduleReconnect();
-    });
-    socket.addEventListener("close", () => {
-      setStatus((current) => (current === "error" ? current : "closed"));
-      scheduleReconnect();
+      sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
     });
 
     const claimWhenVisible = () => {
@@ -227,25 +303,32 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     };
     document.addEventListener("visibilitychange", claimWhenVisible);
     window.addEventListener("focus", claimWhenVisible);
+    sendResize();
+    connect();
 
     return () => {
       disposed = true;
+      connectRef.current = null;
+      detachRef.current = null;
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-      if (retryTimerRef.current !== null) {
-        window.clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
+      clearRetryTimer();
       document.removeEventListener("visibilitychange", claimWhenVisible);
       window.removeEventListener("focus", claimWhenVisible);
       resizeObserver.disconnect();
+      window.removeEventListener("resize", sendResize);
       inputDisposable.dispose();
       flickCleanup();
       resizeDisposable.dispose();
-      socket.close();
-      if (socketRef.current === socket) socketRef.current = null;
+      const socket = socketRef.current;
+      socketRef.current = null;
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        // Effect cleanup is a transport loss, not an explicit detach. This
+        // lets a remounted pane resume the same PTY during the grace window.
+        closeNetworkSocket(socket);
+      }
       terminal.dispose();
     };
-  }, [claim, connectionVersion, target, terminalContainer]);
+  }, [claim, clearRetryTimer, connection, target, terminalContainer]);
 
   return {
     target,
@@ -256,37 +339,125 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     terminalContainerRef,
     reconnect,
     claim,
+    detach,
   };
+}
+
+export function createTerminalAttachMessage({
+  target,
+  cols,
+  rows,
+  resume,
+}: {
+  target: string;
+  cols: number;
+  rows: number;
+  resume?: PaneResumeState | null;
+}): Extract<ClientControlMessage, { type: "attach" }> {
+  return {
+    type: "attach",
+    version: terminalProtocolVersion,
+    target,
+    cols,
+    rows,
+    ...(resume && resume.target === target ? { sessionId: resume.sessionId, resumeToken: resume.resumeToken } : {}),
+  };
+}
+
+export function resumeStateFromReady(
+  message: Extract<ServerControlMessage, { type: "ready" }>,
+  target: string,
+): PaneResumeState {
+  return {
+    sessionId: message.sessionId,
+    resumeToken: message.resumeToken,
+    target,
+  };
+}
+
+export function handleControlMessage(
+  rawMessage: string,
+  handlers: {
+    onReady: (message: Extract<ServerControlMessage, { type: "ready" }>) => void;
+    onClosed: (message: Extract<ServerControlMessage, { type: "closed" }>) => void;
+    onError: (message: { code: string; message: string; retryable: boolean }) => void;
+    onViewport: (owner: PaneViewportOwner, reason: string) => void;
+  },
+): void {
+  try {
+    const parsed = serverControlMessageSchema.safeParse(JSON.parse(rawMessage));
+    if (!parsed.success) {
+      handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from agentd", retryable: false });
+      return;
+    }
+
+    const message = parsed.data;
+    if (message.type === "ready") handlers.onReady(message);
+    if (message.type === "closed") handlers.onClosed(message);
+    if (message.type === "error") handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
+    if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
+  } catch {
+    handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from agentd", retryable: false });
+  }
+}
+
+function sendControl(socket: WebSocket | null, message: ClientControlMessage): void {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify(message));
+}
+
+function closeNetworkSocket(socket: WebSocket, reason?: string): void {
+  try {
+    socket.close(1000, reason ?? "network-lost");
+  } catch {
+    // The browser may have completed the close handshake already.
+  }
+}
+
+function terminalResumeStorageKey(endpoint: string, target: string): string {
+  return `mobile-agent:terminal-resume:${endpoint}:${target}`;
+}
+
+function readTerminalResumeState(storageKey: string, target: string): PaneResumeState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!isResumeState(value) || value.target !== target) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function writeTerminalResumeState(storageKey: string, state: PaneResumeState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    // Storage can be unavailable in private browsing or an embedded shell.
+  }
+}
+
+function clearTerminalResumeState(storageKey: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    // Storage can be unavailable in private browsing or an embedded shell.
+  }
+}
+
+function isResumeState(value: unknown): value is PaneResumeState {
+  if (typeof value !== "object" || value === null) return false;
+  return "sessionId" in value && typeof value.sessionId === "string"
+    && "resumeToken" in value && typeof value.resumeToken === "string"
+    && "target" in value && typeof value.target === "string";
 }
 
 function terminalFontSize(): number {
   if (typeof window !== "undefined" && window.innerWidth <= 620) return 8;
   if (typeof window !== "undefined" && window.innerWidth <= 920) return 10;
   return 12;
-}
-
-function handleControlMessage(
-  rawMessage: string,
-  handlers: {
-    onReady: () => void;
-    onClosed: () => void;
-    onError: (message: string) => void;
-    onViewport: (owner: PaneViewportOwner, reason: string) => void;
-  },
-) {
-  try {
-    const parsed = serverControlMessageSchema.safeParse(JSON.parse(rawMessage));
-    if (!parsed.success) {
-      handlers.onError("Invalid control frame from agentd");
-      return;
-    }
-
-    const message = parsed.data;
-    if (message.type === "ready") handlers.onReady();
-    if (message.type === "closed") handlers.onClosed();
-    if (message.type === "error") handlers.onError(message.message);
-    if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
-  } catch {
-    handlers.onError("Invalid control frame from agentd");
-  }
 }

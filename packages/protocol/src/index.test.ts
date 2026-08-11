@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema } from "./index.js";
+import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion } from "./index.js";
 
 type TableCase = {
   name: string;
@@ -12,21 +12,21 @@ type TableCase = {
 const cases: TableCase[] = [
   {
     name: "accepts an attach request",
-    given: () => ({ type: "attach", target: "agentd", cols: 80, rows: 24 }),
+    given: () => ({ type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 }),
     when: (input) => clientControlMessageSchema.safeParse(input),
     check: [(ctx) => expect(ctx.result?.success).toBe(true)],
     assert: [(ctx) => expect(ctx.result?.data).toMatchObject({ type: "attach", target: "agentd" })],
   },
   {
     name: "accepts a mobile claim request",
-    given: () => ({ type: "claim" }),
+    given: () => ({ type: "claim", version: terminalProtocolVersion }),
     when: (input) => clientControlMessageSchema.safeParse(input),
     check: [(ctx) => expect(ctx.result?.success).toBe(true)],
-    assert: [(ctx) => expect(ctx.result?.data).toEqual({ type: "claim" })],
+    assert: [(ctx) => expect(ctx.result?.data).toEqual({ type: "claim", version: terminalProtocolVersion })],
   },
   {
     name: "rejects an invalid terminal size",
-    given: () => ({ type: "resize", cols: 0, rows: 24 }),
+    given: () => ({ type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 }),
     when: (input) => clientControlMessageSchema.safeParse(input),
     check: [(ctx) => expect(ctx.result?.success).toBe(false)],
     assert: [(ctx) => expect(ctx.result?.error?.issues[0]?.path).toEqual(["cols"])],
@@ -49,6 +49,10 @@ describe("server viewport protocol", () => {
       name: "describes the mobile viewport after attach",
       input: {
         type: "ready",
+        version: terminalProtocolVersion,
+        sessionId: "terminal-1",
+        resumeToken: "resume-token",
+        resumed: false,
         target: "project:0.1",
         paneId: "%3",
         windowId: "@1",
@@ -60,12 +64,47 @@ describe("server viewport protocol", () => {
       name: "describes a desktop takeover",
       input: {
         type: "viewport",
+        version: terminalProtocolVersion,
         owner: "desktop",
         reason: "desktop_activity",
       },
     },
   ])("$name", ({ input }) => {
     expect(serverControlMessageSchema.safeParse(input).success).toBe(true);
+  });
+
+  it("accepts a resumed attach with paired credentials", () => {
+    expect(clientControlMessageSchema.safeParse({
+      type: "attach",
+      version: terminalProtocolVersion,
+      target: "%3",
+      cols: 80,
+      rows: 24,
+      sessionId: "terminal-1",
+      resumeToken: "resume-token",
+    }).success).toBe(true);
+  });
+
+  it("rejects an attach with only one resume credential", () => {
+    expect(clientControlMessageSchema.safeParse({
+      type: "attach",
+      version: terminalProtocolVersion,
+      target: "%3",
+      cols: 80,
+      rows: 24,
+      sessionId: "terminal-1",
+    }).success).toBe(false);
+  });
+
+  it("requires a lifecycle reason on a closed frame", () => {
+    expect(serverControlMessageSchema.safeParse({
+      type: "closed",
+      version: terminalProtocolVersion,
+      sessionId: "terminal-1",
+      reason: "detached",
+      code: null,
+      signal: null,
+    }).success).toBe(true);
   });
 });
 

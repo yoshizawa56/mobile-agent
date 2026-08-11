@@ -2,24 +2,26 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { hostname, homedir, platform } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer } from "ws";
 import { paneKindForCommand, type PaneRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository } from "@mobile-agent/persistence";
+import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleProjectRepository } from "@mobile-agent/persistence";
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession } from "./terminal-session.js";
 import { TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
+import { allowedRootsFromEnvironment, projectOptionsFromDirectory, WorkspaceSelectionCatalog } from "./workspace-selection.js";
 
 export type AgentdOptions = {
   host: string;
   port: number;
   databaseFile?: string;
   corsOrigin?: string;
+  allowedRoots?: string[];
 };
 
 export type { AgentdApp } from "./http/app.js";
@@ -30,6 +32,18 @@ export function createAgentdServer(options: AgentdOptions) {
   const viewportManager = new TmuxViewportManager(tmux);
   const database = createAgentDatabase(options.databaseFile ?? defaultDatabaseFile());
   const paneRepository = new DrizzlePaneRepository(database.db);
+  const projectRepository = new DrizzleProjectRepository(database.db);
+  const workspaceCatalog = new WorkspaceSelectionCatalog({
+    allowedRoots: options.allowedRoots ?? allowedRootsFromEnvironment(),
+    listProjects: async () => {
+      const projects = [...projectOptionsFromDirectory(), ...(await projectRepository.list()).map((project) => ({
+        id: project.id,
+        name: project.name,
+        directory: project.directory,
+      }))];
+      return [...new Map(projects.map((project) => [project.name, project])).values()];
+    },
+  });
   const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
@@ -55,10 +69,14 @@ export function createAgentdServer(options: AgentdOptions) {
     corsOrigin,
     hookToken,
     getTerminal: getLocalTerminal,
+    listWorkspaceDirectories: () => workspaceCatalog.listDirectories(),
+    listProjects: () => workspaceCatalog.listProjects(),
+    resolveWorkspaceDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId),
+    resolveWorkspaceSelection: (selection) => workspaceCatalog.resolveSelection(selection),
     listSessions: () => listSessions(tmux, paneRepository),
-    createSession: (input) => createSession(input, tmux, paneRepository),
+    createSession: (input) => createSession(input, tmux, paneRepository, workspaceCatalog),
     listPanes: (sessionName) => listCurrentPanes(tmux, paneRepository, sessionName),
-    createPane: (input) => createPane(input, tmux, paneRepository, viewportManager),
+    createPane: (input) => createPane(input, tmux, paneRepository, viewportManager, workspaceCatalog),
     handleTmuxHook: (event, client) => viewportManager.handleTmuxHook(event, client),
   });
 
@@ -145,14 +163,12 @@ async function listSessions(
 }
 
 async function createSession(
-  input: { name: string; cwd: string },
+  input: { name: string; cwd: string; workspaceId?: string },
   tmux: TmuxAdapter,
   paneRepository: DrizzlePaneRepository,
+  workspaceCatalog: WorkspaceSelectionCatalog,
 ): Promise<TmuxSession> {
-  const cwd = resolveWorkingDirectory(input.cwd);
-  if (!isDirectory(cwd)) {
-    throw new AgentdHttpError(400, "invalid_cwd", `Directory does not exist: ${input.cwd}`);
-  }
+  const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
   if (tmux.hasSession(input.name)) {
     throw new AgentdHttpError(409, "session_exists", `tmux session already exists: ${input.name}`);
   }
@@ -180,6 +196,7 @@ async function createPane(
   tmux: TmuxAdapter,
   repository: DrizzlePaneRepository,
   viewportManager: TmuxViewportManager,
+  workspaceCatalog: WorkspaceSelectionCatalog,
 ): Promise<PaneSummary> {
   if (!tmux.hasSession(input.sessionName)) {
     throw new AgentdHttpError(404, "session_not_found", `tmux session does not exist: ${input.sessionName}`);
@@ -191,10 +208,10 @@ async function createPane(
     throw new AgentdHttpError(400, "agent_not_allowed", "agentId is not allowed for a shell pane");
   }
 
-  const cwd = resolveWorkingDirectory(input.cwd);
-  if (!isDirectory(cwd)) {
-    throw new AgentdHttpError(400, "invalid_cwd", `Directory does not exist: ${input.cwd}`);
+  if (!input.cwd) {
+    throw new AgentdHttpError(400, "invalid_directory", "A workspace directory is required");
   }
+  const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
   const command = input.kind === "agent" ? agentCommand(input) : undefined;
   const tmuxPaneId = input.placement === "window"
@@ -213,6 +230,8 @@ async function createPane(
     ...current,
     kind: input.kind,
     name: input.name,
+    projectId: input.projectId ?? current.projectId,
+    workspaceId: input.workspaceId ?? current.workspaceId,
     agentId: input.agentId,
     state: input.kind === "agent" ? "starting" : "running",
   };
@@ -221,6 +240,8 @@ async function createPane(
   tmux.setPaneOption(tmuxPaneId, "@agentd.pane_name", input.name);
   tmux.setPaneOption(tmuxPaneId, "@agentd.agent_id", input.agentId ?? "");
   tmux.setPaneOption(tmuxPaneId, "@agentd.kind", input.kind);
+  tmux.setPaneOption(tmuxPaneId, "@agentd.project_id", input.projectId ?? "");
+  tmux.setPaneOption(tmuxPaneId, "@agentd.workspace_id", input.workspaceId ?? "");
   return record;
 }
 
@@ -347,19 +368,6 @@ function agentCommand(input: CreatePaneRequest): string {
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "");
-}
-
-function resolveWorkingDirectory(cwd: string): string {
-  const expanded = cwd === "~" ? homedir() : cwd.startsWith("~/") ? `${homedir()}/${cwd.slice(2)}` : cwd;
-  return resolve(expanded);
-}
-
-function isDirectory(path: string): boolean {
-  try {
-    return spawnSync("test", ["-d", path], { stdio: "ignore" }).status === 0;
-  } catch {
-    return false;
-  }
 }
 
 function displayCwd(cwd: string): string {

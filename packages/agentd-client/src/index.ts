@@ -7,16 +7,20 @@ import {
   createSessionRequestSchema,
   paneResponseSchema,
   paneListResponseSchema,
+  projectListResponseSchema,
   sessionListResponseSchema,
   sessionResponseSchema,
   terminalListResponseSchema,
+  workspaceListResponseSchema,
   type AgentdCapabilities,
   type AgentdHealth,
   type CreateSessionRequest,
   type CreatePaneRequest,
   type PaneSummary,
+  type ProjectOption,
   type TmuxSession,
   type TerminalEndpoint,
+  type WorkspaceDirectory,
 } from "@mobile-agent/protocol";
 import type { z } from "zod";
 
@@ -37,6 +41,18 @@ export type AgentdRouteProvider = {
 
 export type AgentdClient = ReturnType<typeof createAgentdClient>;
 
+export class AgentdApiError extends Error {
+  public constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string | null,
+    public readonly details: Record<string, unknown> | null,
+  ) {
+    super(message);
+    this.name = "AgentdApiError";
+  }
+}
+
 /**
  * Creates the browser/native standard connection through Tailscale Serve.
  * SSH is deliberately not part of this helper: a native RouteProvider can
@@ -56,6 +72,8 @@ export function createAgentdClient(connection: AgentdConnection) {
   return {
     health: async (): Promise<AgentdHealth> => parseResponse(await http.health.$get(), agentdHealthSchema),
     capabilities: async (): Promise<AgentdCapabilities> => parseResponse(await http.api.capabilities.$get(), agentdCapabilitiesSchema),
+    workspaces: async (): Promise<WorkspaceDirectory[]> => parseResponse(await http.api.workspaces.$get(), workspaceListResponseSchema).then((data) => data.workspaces),
+    projects: async (): Promise<ProjectOption[]> => parseResponse(await http.api.projects.$get(), projectListResponseSchema).then((data) => data.projects),
     terminals: async (): Promise<TerminalEndpoint[]> => parseResponse(await http.api.terminals.$get(), terminalListResponseSchema).then((data) => data.terminals),
     sessions: async (): Promise<TmuxSession[]> => parseResponse(await http.api.sessions.$get(), sessionListResponseSchema).then((data) => data.sessions),
     createSession: async (input: CreateSessionRequest): Promise<TmuxSession> => {
@@ -108,7 +126,14 @@ function ensureTrailingSlash(value: string): string {
 
 async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(apiErrorMessage(payload) ?? `agentd returned ${response.status}`);
+  if (!response.ok) {
+    throw new AgentdApiError(
+      apiErrorMessage(payload) ?? `agentd returned ${response.status}`,
+      response.status,
+      apiErrorCode(payload),
+      apiErrorDetails(payload),
+    );
+  }
   return schema.parse(payload);
 }
 
@@ -116,4 +141,16 @@ function apiErrorMessage(payload: unknown): string | null {
   if (!payload || typeof payload !== "object" || !("message" in payload)) return null;
   const message = payload.message;
   return typeof message === "string" ? message : null;
+}
+
+function apiErrorCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || !("error" in payload)) return null;
+  const code = payload.error;
+  return typeof code === "string" ? code : null;
+}
+
+function apiErrorDetails(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || !("details" in payload)) return null;
+  const details = payload.details;
+  return details && typeof details === "object" ? details as Record<string, unknown> : null;
 }

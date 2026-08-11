@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion } from "./index.js";
+import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, createSessionRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion, workspaceSelectionSchema } from "./index.js";
 
 type TableCase = {
   name: string;
@@ -179,5 +179,55 @@ describe("pane creation protocol", () => {
       ...input,
     });
     expect(result.success).toBe(valid);
+  });
+});
+
+describe("workspace selection protocol", () => {
+  it.each([
+    {
+      name: "accepts a direct workspace selection",
+      input: { workspaceId: "workspace-1", mode: "workspace", projectId: null },
+      valid: true,
+    },
+    {
+      name: "accepts a project worktree selection",
+      input: { workspaceId: "workspace-1", mode: "worktree", projectId: "project-1" },
+      valid: true,
+    },
+    {
+      name: "rejects worktree mode without a project",
+      input: { workspaceId: "workspace-1", mode: "worktree", projectId: null },
+      valid: false,
+    },
+    {
+      name: "rejects a project in direct workspace mode",
+      input: { workspaceId: "workspace-1", mode: "workspace", projectId: "project-1" },
+      valid: false,
+    },
+  ])("$name", ({ input, valid }) => {
+    expect(workspaceSelectionSchema.safeParse(input).success).toBe(valid);
+  });
+
+  it.each([
+    { name: "accepts the selected workspace for a new session", input: { name: "review", workspaceId: "workspace-1" }, valid: true },
+    { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/mobile-agent" }, valid: true },
+    { name: "rejects a session without a workspace selection", input: { name: "review" }, valid: false },
+  ])("$name", ({ input, valid }) => {
+    expect(createSessionRequestSchema.safeParse(input).success).toBe(valid);
+  });
+
+  it("accepts a pane request that selects a project by id", () => {
+    expect(createPaneRequestSchema.safeParse({
+      sessionName: "agentd",
+      kind: "agent",
+      name: "review",
+      workspaceId: "workspace-1",
+      agentId: "codex",
+      useWorktree: true,
+      projectId: "project-1",
+      projectName: null,
+      placement: "window",
+      targetPaneId: null,
+    }).success).toBe(true);
   });
 });

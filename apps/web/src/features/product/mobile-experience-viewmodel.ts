@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { PanePlacement, PaneSummary, TmuxSession } from "@mobile-agent/protocol";
-import { fetchPanes, fetchSessions, fetchTerminals, createPane, createSession, getAgentdConnection } from "../api/agentd-api";
+import { fetchPanes, fetchProjects, fetchSessions, fetchTerminals, fetchWorkspaces, createPane, createSession, getAgentdConnection } from "../api/agentd-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import type { ProductStage } from "../../app/workspace-routes";
@@ -16,6 +16,7 @@ import {
 import type { NewSessionViewModel } from "../session/new-session-viewmodel";
 import type { SessionOverviewViewModel } from "../session/session-overview-viewmodel";
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "../pane/new-pane-viewmodel";
+import type { WorkspaceSelectionMode } from "../workspace/workspace-picker-viewmodel";
 import { paneQueryKey, usePaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import { usePaneViewModel } from "../pane/pane-viewmodel";
 import {
@@ -54,15 +55,15 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const { stage, terminalId, sessionName, paneId: selectedPaneRouteId } = route;
   const [createdSession, setCreatedSession] = useState<TmuxSession | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
-  const [newSessionCwd, setNewSessionCwd] = useState("~");
+  const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState("");
   const [newSessionError, setNewSessionError] = useState<string | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [newPaneName, setNewPaneName] = useState("");
-  const [newPaneCwd, setNewPaneCwd] = useState("~");
+  const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("");
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
-  const [newPaneUseWorktree, setNewPaneUseWorktree] = useState(false);
-  const [newPaneProjectName, setNewPaneProjectName] = useState("");
+  const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>("workspace");
+  const [newPaneProjectId, setNewPaneProjectId] = useState<string | null>(null);
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("window");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>(null);
   const [newPaneError, setNewPaneError] = useState<string | null>(null);
@@ -92,6 +93,27 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   });
   const terminals = terminalsQuery.data ?? [];
   const selectedTerminal = terminals.find((terminal) => terminal.id === terminalId) ?? null;
+
+  const workspacesQuery = useQuery({
+    queryKey: ["workspaces", connectionKey],
+    queryFn: () => fetchWorkspaces(agentdConnection),
+    enabled: stage === "new-session" || stage === "new-pane",
+    staleTime: 5_000,
+    retry: 1,
+  });
+  const projectsQuery = useQuery({
+    queryKey: ["projects", connectionKey],
+    queryFn: () => fetchProjects(agentdConnection),
+    enabled: stage === "new-pane",
+    staleTime: 5_000,
+    retry: 1,
+  });
+  const workspaces = workspacesQuery.data ?? [];
+  const projects = projectsQuery.data ?? [];
+  const workspaceStatus = queryStatus(workspacesQuery.status);
+  const projectStatus = queryStatus(projectsQuery.status);
+  const workspaceError = errorMessage(workspacesQuery.error);
+  const projectError = errorMessage(projectsQuery.error);
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions", connectionKey, terminalId],
@@ -160,7 +182,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onCreateSession: () => {
       setNewSessionError(null);
       setNewSessionName("");
-      setNewSessionCwd(selectedTerminal?.name ? "~" : "");
+      setNewSessionWorkspaceId("");
       if (terminalId) navigateTo(newSessionPath(terminalId));
     },
     onBack: () => navigateTo(stage === "connecting" && terminalId ? sessionsPath(terminalId) : terminalsPath()),
@@ -183,17 +205,29 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const newSession = useMemo<NewSessionViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
     name: newSessionName,
-    cwd: newSessionCwd,
+    workspacePicker: {
+      workspaces,
+      projects: [],
+      workspaceId: newSessionWorkspaceId || workspaces[0]?.id || "",
+      mode: "workspace",
+      projectId: null,
+      workspaceStatus,
+      projectStatus: "ready",
+      errorMessage: workspaceError,
+      onWorkspaceChange: setNewSessionWorkspaceId,
+      onModeChange: () => undefined,
+      onProjectChange: () => undefined,
+    },
     isCreating: isCreatingSession,
     errorMessage: newSessionError,
     onNameChange: setNewSessionName,
-    onCwdChange: setNewSessionCwd,
     onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
     onCreate: () => {
-      if (!selectedTerminal || isCreatingSession) return;
+      const workspaceId = newSessionWorkspaceId || workspaces[0]?.id;
+      if (!selectedTerminal || isCreatingSession || !workspaceId) return;
       setIsCreatingSession(true);
       setNewSessionError(null);
-      void createSession({ name: newSessionName, cwd: newSessionCwd }, agentdConnection)
+      void createSession({ name: newSessionName, workspaceId }, agentdConnection)
         .then((session) => {
           setCreatedSession(session);
           queryClient.setQueryData<TmuxSession[]>(["sessions", connectionKey, terminalId], (current) => [
@@ -205,48 +239,64 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .catch((error: unknown) => setNewSessionError(errorMessage(error) ?? "Could not create tmux session"))
         .finally(() => setIsCreatingSession(false));
     },
-  }), [agentdConnection, connectionKey, isCreatingSession, navigate, newSessionCwd, newSessionError, newSessionName, queryClient, selectedTerminal, terminalId]);
+  }), [agentdConnection, connectionKey, isCreatingSession, navigate, newSessionError, newSessionName, newSessionWorkspaceId, queryClient, selectedTerminal, terminalId, workspaceError, workspaceStatus, workspaces]);
 
   const newPane = useMemo<NewPaneViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
     session: selectedSession ?? fallbackSession,
     name: newPaneName,
-    cwd: newPaneCwd,
+    workspacePicker: {
+      workspaces,
+      projects,
+      workspaceId: newPaneWorkspaceId || workspaces[0]?.id || "",
+      mode: newPaneSelectionMode,
+      projectId: newPaneProjectId ?? projects[0]?.id ?? null,
+      workspaceStatus,
+      projectStatus,
+      errorMessage: workspaceError ?? projectError,
+      onWorkspaceChange: setNewPaneWorkspaceId,
+      onModeChange: (mode) => {
+        setNewPaneSelectionMode(mode);
+        if (mode === "workspace") setNewPaneProjectId(null);
+      },
+      onProjectChange: setNewPaneProjectId,
+    },
     kind: newPaneKind,
     agentId: newPaneAgent,
-    useWorktree: newPaneUseWorktree,
-    projectName: newPaneProjectName,
     existingPanes: sessionPanes,
     placement: newPanePlacement,
     targetPaneId: newPaneTargetPaneId,
     isCreating: isCreatingPane,
     errorMessage: newPaneError,
     onNameChange: setNewPaneName,
-    onCwdChange: setNewPaneCwd,
     onKindChange: (kind) => {
       setNewPaneKind(kind);
-      if (kind === "shell") setNewPaneUseWorktree(false);
+      if (kind === "shell") {
+        setNewPaneSelectionMode("workspace");
+        setNewPaneProjectId(null);
+      }
     },
     onAgentChange: setNewPaneAgent,
-    onUseWorktreeChange: setNewPaneUseWorktree,
-    onProjectNameChange: setNewPaneProjectName,
     onPlacementChange: (placement) => {
       setNewPanePlacement(placement);
       if (placement !== "window" && !newPaneTargetPaneId) setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
     },
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => {
-      if (!selectedSession || !selectedTerminal || isCreatingPane) return;
+      const workspaceId = newPaneWorkspaceId || workspaces[0]?.id;
+      const projectId = newPaneProjectId ?? projects[0]?.id ?? null;
+      if (!selectedSession || !selectedTerminal || isCreatingPane || !workspaceId) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
       void createPane({
         sessionName: selectedSession.name,
         kind: newPaneKind,
         name: newPaneName,
-        cwd: newPaneCwd,
+        workspaceId,
         agentId: newPaneKind === "agent" ? newPaneAgent : null,
-        useWorktree: newPaneKind === "agent" && newPaneUseWorktree,
-        projectName: newPaneKind === "agent" && newPaneUseWorktree ? (newPaneProjectName || null) : null,
+        useWorktree: newPaneKind === "agent" && newPaneSelectionMode === "worktree",
+        projectId: newPaneKind === "agent" && newPaneSelectionMode === "worktree" ? projectId : null,
+        projectName: null,
         placement: newPanePlacement,
         targetPaneId: newPanePlacement === "window" ? null : newPaneTargetPaneId,
       }, agentdConnection)
@@ -262,7 +312,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .finally(() => setIsCreatingPane(false));
     },
     onBack: () => terminalId && selectedSession && navigateTo(sessionPath(terminalId, selectedSession.name)),
-  }), [agentdConnection, connectionKey, isCreatingPane, navigate, newPaneAgent, newPaneCwd, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneProjectName, newPaneTargetPaneId, newPaneUseWorktree, queryClient, selectedSession, selectedTerminal, sessionPanes, terminalId]);
+  }), [agentdConnection, connectionKey, isCreatingPane, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneProjectId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, projectError, projectStatus, projects, queryClient, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceError, workspaceStatus, workspaces]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -276,11 +326,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onCreatePane: () => {
       setNewPaneError(null);
       setNewPaneName("");
-      setNewPaneCwd(sessionPanes[0]?.cwd ?? "~");
+      setNewPaneWorkspaceId("");
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
-      setNewPaneUseWorktree(false);
-      setNewPaneProjectName(selectedSession?.project ?? "");
+      setNewPaneSelectionMode("workspace");
+      setNewPaneProjectId(null);
       setNewPanePlacement("window");
       setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
       if (terminalId && selectedSession) navigateTo(newPanePath(terminalId, selectedSession.name));
@@ -344,11 +394,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       if (!selectedSession || !selectedTerminal || !terminalId) return;
       setNewPaneError(null);
       setNewPaneName("");
-      setNewPaneCwd(sessionPanes.find((pane) => pane.tmuxPaneId === selectedPaneId)?.cwd ?? sessionPanes[0]?.cwd ?? "~");
+      setNewPaneWorkspaceId("");
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
-      setNewPaneUseWorktree(false);
-      setNewPaneProjectName(selectedSession.project ?? "");
+      setNewPaneSelectionMode("workspace");
+      setNewPaneProjectId(null);
       setNewPanePlacement(selectedPaneId ? "right" : "window");
       setNewPaneTargetPaneId(selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? null);
       navigateTo(newPanePath(terminalId, selectedSession.name));

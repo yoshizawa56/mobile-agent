@@ -1,18 +1,29 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
 import type { PanePlacement, PaneSummary } from "@mobile-agent/protocol";
-import { ConnectionFlowView } from "../connection/connection-flow-view";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TmuxSession } from "../connection/connection-flow-viewmodel";
-import { NewSessionView, type NewSessionViewModel } from "../session/new-session-view";
+import { NewSessionView } from "../session/new-session-view";
+import type { NewSessionViewModel } from "../session/new-session-viewmodel";
 import { SessionOverviewView } from "../session/session-overview-view";
 import type { SessionOverviewViewModel } from "../session/session-overview-viewmodel";
 import { PaneView } from "../pane/pane-view";
-import { NewPaneView, type NewPaneAgent, type NewPaneKind } from "../pane/new-pane-view";
+import { NewPaneView } from "../pane/new-pane-view";
+import type { NewPaneAgent, NewPaneKind } from "../pane/new-pane-viewmodel";
 import { usePaneViewModel } from "../pane/pane-viewmodel";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import { mockPanes } from "../../mock/mock-data";
+import { TerminalsView } from "../../routes/terminals/-terminals-view";
+import type { TerminalsViewModel } from "../../routes/terminals/-terminals-viewmodel";
+import { SessionsView } from "../../routes/terminals/$terminalId/sessions/-sessions-view";
+import type { SessionsViewModel } from "../../routes/terminals/$terminalId/sessions/-sessions-viewmodel";
+import { ConnectingView } from "../../routes/terminals/$terminalId/sessions/$sessionName/connecting/-connecting-view";
+import type { ConnectingViewModel } from "../../routes/terminals/$terminalId/sessions/$sessionName/connecting/-connecting-viewmodel";
+import { DisconnectedView } from "../../routes/terminals/$terminalId/sessions/$sessionName/disconnected/-disconnected-view";
+import type { DisconnectedViewModel } from "../../routes/terminals/$terminalId/sessions/$sessionName/disconnected/-disconnected-viewmodel";
+import { EndedView } from "../../routes/terminals/$terminalId/sessions/$sessionName/ended/-ended-view";
+import type { EndedViewModel } from "../../routes/terminals/$terminalId/sessions/$sessionName/ended/-ended-viewmodel";
 
 type ProductStage = ConnectionFlowStage | "new-session" | "new-pane" | "session-overview" | "control-room";
 
@@ -205,7 +216,24 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   if (stage === "new-pane") return <NewPaneView viewModel={newPaneViewModel} />;
   if (stage === "session-overview") return <SessionOverviewView viewModel={sessionOverviewViewModel} />;
   if (stage === "control-room") return <PaneView viewModel={terminalViewModel} paneBoard={sessionPaneBoard} onWorkspaceSwitch={() => setStage("sessions")} onNewPane={() => setStage("new-pane")} />;
-  return <ConnectionFlowView viewModel={connectionViewModel} />;
+  return <StoryConnectionView viewModel={connectionViewModel} />;
+}
+
+function StoryConnectionView({ viewModel }: { viewModel: ConnectionFlowViewModel }) {
+  switch (viewModel.stage) {
+    case "terminals":
+      return <TerminalsView viewModel={{ ...viewModel, stage: "terminals" } satisfies TerminalsViewModel} />;
+    case "sessions":
+      return <SessionsView viewModel={{ ...viewModel, stage: "sessions" } satisfies SessionsViewModel} />;
+    case "connecting":
+      return <ConnectingView viewModel={{ ...viewModel, stage: "connecting" } satisfies ConnectingViewModel} />;
+    case "disconnected":
+      return <DisconnectedView viewModel={{ ...viewModel, stage: "disconnected" } satisfies DisconnectedViewModel} />;
+    case "ended":
+      return <EndedView viewModel={{ ...viewModel, stage: "ended" } satisfies EndedViewModel} />;
+    default:
+      return null;
+  }
 }
 
 function isConnectionStage(stage: ProductStage): stage is ConnectionFlowStage {

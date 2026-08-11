@@ -25,6 +25,7 @@ export type AgentdRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 export type AgentdConnection = {
   httpBaseUrl: string;
   websocketUrl: string;
+  eventsWebsocketUrl?: string;
   route?: AgentdRouteKind;
   close?: () => Promise<void>;
 };
@@ -72,6 +73,7 @@ export function createAgentdClient(connection: AgentdConnection) {
       return parseResponse(await http.api.panes.$post({ json: validated }), paneResponseSchema).then((data) => data.pane);
     },
     openTerminal: (): WebSocket => new WebSocket(connection.websocketUrl),
+    openEvents: (): WebSocket => new WebSocket(connection.eventsWebsocketUrl ?? eventWebSocketUrl(connection.websocketUrl)),
     connection,
   };
 }
@@ -86,7 +88,17 @@ function createUrlConnection(baseUrl: string, route: AgentdRouteKind): AgentdCon
   const httpBaseUrl = `${url.origin}${normalizedPath}`;
   const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
   const websocketUrl = `${websocketProtocol}//${url.host}${normalizedPath}/terminal`;
-  return { httpBaseUrl, websocketUrl, route };
+  return { httpBaseUrl, websocketUrl, eventsWebsocketUrl: `${websocketProtocol}//${url.host}${normalizedPath}/events`, route };
+}
+
+function eventWebSocketUrl(terminalWebSocketUrl: string): string {
+  const url = new URL(terminalWebSocketUrl);
+  if (url.pathname.endsWith("/terminal")) {
+    url.pathname = `${url.pathname.slice(0, -"/terminal".length)}/events`;
+  } else {
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/events`;
+  }
+  return url.toString();
 }
 
 function ensureTrailingSlash(value: string): string {

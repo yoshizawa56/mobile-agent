@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema } from "./index.js";
+import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema } from "./index.js";
 
 type TableCase = {
   name: string;
@@ -66,6 +66,23 @@ describe("server viewport protocol", () => {
     },
   ])("$name", ({ input }) => {
     expect(serverControlMessageSchema.safeParse(input).success).toBe(true);
+  });
+});
+
+describe("agentd event protocol", () => {
+  it.each([
+    {
+      name: "accepts a pane creation invalidation",
+      input: { type: "session_updated", sessionName: "agentd", reason: "pane_created", revision: 1 },
+      valid: true,
+    },
+    {
+      name: "rejects an event without a session scope",
+      input: { type: "session_updated", reason: "pane_deleted", revision: 2 },
+      valid: false,
+    },
+  ])("$name", ({ input, valid }) => {
+    expect(agentdEventSchema.safeParse(input).success).toBe(valid);
   });
 });
 

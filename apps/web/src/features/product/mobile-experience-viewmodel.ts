@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { PanePlacement, PaneSummary, TmuxSession } from "@mobile-agent/protocol";
 import { fetchPanes, fetchSessions, fetchTerminals, createPane, createSession, getAgentdConnection } from "../api/agentd-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
-import type { ConnectionSettingsViewModel } from "../connection/connection-settings-view";
+import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
+import type { ProductStage } from "../../app/workspace-routes";
 import {
   clearBrowserConnectionProfile,
   connectionForProfile,
@@ -11,13 +13,26 @@ import {
   saveBrowserConnectionProfile,
   type BrowserConnectionProfile,
 } from "../connection/connection-profile-store";
-import type { NewSessionViewModel } from "../session/new-session-view";
+import type { NewSessionViewModel } from "../session/new-session-viewmodel";
 import type { SessionOverviewViewModel } from "../session/session-overview-viewmodel";
-import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "../pane/new-pane-view";
+import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "../pane/new-pane-viewmodel";
 import { paneQueryKey, usePaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import { usePaneViewModel } from "../pane/pane-viewmodel";
+import {
+  connectingPath,
+  disconnectedPath,
+  newPanePath,
+  newSessionPath,
+  panePath,
+  parseWorkspaceRoute,
+  sessionPath,
+  sessionsPath,
+  settingsPath,
+  terminalsPath,
+} from "../../app/workspace-routes";
+import { useAgentdEvents } from "../api/agentd-events";
 
-export type ProductStage = ConnectionFlowStage | "new-session" | "new-pane" | "session-overview" | "control-room";
+export type { ProductStage } from "../../app/workspace-routes";
 
 export type MobileExperienceViewModel = {
   stage: ProductStage;
@@ -34,10 +49,9 @@ export type MobileExperienceViewModel = {
 
 export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const queryClient = useQueryClient();
-  const [stage, setStage] = useState<ProductStage>("terminals");
-  const [terminalId, setTerminalId] = useState<string | null>(null);
-  const [sessionName, setSessionName] = useState<string | null>(null);
-  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const route = useRouterState({ select: (state) => parseWorkspaceRoute(state.location.pathname) });
+  const { stage, terminalId, sessionName, paneId: selectedPaneRouteId } = route;
   const [createdSession, setCreatedSession] = useState<TmuxSession | null>(null);
   const [newSessionName, setNewSessionName] = useState("");
   const [newSessionCwd, setNewSessionCwd] = useState("~");
@@ -59,11 +73,16 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [connectionSettingsError, setConnectionSettingsError] = useState<string | null>(null);
   const [isSavingConnection, setIsSavingConnection] = useState(false);
 
+  const navigateTo = useCallback((path: string) => {
+    void navigate({ to: path });
+  }, [navigate]);
+
   const agentdConnection = useMemo(
     () => connectionForProfile(connectionProfile) ?? getAgentdConnection(),
     [connectionProfile],
   );
   const connectionKey = `${agentdConnection.route ?? "custom"}:${agentdConnection.httpBaseUrl}`;
+  useAgentdEvents(agentdConnection, connectionKey);
 
   const terminalsQuery = useQuery({
     queryKey: ["terminals", connectionKey],
@@ -90,14 +109,18 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const panesQuery = useQuery({
     queryKey: paneQueryKey(agentdConnection, selectedSession?.name),
     queryFn: () => fetchPanes(selectedSession!.name, agentdConnection),
-    enabled: Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room"),
+    enabled: Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room" || stage === "new-pane"),
     staleTime: 1_000,
     refetchInterval: stage === "session-overview" ? 3_000 : false,
     retry: 1,
   });
   const sessionPanes = panesQuery.data ?? [];
-  const paneTarget = selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? "";
-  const terminalView = usePaneViewModel({ target: paneTarget, active: stage === "control-room", connection: agentdConnection });
+  const selectedPane = selectedPaneRouteId
+    ? sessionPanes.find((pane) => pane.id === selectedPaneRouteId || pane.tmuxPaneId === selectedPaneRouteId) ?? null
+    : null;
+  const selectedPaneId = selectedPane?.tmuxPaneId ?? (selectedPaneRouteId ? "" : sessionPanes[0]?.tmuxPaneId ?? "");
+  const paneTarget = selectedPaneId;
+  const terminalView = usePaneViewModel({ target: paneTarget, connection: agentdConnection });
 
   const paneBoard = usePaneBoardViewModel({
     selectedTarget: selectedPaneId ?? "",
@@ -105,19 +128,18 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     connection: agentdConnection,
     alwaysOpen: stage === "control-room",
     onSelect: (target) => {
-      setSelectedPaneId(target);
-      setStage("control-room");
+      const pane = sessionPanes.find((candidate) => candidate.tmuxPaneId === target);
+      if (terminalId && sessionName && pane) navigateTo(panePath(terminalId, sessionName, pane.id));
     },
   });
 
   useEffect(() => {
     if (stage !== "connecting") return;
     const timer = window.setTimeout(() => {
-      setSelectedPaneId(null);
-      setStage("session-overview");
+      if (terminalId && sessionName) navigateTo(sessionPath(terminalId, sessionName));
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [stage]);
+  }, [navigate, navigateTo, sessionName, stage, terminalId]);
 
   const connection = useMemo<ConnectionFlowViewModel>(() => ({
     stage: isConnectionStage(stage) ? stage : "terminals",
@@ -129,41 +151,34 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     status: stage === "terminals" ? queryStatus(terminalsQuery.status) : queryStatus(sessionsQuery.status),
     errorMessage: stage === "terminals" ? errorMessage(terminalsQuery.error) : errorMessage(sessionsQuery.error),
     onSelectTerminal: (terminal) => {
-      setTerminalId(terminal.id);
-      setSessionName(null);
-      setSelectedPaneId(null);
       setCreatedSession(null);
-      setStage("sessions");
+      navigateTo(sessionsPath(terminal.id));
     },
     onSelectSession: (session) => {
-      setSessionName(session.name);
-      setSelectedPaneId(null);
-      setStage("connecting");
+      if (terminalId) navigateTo(connectingPath(terminalId, session.name));
     },
     onCreateSession: () => {
       setNewSessionError(null);
       setNewSessionName("");
       setNewSessionCwd(selectedTerminal?.name ? "~" : "");
-      setStage("new-session");
+      if (terminalId) navigateTo(newSessionPath(terminalId));
     },
-    onBack: () => setStage(stage === "connecting" ? "sessions" : "terminals"),
+    onBack: () => navigateTo(stage === "connecting" && terminalId ? sessionsPath(terminalId) : terminalsPath()),
     onOpenSessionOverview: () => {
-      setSelectedPaneId(null);
-      setStage("session-overview");
+      if (terminalId && sessionName) navigateTo(sessionPath(terminalId, sessionName));
     },
-    onDisconnect: () => setStage("disconnected"),
-    onReconnect: () => setStage("connecting"),
-    onChooseTerminal: () => {
-      setTerminalId(null);
-      setSessionName(null);
-      setSelectedPaneId(null);
-      setStage("terminals");
+    onDisconnect: () => {
+      if (terminalId && sessionName) navigateTo(disconnectedPath(terminalId, sessionName));
     },
+    onReconnect: () => {
+      if (terminalId && sessionName) navigateTo(connectingPath(terminalId, sessionName));
+    },
+    onChooseTerminal: () => navigateTo(terminalsPath()),
     onOpenSettings: () => {
       setConnectionSettingsError(null);
-      setStage("settings");
+      navigateTo(settingsPath());
     },
-  }), [selectedSession, selectedTerminal, sessions, sessionsQuery.error, sessionsQuery.status, stage, terminals, terminalsQuery.error, terminalsQuery.status]);
+  }), [navigate, selectedSession, selectedTerminal, sessions, sessionsQuery.error, sessionsQuery.status, stage, terminalId, terminals, terminalsQuery.error, terminalsQuery.status, sessionName]);
 
   const newSession = useMemo<NewSessionViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -173,7 +188,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     errorMessage: newSessionError,
     onNameChange: setNewSessionName,
     onCwdChange: setNewSessionCwd,
-    onBack: () => setStage("sessions"),
+    onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
     onCreate: () => {
       if (!selectedTerminal || isCreatingSession) return;
       setIsCreatingSession(true);
@@ -181,18 +196,16 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       void createSession({ name: newSessionName, cwd: newSessionCwd }, agentdConnection)
         .then((session) => {
           setCreatedSession(session);
-          setSessionName(session.name);
-          setSelectedPaneId(null);
           queryClient.setQueryData<TmuxSession[]>(["sessions", connectionKey, terminalId], (current) => [
             ...(current ?? []).filter((candidate) => candidate.name !== session.name),
             session,
           ]);
-          setStage("session-overview");
+          if (terminalId) navigateTo(sessionPath(terminalId, session.name));
         })
         .catch((error: unknown) => setNewSessionError(errorMessage(error) ?? "Could not create tmux session"))
         .finally(() => setIsCreatingSession(false));
     },
-  }), [connectionKey, isCreatingSession, newSessionCwd, newSessionError, newSessionName, queryClient, selectedTerminal, terminalId, agentdConnection]);
+  }), [agentdConnection, connectionKey, isCreatingSession, navigate, newSessionCwd, newSessionError, newSessionName, queryClient, selectedTerminal, terminalId]);
 
   const newPane = useMemo<NewPaneViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -243,14 +256,13 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
             pane,
           ]);
           void queryClient.invalidateQueries({ queryKey: paneQueryKey(agentdConnection, selectedSession.name) });
-          setSelectedPaneId(pane.tmuxPaneId);
-          setStage("control-room");
+          if (terminalId) navigateTo(panePath(terminalId, selectedSession.name, pane.id));
         })
         .catch((error: unknown) => setNewPaneError(errorMessage(error) ?? "Could not open pane"))
         .finally(() => setIsCreatingPane(false));
     },
-    onBack: () => setStage("session-overview"),
-  }), [agentdConnection, connectionKey, isCreatingPane, newPaneAgent, newPaneCwd, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneProjectName, newPaneTargetPaneId, newPaneUseWorktree, queryClient, selectedSession, selectedTerminal, sessionPanes]);
+    onBack: () => terminalId && selectedSession && navigateTo(sessionPath(terminalId, selectedSession.name)),
+  }), [agentdConnection, connectionKey, isCreatingPane, navigate, newPaneAgent, newPaneCwd, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneProjectName, newPaneTargetPaneId, newPaneUseWorktree, queryClient, selectedSession, selectedTerminal, sessionPanes, terminalId]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -259,8 +271,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     status: queryStatus(panesQuery.status),
     errorMessage: errorMessage(panesQuery.error),
     onSelectPane: (pane) => {
-      setSelectedPaneId(pane.tmuxPaneId);
-      setStage("control-room");
+      if (terminalId && selectedSession) navigateTo(panePath(terminalId, selectedSession.name, pane.id));
     },
     onCreatePane: () => {
       setNewPaneError(null);
@@ -272,11 +283,13 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneProjectName(selectedSession?.project ?? "");
       setNewPanePlacement("window");
       setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
-      setStage("new-pane");
+      if (terminalId && selectedSession) navigateTo(newPanePath(terminalId, selectedSession.name));
     },
-    onBack: () => setStage("sessions"),
-    onDisconnect: () => setStage("disconnected"),
-  }), [panesQuery.error, panesQuery.status, selectedSession, selectedTerminal, sessionPanes]);
+    onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
+    onDisconnect: () => {
+      if (terminalId && selectedSession) navigateTo(disconnectedPath(terminalId, selectedSession.name));
+    },
+  }), [navigate, panesQuery.error, panesQuery.status, selectedSession, selectedTerminal, sessionPanes, terminalId]);
 
   const connectionSettings = useMemo<ConnectionSettingsViewModel>(() => ({
     name: connectionName,
@@ -298,7 +311,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         setConnectionProfile(profile);
         setConnectionName(profile.name);
         setServeUrl(profile.serveUrl);
-        setStage("terminals");
+        navigateTo(terminalsPath());
       } catch (error) {
         setConnectionSettingsError(errorMessage(error) ?? "Invalid Serve URL");
       } finally {
@@ -310,10 +323,10 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setConnectionProfile(null);
       setConnectionName("");
       setServeUrl("");
-      setStage("terminals");
+      navigateTo(terminalsPath());
     },
-    onBack: () => setStage("terminals"),
-  }), [connectionName, connectionProfile, connectionSettingsError, isSavingConnection, serveUrl]);
+    onBack: () => navigateTo(terminalsPath()),
+  }), [connectionName, connectionProfile, connectionSettingsError, isSavingConnection, navigate, serveUrl]);
 
   return {
     stage,
@@ -325,11 +338,10 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     terminalView,
     paneBoard,
     onWorkspaceSwitch: () => {
-      setSelectedPaneId(null);
-      setStage("sessions");
+      if (terminalId) navigateTo(sessionsPath(terminalId));
     },
     onOpenNewPane: () => {
-      if (!selectedSession || !selectedTerminal) return;
+      if (!selectedSession || !selectedTerminal || !terminalId) return;
       setNewPaneError(null);
       setNewPaneName("");
       setNewPaneCwd(sessionPanes.find((pane) => pane.tmuxPaneId === selectedPaneId)?.cwd ?? sessionPanes[0]?.cwd ?? "~");
@@ -339,13 +351,13 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneProjectName(selectedSession.project ?? "");
       setNewPanePlacement(selectedPaneId ? "right" : "window");
       setNewPaneTargetPaneId(selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? null);
-      setStage("new-pane");
+      navigateTo(newPanePath(terminalId, selectedSession.name));
     },
   };
 }
 
 function isConnectionStage(stage: ProductStage): stage is ConnectionFlowStage {
-  return stage !== "new-session" && stage !== "session-overview" && stage !== "control-room";
+  return stage === "terminals" || stage === "sessions" || stage === "connecting" || stage === "disconnected" || stage === "ended" || stage === "settings";
 }
 
 function queryStatus(status: "pending" | "error" | "success"): "loading" | "error" | "ready" {

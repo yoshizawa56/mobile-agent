@@ -285,7 +285,61 @@ Ports
 
 ### Web implementation conventions
 
-Use TanStack Router file-based routing. Each feature should generally have the following three files:
+Use TanStack Router file-based routing. The URL is the source of truth for the current screen and resource selection. Do not keep a product-wide `stage` state as a second navigation system. A route transition must be observable in the browser URL so that refresh, back/forward navigation, deep links, and shared links preserve the user's location.
+
+The current route map is:
+
+~~~text
+/terminals
+/settings
+/terminals/:terminalId/sessions
+/terminals/:terminalId/sessions/new
+/terminals/:terminalId/sessions/:sessionName
+/terminals/:terminalId/sessions/:sessionName/connecting
+/terminals/:terminalId/sessions/:sessionName/disconnected
+/terminals/:terminalId/sessions/:sessionName/ended
+/terminals/:terminalId/sessions/:sessionName/panes/new
+/terminals/:terminalId/sessions/:sessionName/panes/:paneId
+~~~
+
+The `:paneId` URL segment is the stable `PaneSummary.id` stored by agentd, not tmux's volatile pane target such as `%0`. The route ViewModel resolves that stable ID to the current `tmuxPaneId` only at the terminal transport boundary. This keeps URLs readable and prevents tmux implementation details from leaking into navigation. A legacy tmux target may still be accepted while old links are migrated.
+
+Because these are clean client-side routes, the development and preview servers must return `index.html` for unknown document paths. A production static host needs an equivalent SPA fallback or rewrite rule.
+
+Colocation is the default organization rule: route-specific code belongs in the directory for that route. TanStack Router's `-` prefix keeps colocated support files out of route generation.
+
+~~~text
+routes/
+  terminals/
+    index.tsx
+    -terminals-viewmodel.ts
+    -terminals-view.tsx
+    $terminalId/
+      sessions/
+        index.tsx
+        -sessions-viewmodel.ts
+        -sessions-view.tsx
+        $sessionName/
+          index.tsx
+          -session-viewmodel.ts
+          -session-view.tsx
+          panes/
+            $paneId/
+              index.tsx
+              -control-room-viewmodel.ts
+              -control-room-view.tsx
+~~~
+
+Each route directory uses the following responsibilities:
+
+- `index.tsx` is the route adapter. It reads route parameters through the router and passes the route ViewModel to the View.
+- `-viewmodel.ts` defines the route ViewModel and `useHogeViewModel`. It may compose shared application state and route parameters, but it does not render markup.
+- `-view.tsx` is a pure route composition boundary. Reusable visual components may live under `features/`, while path-specific composition stays here.
+- `-stories.tsx` contains route-specific Storybook states when the route needs them.
+
+Only genuinely shared code belongs outside the route directory: protocol types, API clients, connection/session state, terminal transport, and reusable feature components. Do not move a component to a shared directory merely because it is convenient; first confirm that two independent routes have the same responsibility.
+
+Each feature should generally have the following three files:
 
 ~~~
 feature/
@@ -499,7 +553,7 @@ Client -> resize { cols, rows }
 Client -> detach
 ~~~
 
-A future management connection can add the following event protocol:
+A future full management connection may add a replayable command/event protocol:
 
 ~~~text
 Client -> hello { protocolVersion, clientId, resumeFrom }
@@ -511,8 +565,11 @@ Server -> response { requestId, result | error }
 
 ### Required properties
 
-- Every event has a monotonically increasing seq.
-- A client can request replay from resumeFrom after disconnecting.
+- The current `/events` stream is intentionally non-durable and sends only
+  `session_updated` invalidation hints. Clients refetch on connect and
+  reconnect instead of replaying events.
+- A future durable event stream can add a monotonically increasing seq and
+  replay from `resumeFrom` after disconnecting.
 - requestId correlates command responses.
 - Input and actions validate both authorization and the target pane.
 - High-volume terminal output is batched as PTY bytes and applies WebSocket backpressure.
@@ -521,7 +578,7 @@ Server -> response { requestId, result | error }
 
 The design uses the type-safe idea behind tRPC. However, long-lived connections, event resumption, and binary terminal output require an explicit event protocol in addition to request/response calls.
 
-### Current HTTP API
+### Current HTTP and event API
 
 The current AgentdApp exposes:
 
@@ -534,7 +591,19 @@ POST /api/sessions              # create a tmux session
 GET  /api/panes?session=<name>
 POST /api/panes                 # create a shell, codex, or claude pane
 WS   /terminal                  # attach, input, resize, and detach
+WS   /events                    # session invalidation notifications
 ~~~
+
+The management event WebSocket intentionally sends no pane or session data. A
+tmux change is published as a small `session_updated` event containing the
+session name, a reason, and a monotonic process-local revision. Clients use it
+to invalidate their TanStack Query entries and refetch the current state over
+HTTP. The event stream is a hint rather than a durable log: clients refetch on
+connect and reconnect, and the host-side monitor remains the source of truth.
+
+agentd currently discovers changes with a short tmux reconciliation poll. This
+also observes panes created directly from a desktop tmux client, without
+requiring that client to use the Mobile Agent CLI.
 
 POST /api/panes validates cwd existence, session existence, and agent/agentId consistency on the agentd side. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 
@@ -695,6 +764,8 @@ type BrowserConnectionProfile = {
   updatedAt: string
 }
 ~~~
+
+`serveUrl` is a complete base URL, including an external port or path when one is configured. The mobile client must not store or discover the host's internal `AGENTD_PORT`: Tailscale Serve hides that port, and the development supervisor wires it into the Vite proxy. If a native SSH route is added later, its RouteProvider creates a local forwarded URL (which may contain an ephemeral port) and hands that URL to `AgentdClient` without changing the browser profile model.
 
 localStorage or another Web Storage implementation is sufficient because no secret is stored. Tailscale authentication and ACLs remain in the Tailscale app and tailnet. agentd continues to bind to localhost. If Serve identity headers or pairing tokens are added later, keep them short-lived and do not turn them into long-lived browser secrets.
 

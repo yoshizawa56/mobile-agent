@@ -83,6 +83,30 @@ export class TmuxViewportManager {
     return this.adapter;
   }
 
+  /**
+   * Reasserts the mobile zoom after a topology-changing tmux command such as
+   * split-window. tmux may clear the zoom flag while creating the new pane,
+   * even though the existing mobile client is still attached.
+   */
+  public reassertMobileViewport(target: string): void {
+    let pane: TmuxPaneRef;
+    try {
+      pane = this.adapter.resolvePane(target);
+    } catch {
+      return;
+    }
+
+    const record = this.leases.get(pane.windowId);
+    if (!record || record.released || record.owner !== "mobile") return;
+
+    try {
+      this.enterMobileViewport(record, record.mobileCols, record.mobileRows);
+    } catch {
+      // The pane may disappear immediately after a desktop-side split/exit.
+      // The next terminal attach or claim will retry from a fresh snapshot.
+    }
+  }
+
   public prepare(target: string, cwd: string): PreparedViewport {
     if (this.disposed) throw new Error("Viewport manager has been disposed");
 
@@ -143,6 +167,13 @@ export class TmuxViewportManager {
     } catch {
       return;
     }
+
+    // tmux can emit client-active for a client while agentd is changing the
+    // shared window (for example during switch-client/resize-window). That
+    // does not mean the desktop terminal received focus. The focused flag is
+    // the stable signal for a real desktop takeover; resize hooks remain
+    // actionable even when the terminal does not report focus events.
+    if (event === "client-active" && !hasTmuxClientFlag(client, "focused")) return;
 
     // A client can move between windows in the same session. Only a hook for
     // the leased window is allowed to take ownership; falling back to the
@@ -266,7 +297,7 @@ export class TmuxViewportManager {
 
     const current = this.adapter.snapshotWindow(record.pane);
     if (current.zoomed && current.activePaneId === record.pane.paneId) {
-      this.adapter.switchClient(record.mobileClient?.name ?? "", record.pane.paneId);
+      this.adapter.switchClient(record.mobileClient?.name ?? "", record.pane.paneId, true);
       return;
     }
 
@@ -395,16 +426,20 @@ export class TmuxViewportManager {
         if (!desktop) continue;
 
         if (record.owner === "mobile") {
-          const activityChanged =
+          // client_activity is not an input-only signal. tmux can update it
+          // while forwarding pane output or while agentd changes the shared
+          // viewport, which would immediately steal control back from the
+          // phone after a successful attach. Explicit client hooks handle
+          // desktop input; polling only covers focus and size changes.
+          const focusChanged =
             !record.latestDesktop ||
-            record.latestDesktop.name !== desktop.name ||
-            record.latestDesktop.activity !== desktop.activity;
+            hasTmuxClientFlag(record.latestDesktop, "focused") !== hasTmuxClientFlag(desktop, "focused");
           const sizeChanged =
             !record.latestDesktop ||
             record.latestDesktop.width !== desktop.width ||
             record.latestDesktop.height !== desktop.height;
-          if (activityChanged || sizeChanged) {
-            this.claimDesktop(record, desktop, sizeChanged ? "desktop_resize" : "desktop_activity");
+          if (focusChanged || sizeChanged) {
+            this.claimDesktop(record, desktop, sizeChanged ? "desktop_resize" : "desktop_focus");
           }
         } else if (
           record.latestDesktop?.name === desktop.name &&
@@ -512,4 +547,8 @@ function findCurl(): string | undefined {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function hasTmuxClientFlag(client: TmuxClient, flag: string): boolean {
+  return client.flags.split(",").includes(flag);
 }

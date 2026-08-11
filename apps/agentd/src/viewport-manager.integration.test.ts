@@ -53,8 +53,8 @@ describe.skipIf(!canUseRealTmux)("real tmux mobile viewport fixture", () => {
       expect(final.activePaneId).toBe(selectedPaneId);
       expect(final.visibleLayout).not.toContain("{");
       expect(client?.paneId).toBe(selectedPaneId);
-      // refresh-client -rS emits line erases even when tmux believes the
-      // screen is already clean; this prevents stale cells in xterm.js.
+      // A full refresh-client redraw emits line erases even when tmux believes
+      // the screen is already clean; this prevents stale cells in xterm.js.
       expect(output).toContain("\u001b[K");
 
       fixture.adapter.splitWindow("/tmp", undefined, "right", selectedPaneId, true);

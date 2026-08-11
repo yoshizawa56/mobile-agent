@@ -374,10 +374,10 @@ export class TmuxAdapter {
   }
 
   public refreshClient(clientName: string): void {
-    // -r resets the terminal state and -S redraws the complete client screen.
-    // A plain incremental redraw can leave cells from the pre-zoom split in
-    // browser-side terminal emulators.
-    this.require(["refresh-client", "-rS", "-t", clientName]);
+    // refresh-client without -S requests a complete client redraw. Do not use
+    // -r here: in newer tmux versions it reports terminal colours for control
+    // mode clients, and older versions reject it entirely.
+    this.require(["refresh-client", "-t", clientName]);
   }
 
   public selectPane(paneId: string, keepZoomed = false): void {

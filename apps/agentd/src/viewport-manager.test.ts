@@ -151,6 +151,105 @@ describe("tmux viewport manager", () => {
     assert.forEach((assertCase) => assertCase(ctx));
     ctx.manager?.dispose();
   });
+
+  it("reapplies the mobile zoom after a split clears the window zoom", async () => {
+    const adapter = new FakeTmuxAdapter();
+    const manager = new TmuxViewportManager(adapter);
+    const prepared = manager.prepare("agentd", "/tmp");
+    await prepared.attach({
+      ptyPid: 200,
+      cols: 80,
+      rows: 24,
+      onEvent: () => undefined,
+    });
+
+    adapter.state.zoomed = false;
+    adapter.state.activePaneId = "%1";
+    manager.reassertMobileViewport("%0");
+
+    expect(adapter.state.zoomed).toBe(true);
+    expect(adapter.state.activePaneId).toBe("%0");
+    manager.dispose();
+  });
+
+  it("stages the selected pane before the mobile client can receive its first draw", async () => {
+    const adapter = new FakeTmuxAdapter();
+    const manager = new TmuxViewportManager(adapter);
+    const prepared = manager.prepare("agentd", "/tmp", 96, 32);
+
+    expect(adapter.state.width).toBe(96);
+    expect(adapter.state.height).toBe(32);
+    expect(adapter.state.zoomed).toBe(true);
+    expect(adapter.state.activePaneId).toBe("%0");
+
+    await prepared.attach({
+      ptyPid: 200,
+      cols: 96,
+      rows: 32,
+      onEvent: () => undefined,
+    });
+
+    expect(adapter.refreshes).toContain("/dev/mobile");
+    manager.dispose();
+  });
+
+  it("hands control to the desktop once when tmux reports repeated takeover hooks", async () => {
+    const adapter = new FakeTmuxAdapter();
+    const manager = new TmuxViewportManager(adapter);
+    const events: ViewportEvent[] = [];
+    const prepared = manager.prepare("agentd", "/tmp");
+    await prepared.attach({
+      ptyPid: 200,
+      cols: 80,
+      rows: 24,
+      onEvent: (event) => events.push(event),
+    });
+
+    manager.handleTmuxHook("client-resized", adapter.desktop.name);
+    manager.handleTmuxHook("client-focus-in", adapter.desktop.name);
+    manager.handleTmuxHook("client-active", adapter.desktop.name);
+
+    expect(events.filter((event) => event.owner === "desktop")).toEqual([
+      { owner: "desktop", reason: "desktop_resize" },
+    ]);
+    manager.dispose();
+  });
+
+  it("does not mistake background tmux activity for desktop input", async () => {
+    const adapter = new FakeTmuxAdapter();
+    const manager = new TmuxViewportManager(adapter);
+    const prepared = manager.prepare("agentd", "/tmp");
+    await prepared.attach({
+      ptyPid: 200,
+      cols: 80,
+      rows: 24,
+      onEvent: () => undefined,
+    });
+
+    adapter.desktop.activity += 1;
+    await (manager as unknown as { pollDesktopClients: () => Promise<void> }).pollDesktopClients();
+
+    expect(adapter.state.zoomed).toBe(true);
+    manager.dispose();
+  });
+
+  it("ignores an unfocused client-active hook from tmux viewport commands", async () => {
+    const adapter = new FakeTmuxAdapter();
+    const manager = new TmuxViewportManager(adapter);
+    const prepared = manager.prepare("agentd", "/tmp");
+    await prepared.attach({
+      ptyPid: 200,
+      cols: 80,
+      rows: 24,
+      onEvent: () => undefined,
+    });
+
+    adapter.desktop.flags = adapter.desktop.flags.replace(",focused", "");
+    manager.handleTmuxHook("client-active", adapter.desktop.name);
+
+    expect(adapter.state.zoomed).toBe(true);
+    manager.dispose();
+  });
 });
 
 class FakeTmuxAdapter extends TmuxAdapter {
@@ -162,6 +261,8 @@ class FakeTmuxAdapter extends TmuxAdapter {
     layout: "layout-120x40",
     windowSize: "latest" as TmuxWindowSize,
   };
+
+  public readonly refreshes: string[] = [];
 
   public readonly desktop: TmuxClient = {
     name: "/dev/desktop",
@@ -244,6 +345,10 @@ class FakeTmuxAdapter extends TmuxAdapter {
       else current.add(flag);
     }
     this.desktop.flags = [...current].join(",");
+  }
+
+  public override refreshClient(_clientName: string): void {
+    this.refreshes.push(_clientName);
   }
 
   public override zoomPane(targetPane: string): void {

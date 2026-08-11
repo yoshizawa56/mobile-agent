@@ -95,10 +95,10 @@ export class TerminalSession {
     let prepared: ReturnType<TmuxViewportManager["prepare"]> | undefined;
     let pty: IPty | undefined;
     try {
-      prepared = this.options.viewportManager.prepare(target, this.options.cwd);
+      prepared = this.options.viewportManager.prepare(target, this.options.cwd, cols, rows);
       pty = spawnPty(
         "tmux",
-        this.options.viewportManager.tmux.attachArgs(prepared.pane.sessionName),
+        this.options.viewportManager.tmux.attachArgs(prepared.pane.paneId),
         {
           name: "xterm-256color",
           cols,

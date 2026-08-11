@@ -3547,6 +3547,19 @@ kbd {
   line-height: 1.45;
 }
 
+.workspace-picker-empty,
+.workspace-mode-help {
+  margin: -8px 0 0;
+  color: #5d9168;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.52rem;
+  line-height: 1.45;
+}
+
+.new-pane-choice-disabled {
+  opacity: 0.55;
+}
+
 .session-overview-map-shell > .pane-picker-message {
   display: grid;
   height: 100%;

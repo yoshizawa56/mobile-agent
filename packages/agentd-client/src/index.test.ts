@@ -19,6 +19,20 @@ describe("agentd RPC client", () => {
       read: async (client: ReturnType<typeof createAgentdClient>) => client.panes("integration"),
       assert: (value: unknown) => expect(value).toEqual([]),
     },
+    {
+      name: "reads allowed workspaces through the typed query path",
+      requestPath: "/api/workspaces",
+      response: { workspaces: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true }] },
+      read: async (client: ReturnType<typeof createAgentdClient>) => client.workspaces(),
+      assert: (value: unknown) => expect(value).toMatchObject([{ id: "workspace-1" }]),
+    },
+    {
+      name: "reads projects through the typed query path",
+      requestPath: "/api/projects",
+      response: { projects: [{ id: "project-1", name: "mobile-agent", directory: "~/.config/agent/projects/mobile-agent" }] },
+      read: async (client: ReturnType<typeof createAgentdClient>) => client.projects(),
+      assert: (value: unknown) => expect(value).toMatchObject([{ name: "mobile-agent" }]),
+    },
   ])("$name", async ({ requestPath, response, read, assert }) => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -65,9 +79,10 @@ describe("agentd RPC client", () => {
       sessionName: "integration",
       kind: "agent",
       name: "review",
-      cwd: "/tmp",
+      workspaceId: "workspace-1",
       agentId: "codex",
       useWorktree: false,
+      projectId: null,
       projectName: null,
       placement: "window",
       targetPaneId: null,
@@ -75,6 +90,22 @@ describe("agentd RPC client", () => {
 
     expect(requests[0]).toContain("/api/panes");
     expect(pane).toMatchObject({ name: "review", agentId: "codex" });
+  });
+
+  it("preserves structured directory errors from agentd", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
+      error: "invalid_directory",
+      message: "Directory is outside the allowed workspace roots",
+      details: { directory: "/private/secret", reason: "outside_allowed_root", allowedRoots: ["/work"] },
+    }), { status: 400, headers: { "content-type": "application/json" } }));
+
+    const client = createAgentdClient({ httpBaseUrl: "http://agentd.local", websocketUrl: "ws://agentd.local/terminal" });
+    await expect(client.createSession({ name: "review", workspaceId: "workspace-secret" })).rejects.toMatchObject({
+      name: "AgentdApiError",
+      status: 400,
+      code: "invalid_directory",
+      details: { reason: "outside_allowed_root" },
+    });
   });
 });
 

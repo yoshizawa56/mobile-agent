@@ -586,6 +586,8 @@ The current AgentdApp exposes:
 GET  /health
 GET  /api/capabilities
 GET  /api/terminals
+GET  /api/workspaces
+GET  /api/projects
 GET  /api/sessions
 POST /api/sessions              # create a tmux session
 GET  /api/panes?session=<name>
@@ -605,7 +607,7 @@ agentd currently discovers changes with a short tmux reconciliation poll. This
 also observes panes created directly from a desktop tmux client, without
 requiring that client to use the Mobile Agent CLI.
 
-POST /api/panes validates cwd existence, session existence, and agent/agentId consistency on the agentd side. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
+POST /api/sessions and POST /api/panes resolve workspace/project IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 
 ### Workspace directory picker
 

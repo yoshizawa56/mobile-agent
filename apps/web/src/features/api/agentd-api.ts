@@ -4,7 +4,7 @@ import {
   createServeConnection,
   type AgentdConnection,
 } from "@mobile-agent/agentd-client";
-import type { CreatePaneRequest, CreateSessionRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
+import type { CreatePaneRequest, CreateSessionRequest, PaneSummary, ProjectOption, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
 
 export function getAgentdConnection(serveUrl?: string): AgentdConnection {
   const httpOverride = import.meta.env.VITE_AGENTD_HTTP_URL as string | undefined;
@@ -37,6 +37,14 @@ function agentdClient(connection?: AgentdConnection) {
 
 export function fetchTerminals(connection?: AgentdConnection): Promise<TerminalEndpoint[]> {
   return agentdClient(connection).terminals();
+}
+
+export function fetchWorkspaces(connection?: AgentdConnection): Promise<WorkspaceDirectory[]> {
+  return agentdClient(connection).workspaces();
+}
+
+export function fetchProjects(connection?: AgentdConnection): Promise<ProjectOption[]> {
+  return agentdClient(connection).projects();
 }
 
 export function fetchSessions(connection?: AgentdConnection): Promise<TmuxSession[]> {

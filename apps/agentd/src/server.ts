@@ -10,7 +10,7 @@ import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } fr
 import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository } from "@mobile-agent/persistence";
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
-import { TerminalSession } from "./terminal-session.js";
+import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
 import { TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
@@ -65,12 +65,14 @@ export function createAgentdServer(options: AgentdOptions) {
   const httpServer = createServer(getRequestListener(app.fetch));
   const webSocketServer = new WebSocketServer({ noServer: true });
   const eventWebSocketServer = new WebSocketServer({ noServer: true });
+  const terminalSessions = new TerminalSessionRegistry();
 
   webSocketServer.on("connection", (socket) => {
     new TerminalSession(socket, {
       cwd: process.cwd(),
       defaultTarget,
       viewportManager,
+      sessions: terminalSessions,
     });
   });
 
@@ -113,6 +115,7 @@ export function createAgentdServer(options: AgentdOptions) {
     },
     stop() {
       tmuxStateMonitor.stop();
+      terminalSessions.closeAll();
       viewportManager.dispose();
       webSocketServer.close();
       eventWebSocketServer.close();

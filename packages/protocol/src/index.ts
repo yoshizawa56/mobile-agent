@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const protocolVersion = 1 as const;
+export const terminalProtocolVersion = protocolVersion;
 
 export const agentdHealthSchema = z.object({
   ok: z.literal(true),
@@ -33,21 +34,45 @@ const dimensionsSchema = z.object({
   rows: z.number().int().min(1).max(300),
 });
 
+const terminalFrameVersionSchema = z.object({
+  version: z.literal(terminalProtocolVersion),
+});
+
+const terminalSessionIdSchema = z.string().min(1).max(128);
+const terminalResumeTokenSchema = z.string().min(1).max(256);
+
+const terminalAttachMessageSchema = z.object({
+  type: z.literal("attach"),
+  ...terminalFrameVersionSchema.shape,
+  target: z.string().min(1).max(256),
+  ...dimensionsSchema.shape,
+  sessionId: terminalSessionIdSchema.optional(),
+  resumeToken: terminalResumeTokenSchema.optional(),
+}).superRefine((value, context) => {
+  if ((value.sessionId === undefined) !== (value.resumeToken === undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: [value.sessionId === undefined ? "sessionId" : "resumeToken"],
+      message: "sessionId and resumeToken must be provided together",
+    });
+  }
+});
+
 export const clientControlMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("attach"),
-    target: z.string().min(1).max(256),
-    ...dimensionsSchema.shape,
-  }),
+  terminalAttachMessageSchema,
   z.object({
     type: z.literal("resize"),
+    ...terminalFrameVersionSchema.shape,
     ...dimensionsSchema.shape,
   }),
   z.object({
     type: z.literal("detach"),
+    ...terminalFrameVersionSchema.shape,
+    sessionId: terminalSessionIdSchema.optional(),
   }),
   z.object({
     type: z.literal("claim"),
+    ...terminalFrameVersionSchema.shape,
   }),
 ]);
 
@@ -154,6 +179,10 @@ export const sessionResponseSchema = z.object({ session: tmuxSessionSchema });
 export const serverControlMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ready"),
+    ...terminalFrameVersionSchema.shape,
+    sessionId: terminalSessionIdSchema,
+    resumeToken: terminalResumeTokenSchema,
+    resumed: z.boolean(),
     target: z.string(),
     paneId: z.string(),
     windowId: z.string(),
@@ -161,16 +190,23 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("viewport"),
+    ...terminalFrameVersionSchema.shape,
     owner: z.enum(["mobile", "desktop"]),
     reason: z.enum(["attached", "mobile_claim", "desktop_activity", "desktop_resize", "desktop_focus", "detached"]),
   }),
   z.object({
     type: z.literal("error"),
+    ...terminalFrameVersionSchema.shape,
+    sessionId: terminalSessionIdSchema.optional(),
     code: z.string(),
     message: z.string(),
+    retryable: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("closed"),
+    ...terminalFrameVersionSchema.shape,
+    sessionId: terminalSessionIdSchema,
+    reason: z.enum(["detached", "terminal_exit", "network_timeout", "server_shutdown"]),
     code: z.number().int().nullable(),
     signal: z.string().nullable(),
   }),

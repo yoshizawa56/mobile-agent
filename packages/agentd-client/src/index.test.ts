@@ -86,6 +86,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "https://workstation.tailnet.ts.net",
         websocketUrl: "wss://workstation.tailnet.ts.net/terminal",
+        eventsWebsocketUrl: "wss://workstation.tailnet.ts.net/events",
         route: "serve",
       },
       create: createServeConnection,
@@ -96,6 +97,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "https://example.test/agentd",
         websocketUrl: "wss://example.test/agentd/terminal",
+        eventsWebsocketUrl: "wss://example.test/agentd/events",
         route: "serve",
       },
       create: createServeConnection,
@@ -106,6 +108,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "http://localhost:5173",
         websocketUrl: "ws://localhost:5173/terminal",
+        eventsWebsocketUrl: "ws://localhost:5173/events",
         route: "same-origin",
       },
       create: createSameOriginConnection,

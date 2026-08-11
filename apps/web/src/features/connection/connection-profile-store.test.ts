@@ -20,6 +20,7 @@ class MemoryStorage implements Storage {
 describe("browser connection profile", () => {
   it.each([
     { input: "https://workstation.tailnet.ts.net/", expected: "https://workstation.tailnet.ts.net" },
+    { input: "https://workstation.tailnet.ts.net:8449/", expected: "https://workstation.tailnet.ts.net:8449" },
     { input: "https://example.test/agentd/?ignored=1", expected: "https://example.test/agentd" },
   ])("normalizes a non-secret Serve URL", ({ input, expected }) => {
     expect(normalizeServeUrl(input)).toBe(expected);

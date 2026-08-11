@@ -1,15 +1,4 @@
-export type ConnectionSettingsViewModel = {
-  name: string;
-  serveUrl: string;
-  hasSavedProfile: boolean;
-  isSaving: boolean;
-  errorMessage: string | null;
-  onNameChange: (value: string) => void;
-  onServeUrlChange: (value: string) => void;
-  onSave: () => void;
-  onClear: () => void;
-  onBack: () => void;
-};
+import type { ConnectionSettingsViewModel } from "./connection-settings-viewmodel";
 
 export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSettingsViewModel }) {
   return (
@@ -33,9 +22,9 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
             <small>Shown in the terminal picker on this device.</small>
           </label>
           <label className="new-session-field">
-            <span>SERVE URL</span>
-            <input value={viewModel.serveUrl} onChange={(event) => viewModel.onServeUrlChange(event.target.value)} placeholder="https://workstation.tailnet.ts.net" autoComplete="url" inputMode="url" spellCheck={false} />
-            <small>Example: <code>tailscale serve --bg 4317</code> on the host.</small>
+            <span>CONNECTION URL</span>
+            <input value={viewModel.serveUrl} onChange={(event) => viewModel.onServeUrlChange(event.target.value)} placeholder="https://workstation.tailnet.ts.net:8449" autoComplete="url" inputMode="url" spellCheck={false} />
+            <small>Use the full Serve URL. Include <code>:port</code> when Serve uses a non-default port.</small>
           </label>
 
           <div className="connection-settings-note">

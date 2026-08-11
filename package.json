@@ -19,7 +19,7 @@
   "scripts": {
     "build": "turbo run build",
     "deps:check": "pnpm outdated --recursive",
-    "dev": "turbo run dev --parallel",
+    "dev": "node scripts/dev.mjs",
     "audit:public": "node scripts/audit-public-repo.mjs",
     "lint": "turbo run lint",
     "test": "turbo run test",

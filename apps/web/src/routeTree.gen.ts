@@ -10,33 +10,175 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as TerminalsIndexRouteImport } from './routes/terminals/index'
+import { Route as TerminalsTerminalIdSessionsIndexRouteImport } from './routes/terminals/$terminalId/sessions/index'
+import { Route as TerminalsTerminalIdSessionsSessionNameIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/index'
+import { Route as TerminalsTerminalIdSessionsNewIndexRouteImport } from './routes/terminals/$terminalId/sessions/new/index'
+import { Route as TerminalsTerminalIdSessionsSessionNameConnectingIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/connecting/index'
+import { Route as TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/disconnected/index'
+import { Route as TerminalsTerminalIdSessionsSessionNameEndedIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/ended/index'
+import { Route as TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/index'
+import { Route as TerminalsTerminalIdSessionsSessionNamePanesNewIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/panes/new/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TerminalsIndexRoute = TerminalsIndexRouteImport.update({
+  id: '/terminals/',
+  path: '/terminals/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TerminalsTerminalIdSessionsIndexRoute =
+  TerminalsTerminalIdSessionsIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/',
+    path: '/terminals/$terminalId/sessions/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNameIndexRoute =
+  TerminalsTerminalIdSessionsSessionNameIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/',
+    path: '/terminals/$terminalId/sessions/$sessionName/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsNewIndexRoute =
+  TerminalsTerminalIdSessionsNewIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/new/',
+    path: '/terminals/$terminalId/sessions/new/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute =
+  TerminalsTerminalIdSessionsSessionNameConnectingIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/connecting/',
+    path: '/terminals/$terminalId/sessions/$sessionName/connecting/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute =
+  TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/disconnected/',
+    path: '/terminals/$terminalId/sessions/$sessionName/disconnected/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNameEndedIndexRoute =
+  TerminalsTerminalIdSessionsSessionNameEndedIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/ended/',
+    path: '/terminals/$terminalId/sessions/$sessionName/ended/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute =
+  TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/',
+    path: '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute =
+  TerminalsTerminalIdSessionsSessionNamePanesNewIndexRouteImport.update({
+    id: '/terminals/$terminalId/sessions/$sessionName/panes/new/',
+    path: '/terminals/$terminalId/sessions/$sessionName/panes/new/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/settings/': typeof SettingsIndexRoute
+  '/terminals/': typeof TerminalsIndexRoute
+  '/terminals/$terminalId/sessions/': typeof TerminalsTerminalIdSessionsIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
+  '/terminals/$terminalId/sessions/new/': typeof TerminalsTerminalIdSessionsNewIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/connecting/': typeof TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/disconnected/': typeof TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/ended/': typeof TerminalsTerminalIdSessionsSessionNameEndedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/': typeof TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/new/': typeof TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/settings': typeof SettingsIndexRoute
+  '/terminals': typeof TerminalsIndexRoute
+  '/terminals/$terminalId/sessions': typeof TerminalsTerminalIdSessionsIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
+  '/terminals/$terminalId/sessions/new': typeof TerminalsTerminalIdSessionsNewIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/connecting': typeof TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/disconnected': typeof TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/ended': typeof TerminalsTerminalIdSessionsSessionNameEndedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/$paneId': typeof TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/new': typeof TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/settings/': typeof SettingsIndexRoute
+  '/terminals/': typeof TerminalsIndexRoute
+  '/terminals/$terminalId/sessions/': typeof TerminalsTerminalIdSessionsIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
+  '/terminals/$terminalId/sessions/new/': typeof TerminalsTerminalIdSessionsNewIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/connecting/': typeof TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/disconnected/': typeof TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/ended/': typeof TerminalsTerminalIdSessionsSessionNameEndedIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/': typeof TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute
+  '/terminals/$terminalId/sessions/$sessionName/panes/new/': typeof TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/settings/'
+    | '/terminals/'
+    | '/terminals/$terminalId/sessions/'
+    | '/terminals/$terminalId/sessions/$sessionName/'
+    | '/terminals/$terminalId/sessions/new/'
+    | '/terminals/$terminalId/sessions/$sessionName/connecting/'
+    | '/terminals/$terminalId/sessions/$sessionName/disconnected/'
+    | '/terminals/$terminalId/sessions/$sessionName/ended/'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/new/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/settings'
+    | '/terminals'
+    | '/terminals/$terminalId/sessions'
+    | '/terminals/$terminalId/sessions/$sessionName'
+    | '/terminals/$terminalId/sessions/new'
+    | '/terminals/$terminalId/sessions/$sessionName/connecting'
+    | '/terminals/$terminalId/sessions/$sessionName/disconnected'
+    | '/terminals/$terminalId/sessions/$sessionName/ended'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/$paneId'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/new'
+  id:
+    | '__root__'
+    | '/'
+    | '/settings/'
+    | '/terminals/'
+    | '/terminals/$terminalId/sessions/'
+    | '/terminals/$terminalId/sessions/$sessionName/'
+    | '/terminals/$terminalId/sessions/new/'
+    | '/terminals/$terminalId/sessions/$sessionName/connecting/'
+    | '/terminals/$terminalId/sessions/$sessionName/disconnected/'
+    | '/terminals/$terminalId/sessions/$sessionName/ended/'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/'
+    | '/terminals/$terminalId/sessions/$sessionName/panes/new/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+  TerminalsIndexRoute: typeof TerminalsIndexRoute
+  TerminalsTerminalIdSessionsIndexRoute: typeof TerminalsTerminalIdSessionsIndexRoute
+  TerminalsTerminalIdSessionsSessionNameIndexRoute: typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
+  TerminalsTerminalIdSessionsNewIndexRoute: typeof TerminalsTerminalIdSessionsNewIndexRoute
+  TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute: typeof TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute
+  TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute: typeof TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute
+  TerminalsTerminalIdSessionsSessionNameEndedIndexRoute: typeof TerminalsTerminalIdSessionsSessionNameEndedIndexRoute
+  TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute: typeof TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute
+  TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute: typeof TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +190,98 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/': {
+      id: '/terminals/'
+      path: '/terminals'
+      fullPath: '/terminals/'
+      preLoaderRoute: typeof TerminalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/': {
+      id: '/terminals/$terminalId/sessions/'
+      path: '/terminals/$terminalId/sessions'
+      fullPath: '/terminals/$terminalId/sessions/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/'
+      path: '/terminals/$terminalId/sessions/$sessionName'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNameIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/new/': {
+      id: '/terminals/$terminalId/sessions/new/'
+      path: '/terminals/$terminalId/sessions/new'
+      fullPath: '/terminals/$terminalId/sessions/new/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsNewIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/connecting/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/connecting/'
+      path: '/terminals/$terminalId/sessions/$sessionName/connecting'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/connecting/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNameConnectingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/disconnected/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/disconnected/'
+      path: '/terminals/$terminalId/sessions/$sessionName/disconnected'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/disconnected/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/ended/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/ended/'
+      path: '/terminals/$terminalId/sessions/$sessionName/ended'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/ended/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNameEndedIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/'
+      path: '/terminals/$terminalId/sessions/$sessionName/panes/$paneId'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/panes/$paneId/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terminals/$terminalId/sessions/$sessionName/panes/new/': {
+      id: '/terminals/$terminalId/sessions/$sessionName/panes/new/'
+      path: '/terminals/$terminalId/sessions/$sessionName/panes/new'
+      fullPath: '/terminals/$terminalId/sessions/$sessionName/panes/new/'
+      preLoaderRoute: typeof TerminalsTerminalIdSessionsSessionNamePanesNewIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+  TerminalsIndexRoute: TerminalsIndexRoute,
+  TerminalsTerminalIdSessionsIndexRoute: TerminalsTerminalIdSessionsIndexRoute,
+  TerminalsTerminalIdSessionsSessionNameIndexRoute:
+    TerminalsTerminalIdSessionsSessionNameIndexRoute,
+  TerminalsTerminalIdSessionsNewIndexRoute:
+    TerminalsTerminalIdSessionsNewIndexRoute,
+  TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute:
+    TerminalsTerminalIdSessionsSessionNameConnectingIndexRoute,
+  TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute:
+    TerminalsTerminalIdSessionsSessionNameDisconnectedIndexRoute,
+  TerminalsTerminalIdSessionsSessionNameEndedIndexRoute:
+    TerminalsTerminalIdSessionsSessionNameEndedIndexRoute,
+  TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute:
+    TerminalsTerminalIdSessionsSessionNamePanesPaneIdIndexRoute,
+  TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute:
+    TerminalsTerminalIdSessionsSessionNamePanesNewIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

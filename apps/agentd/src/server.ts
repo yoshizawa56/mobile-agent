@@ -8,9 +8,11 @@ import { WebSocketServer } from "ws";
 import { paneKindForCommand, type PaneRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
 import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository } from "@mobile-agent/persistence";
+import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession } from "./terminal-session.js";
 import { TmuxAdapter, type TmuxPane } from "./tmux.js";
+import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
 
 export type AgentdOptions = {
@@ -28,9 +30,26 @@ export function createAgentdServer(options: AgentdOptions) {
   const viewportManager = new TmuxViewportManager(tmux);
   const database = createAgentDatabase(options.databaseFile ?? defaultDatabaseFile());
   const paneRepository = new DrizzlePaneRepository(database.db);
+  const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
   const corsOrigin = options.corsOrigin ?? process.env.AGENTD_CORS_ORIGIN ?? "*";
+  let eventRevision = 0;
+  const tmuxStateMonitor = new TmuxStateMonitor({
+    readPanes: () => tmux.listPanes(),
+    synchronize: (panes) => syncPanes(tmux, paneRepository, panes).then(() => undefined),
+    onChange: (changes) => {
+      const revision = ++eventRevision;
+      for (const change of changes) {
+        eventHub.publish({
+          type: "session_updated",
+          sessionName: change.sessionName,
+          reason: change.reason,
+          revision,
+        });
+      }
+    },
+  });
 
   const app = createAgentdApp({
     corsOrigin,
@@ -39,12 +58,13 @@ export function createAgentdServer(options: AgentdOptions) {
     listSessions: () => listSessions(tmux, paneRepository),
     createSession: (input) => createSession(input, tmux, paneRepository),
     listPanes: (sessionName) => listCurrentPanes(tmux, paneRepository, sessionName),
-    createPane: (input) => createPane(input, tmux, paneRepository),
+    createPane: (input) => createPane(input, tmux, paneRepository, viewportManager),
     handleTmuxHook: (event, client) => viewportManager.handleTmuxHook(event, client),
   });
 
   const httpServer = createServer(getRequestListener(app.fetch));
   const webSocketServer = new WebSocketServer({ noServer: true });
+  const eventWebSocketServer = new WebSocketServer({ noServer: true });
 
   webSocketServer.on("connection", (socket) => {
     new TerminalSession(socket, {
@@ -54,8 +74,18 @@ export function createAgentdServer(options: AgentdOptions) {
     });
   });
 
+  eventWebSocketServer.on("connection", (socket) => {
+    eventHub.add(socket);
+  });
+
   httpServer.on("upgrade", (request, socket, head) => {
     const pathname = new URL(request.url ?? "/", "http://agentd.local").pathname;
+    if (pathname === "/events") {
+      eventWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+        eventWebSocketServer.emit("connection", webSocket, request);
+      });
+      return;
+    }
     if (pathname !== "/terminal") {
       socket.destroy();
       return;
@@ -76,13 +106,17 @@ export function createAgentdServer(options: AgentdOptions) {
       }
 
       httpServer.listen(options.port, options.host, () => {
+        tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
         console.log(`agentd listening on http://${options.host}:${options.port}`);
       });
     },
     stop() {
+      tmuxStateMonitor.stop();
       viewportManager.dispose();
       webSocketServer.close();
+      eventWebSocketServer.close();
+      eventHub.close();
       httpServer.close();
       database.close();
     },
@@ -145,6 +179,7 @@ async function createPane(
   input: CreatePaneRequest,
   tmux: TmuxAdapter,
   repository: DrizzlePaneRepository,
+  viewportManager: TmuxViewportManager,
 ): Promise<PaneSummary> {
   if (!tmux.hasSession(input.sessionName)) {
     throw new AgentdHttpError(404, "session_not_found", `tmux session does not exist: ${input.sessionName}`);
@@ -165,6 +200,9 @@ async function createPane(
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
     : createSplitPane(input, tmux, cwd, command);
+  if (input.placement !== "window" && input.targetPaneId) {
+    viewportManager.reassertMobileViewport(input.targetPaneId);
+  }
   const panes = await syncPanes(tmux, repository);
   const current = panes.find((pane) => pane.tmuxPaneId === tmuxPaneId);
   if (!current) {
@@ -195,15 +233,19 @@ function createSplitPane(input: CreatePaneRequest, tmux: TmuxAdapter, cwd: strin
   }
 
   const target = tmux.resolvePane(input.targetPaneId);
+  const windowSnapshot = tmux.snapshotWindow(target);
   if (target.sessionName !== input.sessionName) {
     throw new AgentdHttpError(400, "target_pane_session_mismatch", "targetPaneId belongs to a different tmux session");
   }
 
-  return tmux.splitWindow(cwd, command, input.placement, input.targetPaneId);
+  return tmux.splitWindow(cwd, command, input.placement, input.targetPaneId, windowSnapshot.zoomed);
 }
 
-async function syncPanes(tmux: TmuxAdapter, repository: DrizzlePaneRepository): Promise<PaneRecord[]> {
-  const tmuxPanes = tmux.listPanes();
+async function syncPanes(
+  tmux: TmuxAdapter,
+  repository: DrizzlePaneRepository,
+  tmuxPanes = tmux.listPanes(),
+): Promise<PaneRecord[]> {
   const now = new Date().toISOString();
   const records: PaneRecord[] = [];
 

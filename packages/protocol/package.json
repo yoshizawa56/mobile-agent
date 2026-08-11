@@ -11,9 +11,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run src/index.test.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "build": "bunx --bun tsc -p tsconfig.build.json",
+    "test": "bun test src/index.test.ts",
+    "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
     "zod": "^4.4.3"

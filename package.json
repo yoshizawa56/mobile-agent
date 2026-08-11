@@ -12,19 +12,25 @@
     "url": "https://github.com/yoshizawa56/mobile-agent/issues"
   },
   "homepage": "https://github.com/yoshizawa56/mobile-agent#readme",
-  "packageManager": "pnpm@11.21.0",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0",
+    "bun": ">=1.3.14"
   },
   "scripts": {
-    "build": "turbo run build",
-    "deps:check": "pnpm outdated --recursive",
-    "dev": "node scripts/dev.mjs",
-    "test:dev": "node --test scripts/dev.test.mjs",
-    "audit:public": "node scripts/audit-public-repo.mjs",
-    "lint": "turbo run lint",
-    "test": "pnpm test:dev && turbo run test",
-    "typecheck": "turbo run typecheck"
+    "build": "bunx --no-install turbo run build",
+    "build:agent": "bun build apps/agent-cli/src/index.ts --compile --minify --outfile dist/agent",
+    "deps:check": "bun outdated",
+    "dev": "bun scripts/dev.mjs",
+    "test:dev": "bun test scripts/dev.test.mjs",
+    "audit:public": "bun scripts/audit-public-repo.mjs",
+    "lint": "bunx --no-install turbo run lint",
+    "test": "bun run test:dev && bunx --no-install turbo run test",
+    "typecheck": "bunx --no-install turbo run typecheck"
   },
   "devDependencies": {
     "turbo": "^2.10.8"

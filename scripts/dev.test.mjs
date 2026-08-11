@@ -67,7 +67,7 @@ function createFakeRuntime(overrides = {}) {
   };
 
   const spawnProcess = (command, args, options) => {
-    const name = args.includes("@mobile-agent/agentd") ? "agentd" : "web";
+    const name = args.includes("src/index.ts") ? "agentd" : "web";
     const pid = nextPid++;
     const child = new EventEmitter();
     child.pid = pid;
@@ -156,7 +156,8 @@ describe("dev orchestration diagnostics", () => {
 
     assert.equal(runtime.supervisor.state, "running");
     assert.deepEqual(runtime.spawnCalls.map((call) => call.name), ["agentd", "web"]);
-    assert.equal(runtime.spawnCalls.every((call) => call.command === "pnpm"), true);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.command), ["bun", "node"]);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.options.cwd), ["/repo/apps/agentd", "/repo/apps/web"]);
     assert.equal(runtime.spawnCalls.every((call) => call.options.detached === true), true);
     assert.equal(runtime.spawnCalls.every((call) => call.options.shell === false), true);
     assert.equal(runtime.websocketRequests.join(","), "/terminal,/events");
@@ -166,6 +167,13 @@ describe("dev orchestration diagnostics", () => {
 
     assert.equal(runtime.supervisor.state, "stopped");
     assert.deepEqual(runtime.signals.map(({ name, signal }) => `${name}:${signal}`), ["agentd:SIGTERM", "web:SIGTERM"]);
+  });
+
+  it("checks wildcard web ownership on the bind address", () => {
+    const runtime = createFakeRuntime({ config: { webHost: "0.0.0.0" } });
+
+    assert.equal(runtime.supervisor.services.web.host, "0.0.0.0");
+    assert.equal(runtime.supervisor.services.web.url, "http://127.0.0.1:15227/");
   });
 
   it("reuses healthy listeners without claiming or killing them", async () => {

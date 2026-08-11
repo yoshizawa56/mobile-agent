@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { spawn as spawnPty, type IPty } from "node-pty";
+import { spawnPty, type PtyProcess } from "./pty.js";
 import { TmuxAdapter } from "./tmux.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
 
@@ -12,7 +12,7 @@ const canUseRealTmux = probeIsolatedTmux();
 describe.skipIf(!canUseRealTmux)("real tmux mobile viewport fixture", () => {
   it("attaches a selected split pane as one fully redrawn viewport", async () => {
     const fixture = new RealTmuxFixture();
-    let pty: IPty | undefined;
+    let pty: PtyProcess | undefined;
     let manager: TmuxViewportManager | undefined;
 
     try {

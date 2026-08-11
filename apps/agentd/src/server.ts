@@ -10,7 +10,7 @@ import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } fr
 import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleProjectRepository } from "@mobile-agent/persistence";
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
-import { TerminalSession } from "./terminal-session.js";
+import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
 import { TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
@@ -83,12 +83,15 @@ export function createAgentdServer(options: AgentdOptions) {
   const httpServer = createServer(getRequestListener(app.fetch));
   const webSocketServer = new WebSocketServer({ noServer: true });
   const eventWebSocketServer = new WebSocketServer({ noServer: true });
+  const terminalSessions = new TerminalSessionRegistry();
+  let listeningPort = options.port;
 
   webSocketServer.on("connection", (socket) => {
     new TerminalSession(socket, {
       cwd: process.cwd(),
       defaultTarget,
       viewportManager,
+      sessions: terminalSessions,
     });
   });
 
@@ -116,6 +119,9 @@ export function createAgentdServer(options: AgentdOptions) {
 
   return {
     app,
+    get port() {
+      return listeningPort;
+    },
     start() {
       try {
         tmux.ensureSession(defaultTarget, process.cwd());
@@ -124,13 +130,16 @@ export function createAgentdServer(options: AgentdOptions) {
       }
 
       httpServer.listen(options.port, options.host, () => {
+        const address = httpServer.address();
+        if (address && typeof address === "object") listeningPort = address.port;
         tmuxStateMonitor.start();
-        viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
-        console.log(`agentd listening on http://${options.host}:${options.port}`);
+        viewportManager.configureHooks(`http://127.0.0.1:${listeningPort}/internal/tmux-hook`, hookToken);
+        console.log(`agentd listening on http://${options.host}:${listeningPort}`);
       });
     },
     stop() {
       tmuxStateMonitor.stop();
+      terminalSessions.closeAll();
       viewportManager.dispose();
       webSocketServer.close();
       eventWebSocketServer.close();

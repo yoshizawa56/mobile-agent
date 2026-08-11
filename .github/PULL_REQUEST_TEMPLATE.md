@@ -9,10 +9,10 @@
 
 ## Verification
 
-- [ ] `pnpm audit:public`
-- [ ] `pnpm typecheck`
-- [ ] `pnpm test`
-- [ ] `pnpm build`
+- [ ] `bun audit:public`
+- [ ] `bun run typecheck`
+- [ ] `bun run test`
+- [ ] `bun run build`
 - [ ] Storybook or browser behavior checked when UI changed
 
 ## Security and data review

@@ -19,10 +19,11 @@
   "scripts": {
     "build": "turbo run build",
     "deps:check": "pnpm outdated --recursive",
-    "dev": "turbo run dev --parallel",
+    "dev": "node scripts/dev.mjs",
+    "test:dev": "node --test scripts/dev.test.mjs",
     "audit:public": "node scripts/audit-public-repo.mjs",
     "lint": "turbo run lint",
-    "test": "turbo run test",
+    "test": "pnpm test:dev && turbo run test",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

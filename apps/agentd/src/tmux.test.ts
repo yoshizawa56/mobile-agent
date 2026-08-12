@@ -44,7 +44,7 @@ describe("tmux adapter mobile attach redraw", () => {
     const adapter = new RecordingTmuxAdapter();
     adapter.refreshClient("/dev/ttys016");
 
-    expect(adapter.lastArgs).toEqual(["refresh-client", "-rS", "-t", "/dev/ttys016"]);
+    expect(adapter.lastArgs).toEqual(["refresh-client", "-t", "/dev/ttys016"]);
   });
 });
 

@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { and, asc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -35,10 +35,9 @@ import {
 
 export { agentSessions, auditEvents, panes, projects, runs, workspaces } from "./schema.js";
 
-export type BetterSqliteDatabase = ReturnType<typeof Database>;
 export type AgentDatabase = {
   db: ReturnType<typeof drizzle>;
-  sqlite: BetterSqliteDatabase;
+  sqlite: Database;
   close: () => void;
 };
 
@@ -49,8 +48,7 @@ export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): 
 export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memory:"): AgentDatabase {
   if (file !== ":memory:") mkdirSync(dirname(resolve(file)), { recursive: true, mode: 0o700 });
   const sqlite = new Database(file);
-  sqlite.pragma("foreign_keys = ON");
-  sqlite.pragma("journal_mode = WAL");
+  sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   ensureSchema(sqlite);
   const db = drizzle({ client: sqlite });
 
@@ -281,7 +279,7 @@ export function recordAuditEvent(
     .run();
 }
 
-function ensureSchema(sqlite: BetterSqliteDatabase): void {
+function ensureSchema(sqlite: Database): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS panes (
       id TEXT PRIMARY KEY NOT NULL,

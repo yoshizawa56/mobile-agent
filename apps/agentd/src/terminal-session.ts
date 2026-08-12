@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { RawData } from "ws";
 import { WebSocket } from "ws";
-import { spawn as spawnPty, type IPty } from "node-pty";
 import {
   clientControlMessageSchema,
   terminalProtocolVersion,
@@ -9,6 +8,7 @@ import {
   type ServerControlMessage,
 } from "@mobile-agent/protocol";
 import { TmuxViewportManager, type PreparedViewport, type ViewportLease } from "./viewport-manager.js";
+import { spawnPty, type PtyProcess, type PtySpawner } from "./pty.js";
 
 type TerminalViewportManager = {
   prepare: (target: string, cwd: string, cols?: number, rows?: number) => PreparedViewport;
@@ -21,8 +21,8 @@ export type TerminalSessionOptions = {
   viewportManager: TerminalViewportManager;
   /** How long a transport can be absent before the PTY and lease are released. */
   resumeGraceMs?: number;
-  /** Injectable for lifecycle tests; production uses node-pty. */
-  spawnPty?: typeof spawnPty;
+  /** Injectable for lifecycle tests; production uses Bun.Terminal. */
+  spawnPty?: PtySpawner;
   sessions?: TerminalSessionRegistry;
 };
 
@@ -81,7 +81,7 @@ export class TerminalSession {
   private readonly resumeGraceMs: number;
   private socket: WebSocket | undefined;
   private socketBinding: SocketBinding | undefined;
-  private pty: IPty | undefined;
+  private pty: PtyProcess | undefined;
   private lease: ViewportLease | undefined;
   private state: TerminalSessionState = "awaiting_attach";
   private disposed = false;
@@ -305,7 +305,7 @@ export class TerminalSession {
     this.rows = message.rows;
 
     let prepared: ReturnType<TerminalSessionOptions["viewportManager"]["prepare"]> | undefined;
-    let pty: IPty | undefined;
+    let pty: PtyProcess | undefined;
     let lease: ViewportLease | undefined;
 
     try {

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { execFile, spawn as spawnChild } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -96,7 +96,9 @@ function serviceDefinitions(config) {
       environmentVariable: "AGENTD_PORT",
       url: endpoint(config.agentdProbeHost, config.agentdPort),
       healthUrl: endpoint(config.agentdProbeHost, config.agentdPort, "/health"),
-      args: ["--filter", "@mobile-agent/agentd", "dev"],
+      command: bunCommand(),
+      cwd: resolve(config.repoRoot, "apps/agentd"),
+      args: ["--watch", "src/index.ts"],
       environment: {
         ...config.baseEnvironment,
         AGENTD_HOST: config.agentdHost,
@@ -105,11 +107,16 @@ function serviceDefinitions(config) {
     },
     web: {
       name: "web",
-      host: browserHost(config.webHost),
+      // Port ownership must be checked against the address Vite binds to.
+      // HTTP probes still use browserHost() so 0.0.0.0 is never emitted as a
+      // client destination.
+      host: config.webHost,
       port: config.webPort,
       environmentVariable: "VITE_DEV_PORT",
       url: endpoint(browserHost(config.webHost), config.webPort),
-      args: ["--filter", "@mobile-agent/web", "dev"],
+      command: nodeCommand(),
+      cwd: resolve(config.repoRoot, "apps/web"),
+      args: ["./node_modules/vite/bin/vite.js"],
       environment: {
         ...config.baseEnvironment,
         VITE_DEV_HOST: config.webHost,
@@ -233,17 +240,6 @@ export function probeHttp(url, options = {}) {
 
 export function probeWebSocket(url, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_DEV_CONFIG.probeTimeoutMs;
-  const parsed = new URL(url);
-  const request = (parsed.protocol === "wss:" ? httpsRequest : httpRequest)(parsed, {
-    method: "GET",
-    headers: {
-      connection: "Upgrade",
-      upgrade: "websocket",
-      "sec-websocket-version": "13",
-      "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
-    },
-  });
-
   return new Promise((resolveResult, reject) => {
     let settled = false;
     const finish = (callback, value) => {
@@ -253,25 +249,26 @@ export function probeWebSocket(url, options = {}) {
       callback(value);
     };
     const timeout = setTimeout(() => {
-      request.destroy();
+      socket?.close();
       finish(reject, new Error(`WebSocket upgrade timed out after ${timeoutMs}ms`));
     }, timeoutMs);
-
-    request.once("error", (error) => finish(reject, error));
-    request.once("upgrade", (response, socket) => {
-      const statusCode = response.statusCode ?? 0;
-      socket.destroy();
-      if (statusCode !== 101) {
-        finish(reject, new Error(`WebSocket upgrade returned HTTP ${statusCode}`));
-        return;
-      }
-      finish(resolveResult, { statusCode });
+    let socket;
+    try {
+      socket = new globalThis.WebSocket(url);
+    } catch (error) {
+      finish(reject, error);
+      return;
+    }
+    socket.addEventListener("open", () => {
+      finish(resolveResult, { statusCode: 101 });
+      socket.close(1000, "healthcheck");
     });
-    request.once("response", (response) => {
-      response.resume();
-      finish(reject, new Error(`WebSocket route returned HTTP ${response.statusCode ?? 0} instead of 101`));
+    socket.addEventListener("error", () => {
+      finish(reject, new Error("WebSocket upgrade failed"));
     });
-    request.end();
+    socket.addEventListener("close", (event) => {
+      if (!settled) finish(reject, new Error(`WebSocket closed before opening (${event.code})`));
+    });
   });
 }
 
@@ -395,8 +392,12 @@ function portDescription(definition, inspection) {
   return `${definition.name} port ${definition.host}:${definition.port} is owned by ${formatPortOwners(inspection.owners)}`;
 }
 
-function pnpmCommand() {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+function bunCommand() {
+  return process.platform === "win32" ? "bun.exe" : "bun";
+}
+
+function nodeCommand() {
+  return process.platform === "win32" ? "node.exe" : "node";
 }
 
 export function signalProcess(child, signal, platform = process.platform) {
@@ -481,7 +482,7 @@ class DevSupervisor {
       await this.ensureService("web");
       this.state = "running";
       this.startMonitor();
-      this.log("info", `[dev] ready: ${this.services.agentd.url}/health is healthy`);
+      this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
       this.log("info", "[dev] press Ctrl-C to stop processes started by this supervisor");
       return this;
@@ -569,8 +570,8 @@ class DevSupervisor {
   }
 
   launch(definition) {
-    const child = this.spawnProcess(pnpmCommand(), definition.args, {
-      cwd: this.config.repoRoot,
+    const child = this.spawnProcess(definition.command, definition.args, {
+      cwd: definition.cwd,
       env: definition.environment,
       shell: false,
       detached: process.platform !== "win32",
@@ -691,7 +692,7 @@ class DevSupervisor {
   async restartOrFailOnce(record, reason) {
     if (!record?.owned) {
       throw new DevRuntimeError(
-        `${record?.name ?? "service"} is unhealthy and is owned by another process; stop or repair it, then rerun pnpm dev.`,
+        `${record?.name ?? "service"} is unhealthy and is owned by another process; stop or repair it, then rerun bun dev.`,
         { service: record?.name },
       );
     }

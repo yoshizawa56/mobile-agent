@@ -81,7 +81,7 @@ export const mockTerminalOutput = [
   " persistence/schema.ts      |  72 +++",
   " 3 files changed, 932 insertions(+)",
   "",
-  "\x1b[1;38;5;117m$\x1b[0m pnpm test",
+  "\x1b[1;38;5;117m$\x1b[0m bun test",
   "\x1b[38;5;151m✓\x1b[0m 15 packages passed  \x1b[38;5;244m1.42s\x1b[0m",
   "",
   "\x1b[1;38;5;223m?\x1b[0m Continue with the next task? \x1b[1;38;5;223m▌\x1b[0m",
@@ -93,7 +93,7 @@ export const mockShellTerminalOutput = [
   "\x1b[38;5;151m M apps/web/src/styles.css\x1b[0m",
   "\x1b[38;5;151m M apps/web/src/mock/mock-data.ts\x1b[0m",
   "",
-  "\x1b[1;38;5;82m❯\x1b[0m pnpm --filter @mobile-agent/web test",
+  "\x1b[1;38;5;82m❯\x1b[0m bun run --filter @mobile-agent/web test",
   "\x1b[38;5;120m✓\x1b[0m 1 test file passed  \x1b[38;5;244m0.18s\x1b[0m",
   "",
   "\x1b[1;38;5;120m~/work/mobile-agent\x1b[0m \x1b[1;38;5;82m❯\x1b[0m \x1b[?25l▌\x1b[?25h",
@@ -107,7 +107,7 @@ export const mockRunningAgentTerminalOutput = [
   "\x1b[38;5;151m│\x1b[0m lease: \x1b[38;5;120mmobile\x1b[0m  pane: \x1b[38;5;244m%1\x1b[0m              \x1b[38;5;151m│\x1b[0m",
   "\x1b[38;5;151m╰────────────────────────────────────╯\x1b[0m",
   "",
-  "\x1b[1;38;5;117m$\x1b[0m pnpm test",
+  "\x1b[1;38;5;117m$\x1b[0m bun test",
   "\x1b[38;5;151m⠋\x1b[0m running checks…",
 ].join("\r\n");
 

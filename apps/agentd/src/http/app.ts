@@ -1,7 +1,8 @@
 import { cors } from "hono/cors";
 import { Hono } from "hono";
-import type { CreatePaneRequest, PaneSummary, ProjectOption, TmuxSession, TerminalEndpoint, WorkspaceDirectory, WorkspaceSelection } from "@mobile-agent/protocol";
-import { agentdCapabilitiesSchema, agentdHealthSchema, createPaneRequestSchema, createSessionRequestSchema, paneResponseSchema, projectListResponseSchema, workspaceListResponseSchema } from "@mobile-agent/protocol";
+import type { WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
+import type { CreatePaneRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
+import { agentdCapabilitiesSchema, agentdHealthSchema, createPaneRequestSchema, createSessionRequestSchema, paneResponseSchema, registerWorkspaceRequestSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, workspaceResponseSchema } from "@mobile-agent/protocol";
 
 export type AgentdHookEvent =
   | "client-attached"
@@ -15,13 +16,14 @@ export type AgentdHttpDependencies = {
   hookToken: string;
   getTerminal: () => Promise<TerminalEndpoint>;
   listWorkspaceDirectories: () => Promise<WorkspaceDirectory[]>;
-  listProjects: () => Promise<ProjectOption[]>;
-  resolveWorkspaceDirectory: (workspaceId: string) => Promise<{ id: string; rootPath: string }>;
-  resolveWorkspaceSelection: (selection: WorkspaceSelection) => Promise<{ id: string; rootPath: string; projectId: string | null; projectName: string | null }>;
+  browseWorkspaceDirectories: (parentPath?: string) => Promise<WorkspaceDirectory[]>;
+  registerWorkspace: (input: RegisterWorkspaceRequest) => Promise<WorkspaceDirectory>;
+  resolveWorkspaceDirectory: (workspaceId: string) => Promise<WorkspaceRecord>;
+  resolveWorkspaceSelection: (selection: WorkspaceSelection) => Promise<WorkspaceRecord>;
   listSessions: () => Promise<TmuxSession[]>;
   createSession: (input: { name: string; cwd: string; workspaceId?: string }) => Promise<TmuxSession>;
   listPanes: (sessionName?: string) => Promise<PaneSummary[]>;
-  createPane: (input: CreatePaneRequest) => Promise<PaneSummary>;
+  createPane: (input: CreatePaneRequest, workspace?: WorkspaceRecord) => Promise<PaneSummary>;
   handleTmuxHook: (event: AgentdHookEvent, client: string) => void;
 };
 
@@ -79,10 +81,31 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
         return c.json(toUnavailableError(error), 503);
       }
     })
-    .get("/api/projects", async (c) => {
+    .get("/api/workspace-directories", async (c) => {
       try {
-        return c.json(projectListResponseSchema.parse({ projects: await deps.listProjects() }));
+        const parentPath = c.req.query("path") || undefined;
+        return c.json(workspaceBrowseResponseSchema.parse({ directories: await deps.browseWorkspaceDirectories(parentPath) }));
       } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
+    .post("/api/workspaces", async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "invalid_request", message: "Request body must be valid JSON" }, 400);
+      }
+
+      const parsed = registerWorkspaceRequestSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: "invalid_request", message: parsed.error.message }, 400);
+      try {
+        return c.json(workspaceResponseSchema.parse({ workspace: await deps.registerWorkspace(parsed.data) }), 201);
+      } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
         return c.json(toUnavailableError(error), 503);
       }
     })
@@ -150,10 +173,14 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       }
 
       try {
-        const input = parsed.data.workspaceId
-          ? await resolvePaneSelection(parsed.data, deps)
-          : parsed.data;
-        return c.json(paneResponseSchema.parse({ pane: await deps.createPane(input) }), 201);
+        const workspace = parsed.data.workspaceId
+          ? await deps.resolveWorkspaceSelection({
+              workspaceId: parsed.data.workspaceId,
+              mode: parsed.data.useWorktree ? "worktree" : "workspace",
+            })
+          : undefined;
+        const input = workspace ? { ...parsed.data, cwd: workspace.rootPath } : parsed.data;
+        return c.json(paneResponseSchema.parse({ pane: await deps.createPane(input, workspace) }), 201);
       } catch (error) {
         const httpError = toHttpError(error);
         if (httpError) return c.json(errorResponse(httpError), httpError.status);
@@ -176,23 +203,6 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
         return c.body(null, 400);
       }
     });
-}
-
-async function resolvePaneSelection(
-  input: CreatePaneRequest,
-  deps: AgentdHttpDependencies,
-): Promise<CreatePaneRequest> {
-  if (!input.workspaceId) throw new AgentdHttpError(400, "invalid_directory", "A workspace directory is required");
-  const resolved = await deps.resolveWorkspaceSelection({
-    workspaceId: input.workspaceId,
-    mode: input.useWorktree ? "worktree" : "workspace",
-    projectId: input.projectId ?? null,
-  });
-  return {
-    ...input,
-    cwd: resolved.rootPath,
-    projectName: resolved.projectName,
-  };
 }
 
 export type AgentdApp = ReturnType<typeof createAgentdApp>;

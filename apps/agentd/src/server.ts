@@ -5,16 +5,16 @@ import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer } from "ws";
-import { paneKindForCommand, type PaneRecord } from "@mobile-agent/domain";
+import { paneKindForCommand, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleProjectRepository } from "@mobile-agent/persistence";
+import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
 import { TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
-import { allowedRootsFromEnvironment, projectOptionsFromDirectory, WorkspaceSelectionCatalog } from "./workspace-selection.js";
+import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
 
 export type AgentdOptions = {
   host: string;
@@ -32,18 +32,8 @@ export function createAgentdServer(options: AgentdOptions) {
   const viewportManager = new TmuxViewportManager(tmux);
   const database = createAgentDatabase(options.databaseFile ?? defaultDatabaseFile());
   const paneRepository = new DrizzlePaneRepository(database.db);
-  const projectRepository = new DrizzleProjectRepository(database.db);
-  const workspaceCatalog = new WorkspaceSelectionCatalog({
-    allowedRoots: options.allowedRoots ?? allowedRootsFromEnvironment(),
-    listProjects: async () => {
-      const projects = [...projectOptionsFromDirectory(), ...(await projectRepository.list()).map((project) => ({
-        id: project.id,
-        name: project.name,
-        directory: project.directory,
-      }))];
-      return [...new Map(projects.map((project) => [project.name, project])).values()];
-    },
-  });
+  const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
+  const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
   const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
@@ -69,14 +59,21 @@ export function createAgentdServer(options: AgentdOptions) {
     corsOrigin,
     hookToken,
     getTerminal: getLocalTerminal,
-    listWorkspaceDirectories: () => workspaceCatalog.listDirectories(),
-    listProjects: () => workspaceCatalog.listProjects(),
-    resolveWorkspaceDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId),
-    resolveWorkspaceSelection: (selection) => workspaceCatalog.resolveSelection(selection),
+    listWorkspaceDirectories: async () => (await workspaceRepository.list()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
+    browseWorkspaceDirectories: (parentPath) => workspaceCatalog.browseDirectories(parentPath),
+    registerWorkspace: async (input) => {
+      const candidate = workspaceCatalog.registerWorkspace(input);
+      const existing = await workspaceRepository.findById(candidate.id);
+      const workspace = workspaceCatalog.registerWorkspace(input, existing);
+      await workspaceRepository.upsert(workspace);
+      return workspaceCatalog.toDirectoryOption(workspace);
+    },
+    resolveWorkspaceDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId, (id) => workspaceRepository.findById(id)),
+    resolveWorkspaceSelection: (selection) => workspaceCatalog.resolveSelection(selection, (id) => workspaceRepository.findById(id)),
     listSessions: () => listSessions(tmux, paneRepository),
     createSession: (input) => createSession(input, tmux, paneRepository, workspaceCatalog),
     listPanes: (sessionName) => listCurrentPanes(tmux, paneRepository, sessionName),
-    createPane: (input) => createPane(input, tmux, paneRepository, viewportManager, workspaceCatalog),
+    createPane: (input, workspace) => createPane(input, tmux, paneRepository, viewportManager, workspaceCatalog, workspace),
     handleTmuxHook: (event, client) => viewportManager.handleTmuxHook(event, client),
   });
 
@@ -200,6 +197,7 @@ async function createPane(
   repository: DrizzlePaneRepository,
   viewportManager: TmuxViewportManager,
   workspaceCatalog: WorkspaceSelectionCatalog,
+  workspace?: WorkspaceRecord,
 ): Promise<PaneSummary> {
   if (!tmux.hasSession(input.sessionName)) {
     throw new AgentdHttpError(404, "session_not_found", `tmux session does not exist: ${input.sessionName}`);
@@ -216,7 +214,7 @@ async function createPane(
   }
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
-  const command = input.kind === "agent" ? agentCommand(input) : undefined;
+  const command = input.kind === "agent" ? agentCommand(input, workspace) : undefined;
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
     : createSplitPane(input, tmux, cwd, command);
@@ -233,7 +231,6 @@ async function createPane(
     ...current,
     kind: input.kind,
     name: input.name,
-    projectId: input.projectId ?? current.projectId,
     workspaceId: input.workspaceId ?? current.workspaceId,
     agentId: input.agentId,
     state: input.kind === "agent" ? "starting" : "running",
@@ -243,7 +240,6 @@ async function createPane(
   tmux.setPaneOption(tmuxPaneId, "@agentd.pane_name", input.name);
   tmux.setPaneOption(tmuxPaneId, "@agentd.agent_id", input.agentId ?? "");
   tmux.setPaneOption(tmuxPaneId, "@agentd.kind", input.kind);
-  tmux.setPaneOption(tmuxPaneId, "@agentd.project_id", input.projectId ?? "");
   tmux.setPaneOption(tmuxPaneId, "@agentd.workspace_id", input.workspaceId ?? "");
   return record;
 }
@@ -286,7 +282,6 @@ async function syncPanes(
       kind,
       name: tmuxPane.agentdName ?? (existing?.name && existing.name !== tmuxPane.paneId ? existing.name : tmuxPane.title || tmuxPane.command || tmuxPane.paneId),
       cwd: tmuxPane.cwd,
-      projectId: existing?.projectId ?? null,
       workspaceId: existing?.workspaceId ?? null,
       agentId,
       runId: kind === "agent" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : null,
@@ -322,7 +317,7 @@ function summarizeSessions(panes: PaneRecord[]): TmuxSession[] {
     if (waitingCount) detailParts.push(`${waitingCount} waiting`);
     return {
       name,
-      project: basename(cwd) || name,
+      workspace: basename(cwd) || name,
       cwd: displayCwd(cwd),
       paneCount: sessionPanes.length,
       waitingCount,
@@ -359,12 +354,13 @@ function executableName(command: string): string | null {
   return executable === "codex" || executable === "claude" ? executable : null;
 }
 
-function agentCommand(input: CreatePaneRequest): string {
+function agentCommand(input: CreatePaneRequest, workspace?: WorkspaceRecord): string {
   const binary = process.env.AGENTD_AGENT_COMMAND ?? "agent";
   const args = [binary, "run", input.agentId!, "--no-worktree", "--name", input.name];
   if (input.useWorktree) {
     args.splice(3, 1, "--worktree");
-    if (input.projectName) args.push("--project", input.projectName);
+    if (workspace?.setupScriptPath) args.push("--setup-hook", workspace.setupScriptPath);
+    if (workspace?.cleanupScriptPath) args.push("--cleanup-hook", workspace.cleanupScriptPath);
   }
   return args.map(shellQuote).join(" ");
 }

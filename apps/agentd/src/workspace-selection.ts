@@ -1,17 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
-import type {
-  ProjectOption as DomainProjectOption,
-  WorkspaceDirectoryOption,
-  WorkspaceSelection,
-} from "@mobile-agent/domain";
+import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
+import type { WorkspaceDirectoryOption, WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
 import { validateWorkspaceSelection } from "@mobile-agent/domain";
-import type { ProjectOption, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { RegisterWorkspaceRequest, WorkspaceDirectory } from "@mobile-agent/protocol";
 
 export type InvalidDirectoryReason = "not_found" | "not_directory" | "outside_allowed_root" | "unknown_workspace";
+export type InvalidHookReason = "not_found" | "not_file" | "not_executable";
 
 export class InvalidWorkspaceDirectoryError extends Error {
   public readonly code = "invalid_directory" as const;
@@ -26,19 +23,24 @@ export class InvalidWorkspaceDirectoryError extends Error {
   }
 
   public get details(): Record<string, unknown> {
-    return {
-      directory: this.directory,
-      reason: this.reason,
-      allowedRoots: this.allowedRoots,
-    };
+    return { directory: this.directory, reason: this.reason, allowedRoots: this.allowedRoots };
   }
 }
 
-/**
- * Normalizes and checks every host directory used by the control plane. The
- * policy is deliberately independent from the web client: an ID selected by
- * the client is resolved again on the host before tmux receives a cwd.
- */
+export class InvalidWorkspaceHookError extends Error {
+  public readonly code = "invalid_hook" as const;
+
+  public constructor(public readonly path: string, public readonly reason: InvalidHookReason) {
+    super(invalidHookMessage(path, reason));
+    this.name = "InvalidWorkspaceHookError";
+  }
+
+  public get details(): Record<string, unknown> {
+    return { path: this.path, reason: this.reason };
+  }
+}
+
+/** The host-side directory boundary used by workspace registration and lookup. */
 export class AllowedRootPolicy {
   public readonly roots: string[];
 
@@ -64,91 +66,103 @@ export class AllowedRootPolicy {
   }
 }
 
-export type WorkspaceSelectionCatalogOptions = {
-  allowedRoots: readonly string[];
-  listProjects?: () => Promise<ProjectOption[]>;
-};
-
 export class WorkspaceSelectionCatalog {
-  private readonly projectReader: () => Promise<ProjectOption[]>;
   public readonly policy: AllowedRootPolicy;
 
-  public constructor(private readonly options: WorkspaceSelectionCatalogOptions) {
-    this.policy = new AllowedRootPolicy(this.options.allowedRoots);
-    this.projectReader = options.listProjects ?? (async () => []);
+  public constructor(allowedRoots: readonly string[]) {
+    this.policy = new AllowedRootPolicy(allowedRoots);
   }
 
-  public async listDirectories(): Promise<WorkspaceDirectory[]> {
-    const candidates = new Set<string>();
-    for (const root of this.policy.roots) {
-      if (!isDirectory(root)) continue;
-      candidates.add(root);
-      for (const entry of safeReadDirectory(root)) {
-        const candidate = resolve(root, entry);
-        if (isDirectory(candidate) && this.policy.contains(candidate)) candidates.add(realpathIfPresent(candidate));
-      }
-    }
+  /** Lists directory candidates for the host-side registration browser. */
+  public async browseDirectories(parentPath?: string): Promise<WorkspaceDirectory[]> {
+    const bases = parentPath
+      ? [this.policy.assertDirectory(parentPath)]
+      : this.policy.roots.filter(isDirectory);
+    const candidates = parentPath
+      ? safeReadDirectory(bases[0]!).map((entry) => resolve(bases[0]!, entry)).filter(isDirectory)
+      : bases;
 
-    return [...candidates]
-      .map((directory) => this.toDirectoryOption(directory))
+    return candidates
+      .filter((directory) => this.policy.contains(directory))
+      .map((directory) => this.toDirectoryCandidate(realpathIfPresent(directory)))
       .sort((left, right) => left.directory.localeCompare(right.directory));
   }
 
-  public async listProjects(): Promise<ProjectOption[]> {
-    return (await this.projectReader()).map((project) => ({
-      id: project.id,
-      name: project.name,
-      directory: project.directory,
-    })).sort((left, right) => left.name.localeCompare(right.name));
+  public registerWorkspace(input: RegisterWorkspaceRequest, existing?: WorkspaceRecord): WorkspaceRecord {
+    const rootPath = this.policy.assertDirectory(input.directory);
+    const now = new Date().toISOString();
+    return {
+      id: workspaceId(rootPath),
+      rootPath,
+      name: input.name?.trim() || existing?.name || basename(rootPath) || rootPath,
+      isGit: isGitWorkspace(rootPath),
+      setupScriptPath: validateHookPath(input.setupScriptPath ?? null),
+      cleanupScriptPath: validateHookPath(input.cleanupScriptPath ?? null),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
   }
 
-  public async resolveWorkspaceDirectory(workspaceId: string): Promise<{ id: string; rootPath: string }> {
-    const workspace = (await this.listDirectories()).find((candidate) => candidate.id === workspaceId);
+  public toDirectoryOption(record: WorkspaceRecord): WorkspaceDirectory {
+    return {
+      id: record.id,
+      name: record.name,
+      directory: displayPath(record.rootPath),
+      isGit: record.isGit,
+      setupScriptPath: record.setupScriptPath ? displayPath(record.setupScriptPath) : null,
+      cleanupScriptPath: record.cleanupScriptPath ? displayPath(record.cleanupScriptPath) : null,
+    };
+  }
+
+  public async resolveWorkspaceDirectory(
+    workspaceId: string,
+    reader: (id: string) => Promise<WorkspaceRecord | undefined>,
+  ): Promise<WorkspaceRecord> {
+    const workspace = await reader(workspaceId);
     if (!workspace) throw new InvalidWorkspaceDirectoryError(workspaceId, "unknown_workspace", this.policy.roots);
-    return { id: workspace.id, rootPath: this.policy.assertDirectory(workspace.directory) };
+    return this.resolveRegisteredWorkspace(workspace);
   }
 
   public async resolveLegacyDirectory(directory: string): Promise<string> {
     return this.policy.assertDirectory(directory);
   }
 
-  public async resolveSelection(selection: WorkspaceSelection): Promise<{
-    id: string;
-    rootPath: string;
-    projectId: string | null;
-    projectName: string | null;
-  }> {
-    const workspace = (await this.listDirectories()).find((candidate) => candidate.id === selection.workspaceId);
-    if (!workspace) throw new InvalidWorkspaceDirectoryError(selection.workspaceId, "unknown_workspace", this.policy.roots);
-
-    const projects = await this.listProjects();
-    const project = selection.projectId ? projects.find((candidate) => candidate.id === selection.projectId) : undefined;
-    const domainWorkspace: WorkspaceDirectoryOption = {
+  public async resolveSelection(
+    selection: WorkspaceSelection,
+    reader: (id: string) => Promise<WorkspaceRecord | undefined>,
+  ): Promise<WorkspaceRecord> {
+    const workspace = await this.resolveWorkspaceDirectory(selection.workspaceId, reader);
+    const option: WorkspaceDirectoryOption = {
       id: workspace.id,
       name: workspace.name,
-      rootPath: workspace.directory,
+      rootPath: workspace.rootPath,
       isGit: workspace.isGit,
+      setupScriptPath: workspace.setupScriptPath,
+      cleanupScriptPath: workspace.cleanupScriptPath,
     };
-    const domainProject: DomainProjectOption | undefined = project
-      ? { id: project.id, name: project.name, directory: project.directory }
-      : undefined;
-    validateWorkspaceSelection(selection, domainWorkspace, domainProject);
+    validateWorkspaceSelection(selection, option);
+    return workspace;
+  }
 
+  private resolveRegisteredWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
+    const rootPath = this.policy.assertDirectory(workspace.rootPath);
     return {
-      id: workspace.id,
-      rootPath: this.policy.assertDirectory(workspace.directory),
-      projectId: project?.id ?? null,
-      projectName: project?.name ?? null,
+      ...workspace,
+      rootPath,
+      isGit: isGitWorkspace(rootPath),
+      setupScriptPath: validateHookPath(workspace.setupScriptPath),
+      cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath),
     };
   }
 
-  private toDirectoryOption(directory: string): WorkspaceDirectory {
-    const path = this.policy.assertDirectory(directory);
+  private toDirectoryCandidate(directory: string): WorkspaceDirectory {
     return {
-      id: workspaceId(path),
-      name: basename(path) || path,
-      directory: displayPath(path),
-      isGit: isGitWorkspace(path),
+      id: workspaceId(directory),
+      name: basename(directory) || directory,
+      directory: displayPath(directory),
+      isGit: isGitWorkspace(directory),
+      setupScriptPath: null,
+      cleanupScriptPath: null,
     };
   }
 }
@@ -158,19 +172,17 @@ export function allowedRootsFromEnvironment(env: NodeJS.ProcessEnv = process.env
   return configured ? configured.split(delimiter).map((root) => root.trim()).filter(Boolean) : [fallback];
 }
 
-/** Reads the same lightweight project definitions used by `agent project list`.
- * Persisted project records are still supplied by the caller and take
- * precedence when both sources contain the same name. */
-export function projectOptionsFromDirectory(root = process.env.AGENT_PROJECTS_ROOT ?? join(process.cwd(), "projects")): ProjectOption[] {
-  if (!isDirectory(root)) return [];
-  return safeReadDirectory(root)
-    .map((name) => ({ name, directory: join(root, name) }))
-    .filter((project) => isDirectory(project.directory))
-    .map((project) => ({
-      id: createHash("sha256").update(`project:${project.name}`).digest("hex").slice(0, 24),
-      name: project.name,
-      directory: realpathIfPresent(project.directory),
-    }));
+function validateHookPath(path: string | null): string | null {
+  if (!path) return null;
+  const expanded = expandPath(path);
+  if (!existsSync(expanded)) throw new InvalidWorkspaceHookError(path, "not_found");
+  if (!statSync(expanded).isFile()) throw new InvalidWorkspaceHookError(path, "not_file");
+  try {
+    accessSync(expanded, constants.X_OK);
+  } catch {
+    throw new InvalidWorkspaceHookError(path, "not_executable");
+  }
+  return realpathSync(expanded);
 }
 
 function workspaceId(path: string): string {
@@ -237,6 +249,17 @@ function invalidDirectoryMessage(directory: string, reason: InvalidDirectoryReas
     case "outside_allowed_root":
       return `Directory is outside the allowed workspace roots: ${directory}`;
     case "unknown_workspace":
-      return `Workspace directory is not selectable: ${directory}`;
+      return `Workspace is not registered: ${directory}`;
+  }
+}
+
+function invalidHookMessage(path: string, reason: InvalidHookReason): string {
+  switch (reason) {
+    case "not_found":
+      return `Workspace hook does not exist: ${path}`;
+    case "not_file":
+      return `Workspace hook is not a file: ${path}`;
+    case "not_executable":
+      return `Workspace hook is not executable: ${path}`;
   }
 }

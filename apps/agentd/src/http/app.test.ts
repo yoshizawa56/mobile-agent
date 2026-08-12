@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentdHealthSchema, paneListResponseSchema, projectListResponseSchema, sessionListResponseSchema, workspaceListResponseSchema } from "@mobile-agent/protocol";
+import { agentdHealthSchema, paneListResponseSchema, sessionListResponseSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema } from "@mobile-agent/protocol";
 import { AgentdHttpError, createAgentdApp, type AgentdApp } from "./app.js";
 import { InvalidWorkspaceDirectoryError } from "../workspace-selection.js";
 
@@ -21,7 +21,7 @@ type TableCase = {
 
 const session = {
   name: "integration",
-  project: "mobile-agent",
+  workspace: "mobile-agent",
   cwd: "~/work/mobile-agent",
   paneCount: 1,
   waitingCount: 0,
@@ -37,7 +37,6 @@ const pane = {
   kind: "shell" as const,
   name: "shell",
   cwd: "/tmp",
-  projectId: null,
   workspaceId: null,
   agentId: null,
   runId: null,
@@ -51,12 +50,8 @@ const workspace = {
   name: "mobile-agent",
   directory: "/work/mobile-agent",
   isGit: true,
-};
-
-const project = {
-  id: "project-1",
-  name: "mobile-agent",
-  directory: "/projects/mobile-agent",
+  setupScriptPath: null,
+  cleanupScriptPath: null,
 };
 
 const cases: TableCase[] = [
@@ -109,10 +104,10 @@ const cases: TableCase[] = [
     assert: [(ctx) => expect(ctx.body).toEqual({ workspaces: [workspace] })],
   },
   {
-    name: "lists selectable projects through the injected catalog",
+    name: "browses host workspace directories through the injected catalog",
     given: (ctx) => {
       ctx.app = createTestApp(ctx.events);
-      ctx.request = new Request("http://agentd.local/api/projects");
+      ctx.request = new Request("http://agentd.local/api/workspace-directories");
     },
     when: async (ctx) => {
       ctx.response = await ctx.app!.request(ctx.request);
@@ -120,9 +115,28 @@ const cases: TableCase[] = [
     },
     check: [
       (ctx) => expect(ctx.response?.status).toBe(200),
-      (ctx) => expect(projectListResponseSchema.safeParse(ctx.body).success).toBe(true),
+      (ctx) => expect(workspaceBrowseResponseSchema.safeParse(ctx.body).success).toBe(true),
     ],
-    assert: [(ctx) => expect(ctx.body).toEqual({ projects: [project] })],
+    assert: [(ctx) => expect(ctx.body).toEqual({ directories: [workspace] })],
+  },
+  {
+    name: "registers a workspace with host-side hook paths",
+    given: (ctx) => {
+      ctx.app = createTestApp(ctx.events, {
+        registerWorkspace: async (input) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null }),
+      });
+      ctx.request = new Request("http://agentd.local/api/workspaces", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ directory: "/work/mobile-agent", setupScriptPath: "/Users/me/.config/agent/setup", cleanupScriptPath: null }),
+      });
+    },
+    when: async (ctx) => {
+      ctx.response = await ctx.app!.request(ctx.request);
+      ctx.body = await ctx.response.json();
+    },
+    check: [(ctx) => expect(ctx.response?.status).toBe(201)],
+    assert: [(ctx) => expect(ctx.body).toMatchObject({ workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/agent/setup" } })],
   },
   {
     name: "filters panes with the session query",
@@ -187,7 +201,7 @@ const cases: TableCase[] = [
     })],
   },
   {
-    name: "resolves a workspace and project before creating a pane",
+    name: "resolves a workspace before creating a pane",
     given: (ctx) => {
       ctx.app = createTestApp(ctx.events);
       ctx.request = new Request("http://agentd.local/api/panes", {
@@ -200,8 +214,6 @@ const cases: TableCase[] = [
           workspaceId: workspace.id,
           agentId: "codex",
           useWorktree: true,
-          projectId: project.id,
-          projectName: null,
           placement: "window",
           targetPaneId: null,
         }),
@@ -228,7 +240,6 @@ const cases: TableCase[] = [
           cwd: "/tmp",
           agentId: "codex",
           useWorktree: false,
-          projectName: null,
           placement: "window",
           targetPaneId: null,
         }),
@@ -289,13 +300,18 @@ function createTestApp(
       lastSeen: "online now",
     }),
     listWorkspaceDirectories: async () => [workspace],
-    listProjects: async () => [project],
-    resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory }),
+    browseWorkspaceDirectories: async () => [workspace],
+    registerWorkspace: async () => workspace,
+    resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
     resolveWorkspaceSelection: async (selection) => ({
       id: selection.workspaceId,
       rootPath: workspace.directory,
-      projectId: selection.projectId,
-      projectName: selection.projectId ? project.name : null,
+      name: workspace.name,
+      isGit: workspace.isGit,
+      setupScriptPath: workspace.setupScriptPath,
+      cleanupScriptPath: workspace.cleanupScriptPath,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
     }),
     listSessions: async () => [session],
     createSession: async () => session,

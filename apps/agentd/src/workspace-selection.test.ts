@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AllowedRootPolicy, InvalidWorkspaceDirectoryError, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
+import { AllowedRootPolicy, InvalidWorkspaceDirectoryError, InvalidWorkspaceHookError, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
 
 const temporaryRoots: string[] = [];
 
@@ -75,42 +75,39 @@ describe("allowed workspace root policy", () => {
 });
 
 describe("workspace selection catalog", () => {
-  it("lists selectable directories and resolves a project worktree selection", async () => {
+  it("browses directories, registers a workspace, and resolves a worktree selection", async () => {
     const root = mkdtempTracked("mobile-agent-catalog-");
     const repository = mkdirAndReturn(join(root, "mobile-agent"));
     execFileSync("git", ["init", "-q", repository]);
     mkdirAndReturn(join(root, "scratch"));
-    const catalog = new WorkspaceSelectionCatalog({
-      allowedRoots: [root],
-      listProjects: async () => [{ id: "project-1", name: "mobile-agent", directory: "/projects/mobile-agent" }],
-    });
+    const setup = join(root, "setup");
+    writeExecutable(setup);
+    const catalog = new WorkspaceSelectionCatalog([root]);
 
-    const workspaces = await catalog.listDirectories();
+    const workspaces = await catalog.browseDirectories(root);
     const selected = workspaces.find((workspace) => workspace.name === "mobile-agent");
     expect(selected).toMatchObject({ name: "mobile-agent", isGit: true });
-    await expect(catalog.resolveSelection({ workspaceId: selected!.id, mode: "worktree", projectId: "project-1" })).resolves.toMatchObject({
-      id: selected!.id,
+    const registered = catalog.registerWorkspace({ directory: repository, setupScriptPath: setup });
+    await expect(catalog.resolveSelection({ workspaceId: registered.id, mode: "worktree" }, async () => registered)).resolves.toMatchObject({
+      id: registered.id,
       rootPath: realpathSync(repository),
-      projectId: "project-1",
-      projectName: "mobile-agent",
+      setupScriptPath: realpathSync(setup),
     });
   });
 
-  it.each([
-    { name: "reports an unknown workspace id", mode: "workspace" as const, projectId: null, code: "invalid_directory" },
-    { name: "reports a missing project", mode: "worktree" as const, projectId: "missing", code: "project_not_found" },
-  ])("$name with a structured error", async ({ mode, projectId, code }) => {
+  it("rejects an unknown registered workspace id", async () => {
     const root = mkdtempTracked("mobile-agent-selection-");
-    const workspace = mkdirAndReturn(join(root, "repository"));
-    execFileSync("git", ["init", "-q", workspace]);
-    const catalog = new WorkspaceSelectionCatalog({
-      allowedRoots: [root],
-      listProjects: async () => [{ id: "project-1", name: "repository", directory: "/projects/repository" }],
-    });
-    const selected = (await catalog.listDirectories()).find((candidate) => candidate.name === "repository")!;
-    const selection = { workspaceId: code === "invalid_directory" ? "missing" : selected.id, mode, projectId };
+    const catalog = new WorkspaceSelectionCatalog([root]);
 
-    await expect(catalog.resolveSelection(selection)).rejects.toMatchObject({ code });
+    await expect(catalog.resolveSelection({ workspaceId: "missing", mode: "workspace" }, async () => undefined)).rejects.toMatchObject({ code: "invalid_directory" });
+  });
+
+  it("rejects a non-executable hook during registration", () => {
+    const root = mkdtempTracked("mobile-agent-hook-");
+    const workspace = mkdirAndReturn(join(root, "repository"));
+    const hook = join(root, "setup");
+    writeFileSync(hook, "#!/bin/sh\n");
+    expect(() => new WorkspaceSelectionCatalog([root]).registerWorkspace({ directory: workspace, setupScriptPath: hook })).toThrowError(InvalidWorkspaceHookError);
   });
 });
 
@@ -123,4 +120,9 @@ function mkdtempTracked(prefix: string): string {
 function mkdirAndReturn(path: string): string {
   mkdirSync(path, { recursive: true });
   return path;
+}
+
+function writeExecutable(path: string): void {
+  writeFileSync(path, "#!/bin/sh\n");
+  chmodSync(path, 0o755);
 }

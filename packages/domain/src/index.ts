@@ -14,7 +14,6 @@ export type RunState = (typeof runStates)[number];
 
 export type PaneId = string;
 export type RunId = string;
-export type ProjectId = string;
 export type WorkspaceId = string;
 
 export const agentBackends = ["codex", "claude"] as const;
@@ -37,6 +36,8 @@ export type WorkspaceRecord = {
   rootPath: string;
   name: string;
   isGit: boolean;
+  setupScriptPath: string | null;
+  cleanupScriptPath: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -49,28 +50,22 @@ export type WorkspaceSelectionMode = (typeof workspaceSelectionModes)[number];
  * resolved by agentd from an allowed-root policy; clients send the stable id
  * back instead of choosing an arbitrary cwd.
  */
-export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit">;
-
-export type ProjectOption = Pick<ProjectRecord, "id" | "name" | "directory">;
+export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit" | "setupScriptPath" | "cleanupScriptPath">;
 
 export type WorkspaceSelection = {
   workspaceId: WorkspaceId;
   mode: WorkspaceSelectionMode;
-  projectId: ProjectId | null;
 };
 
 export type WorkspaceSelectionErrorCode =
   | "workspace_not_found"
-  | "project_not_found"
-  | "project_required"
-  | "worktree_not_supported"
-  | "project_not_allowed";
+  | "worktree_not_supported";
 
 export class WorkspaceSelectionError extends Error {
   public constructor(
     public readonly code: WorkspaceSelectionErrorCode,
     message: string,
-    public readonly details: { workspaceId: WorkspaceId; projectId: ProjectId | null },
+    public readonly details: { workspaceId: WorkspaceId },
   ) {
     super(message);
     this.name = "WorkspaceSelectionError";
@@ -85,55 +80,23 @@ export class WorkspaceSelectionError extends Error {
 export function validateWorkspaceSelection(
   selection: WorkspaceSelection,
   workspace: WorkspaceDirectoryOption | undefined,
-  project: ProjectOption | undefined,
 ): WorkspaceSelection {
   if (!workspace) {
     throw new WorkspaceSelectionError(
       "workspace_not_found",
       `Workspace directory not found: ${selection.workspaceId}`,
-      selection,
+      { workspaceId: selection.workspaceId },
     );
   }
   if (selection.mode === "worktree" && !workspace.isGit) {
     throw new WorkspaceSelectionError(
       "worktree_not_supported",
       `Workspace does not support worktrees: ${workspace.rootPath}`,
-      selection,
-    );
-  }
-  if (selection.mode === "worktree" && !selection.projectId) {
-    throw new WorkspaceSelectionError(
-      "project_required",
-      "A project is required when creating a worktree",
-      selection,
-    );
-  }
-  if (selection.mode === "workspace" && selection.projectId) {
-    throw new WorkspaceSelectionError(
-      "project_not_allowed",
-      "A project can only be selected for worktree mode",
-      selection,
-    );
-  }
-  if (selection.projectId && !project) {
-    throw new WorkspaceSelectionError(
-      "project_not_found",
-      `Project not found: ${selection.projectId}`,
-      selection,
+      { workspaceId: selection.workspaceId },
     );
   }
   return selection;
 }
-
-export type ProjectRecord = {
-  id: ProjectId;
-  name: string;
-  directory: string;
-  setupHook: string | null;
-  cleanupHook: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
 
 export type AgentSessionRecord = {
   id: string;
@@ -148,9 +111,6 @@ export type AgentSessionRecord = {
   branch: string | null;
   baseCommit: string | null;
   useWorktree: boolean;
-  projectId: ProjectId | null;
-  projectName: string | null;
-  projectDirectory: string | null;
   setupHook: string | null;
   cleanupHook: string | null;
   setupOutputFile: string | null;
@@ -175,7 +135,6 @@ export type PaneRecord = {
   kind: PaneKind;
   name: string;
   cwd: string;
-  projectId: ProjectId | null;
   workspaceId: WorkspaceId | null;
   agentId: string | null;
   runId: RunId | null;

@@ -8,7 +8,7 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
   return (
     <>
       <label className="new-session-field">
-        <span>WORKSPACE DIRECTORY</span>
+        <span>REGISTERED WORKSPACE</span>
         <select
           value={viewModel.workspaceId}
           onChange={(event) => viewModel.onWorkspaceChange(event.target.value)}
@@ -16,7 +16,7 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
           aria-describedby="workspace-picker-help"
         >
           <option value="">
-            {viewModel.workspaceStatus === "loading" ? "Loading directories…" : workspaceUnavailable ? "No allowed directories" : "Choose a directory"}
+            {viewModel.workspaceStatus === "loading" ? "Loading workspaces…" : workspaceUnavailable ? "No registered workspaces" : "Choose a workspace"}
           </option>
           {viewModel.workspaces.map((workspace) => (
             <option value={workspace.id} key={workspace.id}>
@@ -24,11 +24,79 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
             </option>
           ))}
         </select>
-        <small id="workspace-picker-help">Only directories allowed by the host policy are available.</small>
+        <small id="workspace-picker-help">Choose a workspace registered on the host. The host keeps its directory and hook paths.</small>
       </label>
 
-      {viewModel.workspaceStatus === "error" ? <p className="new-session-error" role="alert">{viewModel.errorMessage ?? "Could not load workspace directories"}</p> : null}
-      {viewModel.workspaceStatus === "ready" && !viewModel.workspaces.length ? <p className="workspace-picker-empty">No workspace directories are allowed on this host.</p> : null}
+      <button className="workspace-picker-register" type="button" onClick={viewModel.onOpenRegistration}>
+        {viewModel.registrationOpen ? "Workspace registration" : "+ Register workspace"}
+      </button>
+
+      {viewModel.workspaceStatus === "error" ? <p className="new-session-error" role="alert">{viewModel.errorMessage ?? "Could not load registered workspaces"}</p> : null}
+      {viewModel.workspaceStatus === "ready" && !viewModel.workspaces.length ? <p className="workspace-picker-empty">No workspace is registered on this host yet.</p> : null}
+
+      {viewModel.registrationOpen ? (
+        <section className="workspace-picker-registration" aria-label="Register workspace">
+          <div className="workspace-picker-registration-heading">
+            <div>
+              <strong>Register a workspace</strong>
+              <small>Pick a host directory, then optionally attach personal executable hooks.</small>
+            </div>
+            <button type="button" onClick={viewModel.onCloseRegistration}>Close</button>
+          </div>
+
+          <label className="new-session-field">
+            <span>DIRECTORY</span>
+            <input
+              value={viewModel.registrationDirectory}
+              onChange={(event) => viewModel.onRegistrationDirectoryChange(event.target.value)}
+              placeholder="/Users/me/work/mobile-agent"
+              autoComplete="off"
+            />
+          </label>
+
+          <div className="workspace-picker-browser-actions">
+            <button type="button" onClick={() => viewModel.onBrowseWorkspace(viewModel.registrationDirectory.trim() || undefined)} disabled={viewModel.browserStatus === "loading"}>
+              {viewModel.browserStatus === "loading" ? "Browsing…" : "Browse directory"}
+            </button>
+            <button type="button" onClick={() => viewModel.onBrowseWorkspace()} disabled={viewModel.browserStatus === "loading"}>Allowed roots</button>
+          </div>
+
+          {viewModel.browserPath ? <small className="workspace-picker-browser-path">Browsing: {viewModel.browserPath}</small> : null}
+          {viewModel.browserStatus === "error" ? <p className="new-session-error" role="alert">{viewModel.errorMessage ?? "Could not browse host directories"}</p> : null}
+          {viewModel.browserStatus === "ready" && viewModel.workspaceCandidates.length ? (
+            <div className="workspace-picker-directory-list">
+              {viewModel.workspaceCandidates.map((candidate) => (
+                <div className="workspace-picker-directory" key={candidate.directory}>
+                  <button type="button" className="workspace-picker-directory-select" onClick={() => viewModel.onSelectWorkspaceDirectory(candidate.directory)}>
+                    <strong>{candidate.name}</strong><small>{candidate.directory}</small>
+                  </button>
+                  <button type="button" onClick={() => viewModel.onBrowseWorkspace(candidate.directory)}>Open</button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <label className="new-session-field">
+            <span>SETUP SCRIPT PATH <small>(OPTIONAL)</small></span>
+            <input value={viewModel.setupScriptPath} onChange={(event) => viewModel.onSetupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/agent/setup" autoComplete="off" />
+          </label>
+          <label className="new-session-field">
+            <span>CLEANUP SCRIPT PATH <small>(OPTIONAL)</small></span>
+            <input value={viewModel.cleanupScriptPath} onChange={(event) => viewModel.onCleanupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/agent/cleanup" autoComplete="off" />
+          </label>
+          <small className="workspace-picker-hook-help">Hook paths are host-side executable files and are not expected inside the worktree. They run with the created worktree as the current directory.</small>
+
+          {viewModel.registrationError ? <p className="new-session-error" role="alert">{viewModel.registrationError}</p> : null}
+          <button
+            className="connection-flow-primary workspace-picker-submit"
+            type="button"
+            onClick={viewModel.onRegisterWorkspace}
+            disabled={viewModel.isRegisteringWorkspace || !viewModel.registrationDirectory.trim()}
+          >
+            {viewModel.isRegisteringWorkspace ? "Registering…" : "Register workspace"}<span>{viewModel.isRegisteringWorkspace ? "…" : "→"}</span>
+          </button>
+        </section>
+      ) : null}
 
       {showMode ? (
         <fieldset className="new-pane-choice-group workspace-mode-group">
@@ -40,29 +108,12 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
             </label>
             <label className={`new-pane-choice${viewModel.mode === "worktree" ? " new-pane-choice-selected" : ""}${state.selectedWorkspace?.isGit ? "" : " new-pane-choice-disabled"}`}>
               <input type="radio" name="workspace-mode" checked={viewModel.mode === "worktree"} onChange={() => viewModel.onModeChange("worktree")} disabled={!state.selectedWorkspace?.isGit} />
-              <span><strong>Project worktree</strong><small>{state.selectedWorkspace?.isGit ? "Create an isolated branch workspace." : "Available for git directories only."}</small></span>
+              <span><strong>Git worktree</strong><small>{state.selectedWorkspace?.isGit ? "Create an isolated branch workspace." : "Available for git directories only."}</small></span>
             </label>
           </div>
           <small className="workspace-mode-help">{state.modeHelp}</small>
         </fieldset>
       ) : null}
-
-      {showMode && viewModel.mode === "worktree" ? (
-        <label className="new-session-field">
-          <span>PROJECT</span>
-          <select
-            value={viewModel.projectId ?? ""}
-            onChange={(event) => viewModel.onProjectChange(event.target.value || null)}
-            disabled={viewModel.projectStatus === "loading" || viewModel.projectStatus === "error" || !viewModel.projects.length}
-          >
-            <option value="">{viewModel.projectStatus === "loading" ? "Loading projects…" : "Choose a project"}</option>
-            {viewModel.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}
-          </select>
-          <small>Project hooks are resolved on the host; no project path is entered here.</small>
-        </label>
-      ) : null}
-
-      {showMode && viewModel.mode === "worktree" && viewModel.projectStatus === "error" ? <p className="new-session-error" role="alert">{viewModel.errorMessage ?? "Could not load projects"}</p> : null}
     </>
   );
 }

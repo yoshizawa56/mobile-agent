@@ -137,7 +137,6 @@ describe("pane board protocol", () => {
           kind: "shell",
           name: "shell",
           cwd: "/tmp",
-          projectId: null,
           workspaceId: null,
           agentId: null,
           runId: null,
@@ -175,7 +174,6 @@ describe("pane creation protocol", () => {
       cwd: "/tmp",
       agentId: null,
       useWorktree: false,
-      projectName: null,
       ...input,
     });
     expect(result.success).toBe(valid);
@@ -186,23 +184,13 @@ describe("workspace selection protocol", () => {
   it.each([
     {
       name: "accepts a direct workspace selection",
-      input: { workspaceId: "workspace-1", mode: "workspace", projectId: null },
+      input: { workspaceId: "workspace-1", mode: "workspace" },
       valid: true,
     },
     {
-      name: "accepts a project worktree selection",
-      input: { workspaceId: "workspace-1", mode: "worktree", projectId: "project-1" },
+      name: "accepts a workspace worktree selection",
+      input: { workspaceId: "workspace-1", mode: "worktree" },
       valid: true,
-    },
-    {
-      name: "rejects worktree mode without a project",
-      input: { workspaceId: "workspace-1", mode: "worktree", projectId: null },
-      valid: false,
-    },
-    {
-      name: "rejects a project in direct workspace mode",
-      input: { workspaceId: "workspace-1", mode: "workspace", projectId: "project-1" },
-      valid: false,
     },
   ])("$name", ({ input, valid }) => {
     expect(workspaceSelectionSchema.safeParse(input).success).toBe(valid);
@@ -216,7 +204,7 @@ describe("workspace selection protocol", () => {
     expect(createSessionRequestSchema.safeParse(input).success).toBe(valid);
   });
 
-  it("accepts a pane request that selects a project by id", () => {
+  it("accepts a pane request that selects a workspace by id", () => {
     expect(createPaneRequestSchema.safeParse({
       sessionName: "agentd",
       kind: "agent",
@@ -224,8 +212,6 @@ describe("workspace selection protocol", () => {
       workspaceId: "workspace-1",
       agentId: "codex",
       useWorktree: true,
-      projectId: "project-1",
-      projectName: null,
       placement: "window",
       targetPaneId: null,
     }).success).toBe(true);

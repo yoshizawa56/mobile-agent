@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import type { PanePlacement, PaneSummary, TmuxSession } from "@mobile-agent/protocol";
-import { fetchPanes, fetchProjects, fetchSessions, fetchTerminals, fetchWorkspaces, createPane, createSession, getAgentdConnection } from "../api/agentd-api";
+import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@mobile-agent/protocol";
+import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, getAgentdConnection, registerWorkspace } from "../api/agentd-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import type { ProductStage } from "../../app/workspace-routes";
@@ -63,11 +63,20 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
   const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>("workspace");
-  const [newPaneProjectId, setNewPaneProjectId] = useState<string | null>(null);
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("window");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>(null);
   const [newPaneError, setNewPaneError] = useState<string | null>(null);
   const [isCreatingPane, setIsCreatingPane] = useState(false);
+  const [workspaceCandidates, setWorkspaceCandidates] = useState<WorkspaceDirectory[]>([]);
+  const [workspaceBrowserPath, setWorkspaceBrowserPath] = useState<string | null>(null);
+  const [workspaceBrowserStatus, setWorkspaceBrowserStatus] = useState<"loading" | "ready" | "error">("ready");
+  const [workspaceBrowserError, setWorkspaceBrowserError] = useState<string | null>(null);
+  const [workspaceRegistrationOpen, setWorkspaceRegistrationOpen] = useState(false);
+  const [workspaceRegistrationDirectory, setWorkspaceRegistrationDirectory] = useState("");
+  const [workspaceSetupScriptPath, setWorkspaceSetupScriptPath] = useState("");
+  const [workspaceCleanupScriptPath, setWorkspaceCleanupScriptPath] = useState("");
+  const [isRegisteringWorkspace, setIsRegisteringWorkspace] = useState(false);
+  const [workspaceRegistrationError, setWorkspaceRegistrationError] = useState<string | null>(null);
   const [connectionProfile, setConnectionProfile] = useState<BrowserConnectionProfile | null>(() => readBrowserConnectionProfile());
   const [connectionName, setConnectionName] = useState(() => readBrowserConnectionProfile()?.name ?? "");
   const [serveUrl, setServeUrl] = useState(() => readBrowserConnectionProfile()?.serveUrl ?? "");
@@ -101,19 +110,54 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     staleTime: 5_000,
     retry: 1,
   });
-  const projectsQuery = useQuery({
-    queryKey: ["projects", connectionKey],
-    queryFn: () => fetchProjects(agentdConnection),
-    enabled: stage === "new-pane",
-    staleTime: 5_000,
-    retry: 1,
-  });
   const workspaces = workspacesQuery.data ?? [];
-  const projects = projectsQuery.data ?? [];
   const workspaceStatus = queryStatus(workspacesQuery.status);
-  const projectStatus = queryStatus(projectsQuery.status);
   const workspaceError = errorMessage(workspacesQuery.error);
-  const projectError = errorMessage(projectsQuery.error);
+
+  const browseWorkspaceDirectories = useCallback((path?: string) => {
+    setWorkspaceBrowserStatus("loading");
+    setWorkspaceBrowserError(null);
+    void fetchWorkspaceDirectories(path, agentdConnection)
+      .then((directories) => {
+        setWorkspaceCandidates(directories);
+        setWorkspaceBrowserPath(path ?? null);
+        setWorkspaceBrowserStatus("ready");
+      })
+      .catch((error: unknown) => {
+        setWorkspaceBrowserError(errorMessage(error) ?? "Could not browse host directories");
+        setWorkspaceBrowserStatus("error");
+      });
+  }, [agentdConnection]);
+
+  const openWorkspaceRegistration = useCallback(() => {
+    setWorkspaceRegistrationOpen(true);
+    setWorkspaceRegistrationError(null);
+    if (workspaceBrowserStatus !== "ready" || !workspaceCandidates.length) browseWorkspaceDirectories();
+  }, [browseWorkspaceDirectories, workspaceBrowserStatus, workspaceCandidates.length]);
+
+  const registerNewWorkspace = useCallback(() => {
+    const directory = workspaceRegistrationDirectory.trim();
+    if (!directory || isRegisteringWorkspace) return;
+    setIsRegisteringWorkspace(true);
+    setWorkspaceRegistrationError(null);
+    void registerWorkspace({
+      directory,
+      setupScriptPath: workspaceSetupScriptPath.trim() || null,
+      cleanupScriptPath: workspaceCleanupScriptPath.trim() || null,
+    }, agentdConnection)
+      .then((workspace) => {
+        queryClient.setQueryData<WorkspaceDirectory[]>(["workspaces", connectionKey], (current) => {
+          const next = [...(current ?? []).filter((candidate) => candidate.id !== workspace.id), workspace];
+          return next.sort((left, right) => left.name.localeCompare(right.name));
+        });
+        setNewSessionWorkspaceId(workspace.id);
+        setNewPaneWorkspaceId(workspace.id);
+        setWorkspaceRegistrationOpen(false);
+        setWorkspaceRegistrationError(null);
+      })
+      .catch((error: unknown) => setWorkspaceRegistrationError(errorMessage(error) ?? "Could not register workspace"))
+      .finally(() => setIsRegisteringWorkspace(false));
+  }, [agentdConnection, connectionKey, isRegisteringWorkspace, queryClient, workspaceCleanupScriptPath, workspaceRegistrationDirectory, workspaceSetupScriptPath]);
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions", connectionKey, terminalId],
@@ -207,16 +251,29 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     name: newSessionName,
     workspacePicker: {
       workspaces,
-      projects: [],
+      workspaceCandidates,
       workspaceId: newSessionWorkspaceId || workspaces[0]?.id || "",
       mode: "workspace",
-      projectId: null,
       workspaceStatus,
-      projectStatus: "ready",
-      errorMessage: workspaceError,
+      browserStatus: workspaceBrowserStatus,
+      browserPath: workspaceBrowserPath,
+      registrationOpen: workspaceRegistrationOpen,
+      registrationDirectory: workspaceRegistrationDirectory,
+      setupScriptPath: workspaceSetupScriptPath,
+      cleanupScriptPath: workspaceCleanupScriptPath,
+      isRegisteringWorkspace,
+      registrationError: workspaceRegistrationError,
+      errorMessage: workspaceError ?? workspaceBrowserError,
       onWorkspaceChange: setNewSessionWorkspaceId,
       onModeChange: () => undefined,
-      onProjectChange: () => undefined,
+      onOpenRegistration: openWorkspaceRegistration,
+      onCloseRegistration: () => setWorkspaceRegistrationOpen(false),
+      onBrowseWorkspace: browseWorkspaceDirectories,
+      onSelectWorkspaceDirectory: setWorkspaceRegistrationDirectory,
+      onRegistrationDirectoryChange: setWorkspaceRegistrationDirectory,
+      onSetupScriptPathChange: setWorkspaceSetupScriptPath,
+      onCleanupScriptPathChange: setWorkspaceCleanupScriptPath,
+      onRegisterWorkspace: registerNewWorkspace,
     },
     isCreating: isCreatingSession,
     errorMessage: newSessionError,
@@ -239,7 +296,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .catch((error: unknown) => setNewSessionError(errorMessage(error) ?? "Could not create tmux session"))
         .finally(() => setIsCreatingSession(false));
     },
-  }), [agentdConnection, connectionKey, isCreatingSession, navigate, newSessionError, newSessionName, newSessionWorkspaceId, queryClient, selectedTerminal, terminalId, workspaceError, workspaceStatus, workspaces]);
+  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingSession, isRegisteringWorkspace, navigate, newSessionError, newSessionName, newSessionWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedTerminal, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaces]);
 
   const newPane = useMemo<NewPaneViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -247,19 +304,31 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     name: newPaneName,
     workspacePicker: {
       workspaces,
-      projects,
+      workspaceCandidates,
       workspaceId: newPaneWorkspaceId || workspaces[0]?.id || "",
       mode: newPaneSelectionMode,
-      projectId: newPaneProjectId ?? projects[0]?.id ?? null,
       workspaceStatus,
-      projectStatus,
-      errorMessage: workspaceError ?? projectError,
+      browserStatus: workspaceBrowserStatus,
+      browserPath: workspaceBrowserPath,
+      registrationOpen: workspaceRegistrationOpen,
+      registrationDirectory: workspaceRegistrationDirectory,
+      setupScriptPath: workspaceSetupScriptPath,
+      cleanupScriptPath: workspaceCleanupScriptPath,
+      isRegisteringWorkspace,
+      registrationError: workspaceRegistrationError,
+      errorMessage: workspaceError ?? workspaceBrowserError,
       onWorkspaceChange: setNewPaneWorkspaceId,
       onModeChange: (mode) => {
         setNewPaneSelectionMode(mode);
-        if (mode === "workspace") setNewPaneProjectId(null);
       },
-      onProjectChange: setNewPaneProjectId,
+      onOpenRegistration: openWorkspaceRegistration,
+      onCloseRegistration: () => setWorkspaceRegistrationOpen(false),
+      onBrowseWorkspace: browseWorkspaceDirectories,
+      onSelectWorkspaceDirectory: setWorkspaceRegistrationDirectory,
+      onRegistrationDirectoryChange: setWorkspaceRegistrationDirectory,
+      onSetupScriptPathChange: setWorkspaceSetupScriptPath,
+      onCleanupScriptPathChange: setWorkspaceCleanupScriptPath,
+      onRegisterWorkspace: registerNewWorkspace,
     },
     kind: newPaneKind,
     agentId: newPaneAgent,
@@ -273,7 +342,6 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneKind(kind);
       if (kind === "shell") {
         setNewPaneSelectionMode("workspace");
-        setNewPaneProjectId(null);
       }
     },
     onAgentChange: setNewPaneAgent,
@@ -284,7 +352,6 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => {
       const workspaceId = newPaneWorkspaceId || workspaces[0]?.id;
-      const projectId = newPaneProjectId ?? projects[0]?.id ?? null;
       if (!selectedSession || !selectedTerminal || isCreatingPane || !workspaceId) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
@@ -295,8 +362,6 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         workspaceId,
         agentId: newPaneKind === "agent" ? newPaneAgent : null,
         useWorktree: newPaneKind === "agent" && newPaneSelectionMode === "worktree",
-        projectId: newPaneKind === "agent" && newPaneSelectionMode === "worktree" ? projectId : null,
-        projectName: null,
         placement: newPanePlacement,
         targetPaneId: newPanePlacement === "window" ? null : newPaneTargetPaneId,
       }, agentdConnection)
@@ -312,7 +377,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .finally(() => setIsCreatingPane(false));
     },
     onBack: () => terminalId && selectedSession && navigateTo(sessionPath(terminalId, selectedSession.name)),
-  }), [agentdConnection, connectionKey, isCreatingPane, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneProjectId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, projectError, projectStatus, projects, queryClient, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceError, workspaceStatus, workspaces]);
+  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaces]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -330,7 +395,6 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
       setNewPaneSelectionMode("workspace");
-      setNewPaneProjectId(null);
       setNewPanePlacement("window");
       setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
       if (terminalId && selectedSession) navigateTo(newPanePath(terminalId, selectedSession.name));
@@ -398,7 +462,6 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
       setNewPaneSelectionMode("workspace");
-      setNewPaneProjectId(null);
       setNewPanePlacement(selectedPaneId ? "right" : "window");
       setNewPaneTargetPaneId(selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? null);
       navigateTo(newPanePath(terminalId, selectedSession.name));
@@ -430,7 +493,7 @@ const fallbackTerminal: TerminalEndpoint = {
 
 const fallbackSession: TmuxSession = {
   name: "session",
-  project: "project",
+  workspace: "workspace",
   cwd: "~",
   paneCount: 0,
   waitingCount: 0,

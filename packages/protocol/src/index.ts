@@ -37,31 +37,28 @@ export const workspaceDirectorySchema = z.object({
   name: z.string().min(1),
   directory: z.string().min(1),
   isGit: z.boolean(),
+  setupScriptPath: z.string().min(1).nullable(),
+  cleanupScriptPath: z.string().min(1).nullable(),
 });
 export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
 
 export const workspaceListResponseSchema = z.object({ workspaces: z.array(workspaceDirectorySchema) });
 
-export const projectOptionSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  directory: z.string().min(1),
-});
-export type ProjectOption = z.infer<typeof projectOptionSchema>;
+export const workspaceBrowseResponseSchema = z.object({ directories: z.array(workspaceDirectorySchema) });
 
-export const projectListResponseSchema = z.object({ projects: z.array(projectOptionSchema) });
+export const registerWorkspaceRequestSchema = z.object({
+  directory: z.string().trim().min(1).max(4_096),
+  name: z.string().trim().min(1).max(120).optional(),
+  setupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
+  cleanupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
+});
+export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
+
+export const workspaceResponseSchema = z.object({ workspace: workspaceDirectorySchema });
 
 export const workspaceSelectionSchema = z.object({
   workspaceId: z.string().trim().min(1).max(256),
   mode: workspaceSelectionModeSchema,
-  projectId: z.string().trim().min(1).max(256).nullable(),
-}).superRefine((value, context) => {
-  if (value.mode === "worktree" && !value.projectId) {
-    context.addIssue({ code: "custom", path: ["projectId"], message: "projectId is required for worktree mode" });
-  }
-  if (value.mode === "workspace" && value.projectId) {
-    context.addIssue({ code: "custom", path: ["projectId"], message: "projectId is only used for worktree mode" });
-  }
 });
 export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
 
@@ -122,7 +119,6 @@ export const paneSummarySchema = z.object({
   kind: z.enum(["agent", "shell", "unknown"]),
   name: z.string(),
   cwd: z.string(),
-  projectId: z.string().nullable(),
   workspaceId: z.string().nullable(),
   agentId: z.string().nullable(),
   runId: z.string().nullable(),
@@ -157,8 +153,6 @@ export const createPaneRequestSchema = z.object({
   workspaceId: z.string().trim().min(1).max(256).optional(),
   agentId: z.enum(["codex", "claude"]).nullable(),
   useWorktree: z.boolean(),
-  projectId: z.string().trim().min(1).max(256).nullable().optional(),
-  projectName: z.string().trim().min(1).max(64).nullable(),
   placement: panePlacementSchema,
   targetPaneId: z.string().trim().min(1).max(64).nullable(),
 }).superRefine((value, context) => {
@@ -176,15 +170,6 @@ export const createPaneRequestSchema = z.object({
   }
   if (value.kind === "shell" && value.useWorktree) {
     context.addIssue({ code: "custom", path: ["useWorktree"], message: "useWorktree is only allowed for an agent pane" });
-  }
-  if (value.workspaceId && value.useWorktree && !value.projectId) {
-    context.addIssue({ code: "custom", path: ["projectId"], message: "projectId is required for a selected worktree" });
-  }
-  if (!value.useWorktree && (value.projectId || value.projectName)) {
-    context.addIssue({ code: "custom", path: ["projectId"], message: "project selection requires useWorktree" });
-  }
-  if (value.workspaceId && value.projectName) {
-    context.addIssue({ code: "custom", path: ["projectName"], message: "projectId is required when selecting a workspace" });
   }
   if (value.placement === "window" && value.targetPaneId) {
     context.addIssue({ code: "custom", path: ["targetPaneId"], message: "targetPaneId is only used for a split pane" });
@@ -212,7 +197,7 @@ export const terminalListResponseSchema = z.object({ terminals: z.array(terminal
 
 export const tmuxSessionSchema = z.object({
   name: z.string().min(1),
-  project: z.string().min(1),
+  workspace: z.string().min(1),
   cwd: z.string().min(1),
   paneCount: z.number().int().min(0),
   waitingCount: z.number().int().min(0),

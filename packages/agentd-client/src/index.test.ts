@@ -8,7 +8,7 @@ describe("agentd RPC client", () => {
     {
       name: "reads sessions through the typed RPC path",
       requestPath: "/api/sessions",
-      response: { sessions: [{ name: "integration", project: "mobile-agent", cwd: "~", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" }] },
+      response: { sessions: [{ name: "integration", workspace: "mobile-agent", cwd: "~", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" }] },
       read: async (client: ReturnType<typeof createAgentdClient>) => client.sessions(),
       assert: (value: unknown) => expect(value).toMatchObject([{ name: "integration" }]),
     },
@@ -22,15 +22,15 @@ describe("agentd RPC client", () => {
     {
       name: "reads allowed workspaces through the typed query path",
       requestPath: "/api/workspaces",
-      response: { workspaces: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true }] },
+      response: { workspaces: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null }] },
       read: async (client: ReturnType<typeof createAgentdClient>) => client.workspaces(),
       assert: (value: unknown) => expect(value).toMatchObject([{ id: "workspace-1" }]),
     },
     {
-      name: "reads projects through the typed query path",
-      requestPath: "/api/projects",
-      response: { projects: [{ id: "project-1", name: "mobile-agent", directory: "~/.config/agent/projects/mobile-agent" }] },
-      read: async (client: ReturnType<typeof createAgentdClient>) => client.projects(),
+      name: "browses host directories through the typed query path",
+      requestPath: "/api/workspace-directories",
+      response: { directories: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null }] },
+      read: async (client: ReturnType<typeof createAgentdClient>) => client.browseWorkspaces(),
       assert: (value: unknown) => expect(value).toMatchObject([{ name: "mobile-agent" }]),
     },
   ])("$name", async ({ requestPath, response, read, assert }) => {
@@ -63,7 +63,6 @@ describe("agentd RPC client", () => {
           kind: "agent",
           name: "review",
           cwd: "/tmp",
-          projectId: null,
           workspaceId: null,
           agentId: "codex",
           runId: null,
@@ -82,8 +81,6 @@ describe("agentd RPC client", () => {
       workspaceId: "workspace-1",
       agentId: "codex",
       useWorktree: false,
-      projectId: null,
-      projectName: null,
       placement: "window",
       targetPaneId: null,
     });

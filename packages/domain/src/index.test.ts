@@ -5,7 +5,6 @@ import {
   paneKindForCommand,
   transitionRunState,
   validateWorkspaceSelection,
-  type ProjectOption,
   type WorkspaceDirectoryOption,
   type WorkspaceSelection,
 } from "./index.js";
@@ -72,74 +71,54 @@ const workspace: WorkspaceDirectoryOption = {
   name: "mobile-agent",
   rootPath: "/work/mobile-agent",
   isGit: true,
-};
-
-const project: ProjectOption = {
-  id: "project-1",
-  name: "mobile-agent",
-  directory: "/projects/mobile-agent",
+  setupScriptPath: "/Users/me/.config/agent/setup",
+  cleanupScriptPath: "/Users/me/.config/agent/cleanup",
 };
 
 describe("workspace selection domain rules", () => {
   it.each([
     {
       name: "accepts a workspace directory",
-      selection: { workspaceId: workspace.id, mode: "workspace", projectId: null },
+      selection: { workspaceId: workspace.id, mode: "workspace" },
       workspace,
-      project: undefined,
       expected: undefined,
     },
     {
-      name: "accepts a project worktree",
-      selection: { workspaceId: workspace.id, mode: "worktree", projectId: project.id },
+      name: "accepts a workspace worktree",
+      selection: { workspaceId: workspace.id, mode: "worktree" },
       workspace,
-      project,
       expected: undefined,
-    },
-    {
-      name: "requires a project for worktree mode",
-      selection: { workspaceId: workspace.id, mode: "worktree", projectId: null },
-      workspace,
-      project: undefined,
-      expected: "project_required",
     },
     {
       name: "rejects worktrees for non-git directories",
-      selection: { workspaceId: workspace.id, mode: "worktree", projectId: project.id },
+      selection: { workspaceId: workspace.id, mode: "worktree" },
       workspace: { ...workspace, isGit: false },
-      project,
       expected: "worktree_not_supported",
-    },
-    {
-      name: "rejects a project in workspace mode",
-      selection: { workspaceId: workspace.id, mode: "workspace", projectId: project.id },
-      workspace,
-      project,
-      expected: "project_not_allowed",
-    },
-    {
-      name: "rejects an unknown project",
-      selection: { workspaceId: workspace.id, mode: "worktree", projectId: "missing" },
-      workspace,
-      project: undefined,
-      expected: "project_not_found",
     },
   ] satisfies Array<{
     name: string;
     selection: WorkspaceSelection;
     workspace: WorkspaceDirectoryOption | undefined;
-    project: ProjectOption | undefined;
     expected: string | undefined;
-  }>) ("$name", ({ selection, workspace: selectedWorkspace, project: selectedProject, expected }) => {
+  }>) ("$name", ({ selection, workspace: selectedWorkspace, expected }) => {
     if (expected) {
       try {
-        validateWorkspaceSelection(selection, selectedWorkspace, selectedProject);
+        validateWorkspaceSelection(selection, selectedWorkspace);
         throw new Error("expected a workspace selection error");
       } catch (error) {
         expect(error).toMatchObject({ code: expected });
       }
       return;
     }
-    expect(validateWorkspaceSelection(selection, selectedWorkspace, selectedProject)).toEqual(selection);
+    expect(validateWorkspaceSelection(selection, selectedWorkspace)).toEqual(selection);
+  });
+
+  it("rejects an unknown workspace", () => {
+    try {
+      validateWorkspaceSelection({ workspaceId: "missing", mode: "workspace" }, undefined);
+      throw new Error("expected a workspace selection error");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "workspace_not_found" });
+    }
   });
 });

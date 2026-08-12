@@ -1,10 +1,12 @@
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionRecord } from "@mobile-agent/domain";
+import { createAgentDatabase, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentCommand, buildResumeCommand, buildRunCommand } from "./agent-command.js";
 
 const temporaryRoots: string[] = [];
@@ -29,13 +31,25 @@ describe("agent command migration", () => {
     ]);
   });
 
-  it("runs project hooks, creates a worktree, and cleans it up through SQLite state", async () => {
+  it("runs registered workspace hooks, creates a worktree, and cleans it up through SQLite state", async () => {
     const fixture = createFixture();
     const realWorktree = realpathSync(fixture.worktree);
+    const database = createAgentDatabase(fixture.database);
+    await new DrizzleWorkspaceRepository(database.db).upsert({
+      id: createHash("sha256").update(realpathSync(fixture.workspace)).digest("hex").slice(0, 16),
+      rootPath: realpathSync(fixture.workspace),
+      name: "workspace",
+      isGit: true,
+      setupScriptPath: fixture.setupHook,
+      cleanupScriptPath: fixture.cleanupHook,
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    });
+    database.close();
     const output = captureOutput();
     const command = new AgentCommand({ cwd: fixture.workspace, databaseFile: fixture.database, env: fixture.env, io: { out: output, err: output } });
     try {
-      await expect(command.execute(["run", "claude", "--project", "fixture", "--worktree", "session"])).resolves.toBe(0);
+      await expect(command.execute(["run", "claude", "--worktree", "session"])).resolves.toBe(0);
     } finally {
       command.close();
     }
@@ -104,7 +118,6 @@ function createFixture(extraEnv: Record<string, string> = {}) {
   const root = mkdtempSync(join(tmpdir(), "mobile-agent-cli-test-"));
   temporaryRoots.push(root);
   const workspace = join(root, "workspace");
-  const projects = join(root, "projects");
   const worktree = join(root, "worktrees");
   const state = join(root, "state");
   const log = join(root, "hooks.log");
@@ -112,10 +125,13 @@ function createFixture(extraEnv: Record<string, string> = {}) {
   const fakeClaude = join(root, "fake-claude");
   mkdirSync(workspace, { recursive: true });
   mkdirSync(worktree, { recursive: true });
-  mkdirSync(join(projects, "fixture", "agent"), { recursive: true });
+  const hooks = join(root, "hooks");
+  mkdirSync(hooks, { recursive: true });
   writeExecutable(fakeClaude, `#!/bin/sh\nprintf 'backend cwd=%s\\n' "$PWD" >>"$TEST_AGENT_LOG"\nexit "\${TEST_AGENT_EXIT_STATUS:-0}"\n`);
-  writeExecutable(join(projects, "fixture", "agent", "setup"), `#!/bin/sh\nprintf 'setup cwd=%s worktree=%s project=%s\\n' "$PWD" "$AGENT_WORKTREE" "$AGENT_PROJECT_NAME" >>"$TEST_AGENT_LOG"\nprintf 'resource-id=test-resource\\n'\n`);
-  writeExecutable(join(projects, "fixture", "agent", "cleanup"), `#!/bin/sh\nprintf 'cleanup cwd=%s setup-output=%s\\n' "$PWD" "$AGENT_SETUP_OUTPUT_FILE" >>"$TEST_AGENT_LOG"\n`);
+  const setupHook = join(hooks, "setup");
+  const cleanupHook = join(hooks, "cleanup");
+  writeExecutable(setupHook, `#!/bin/sh\nprintf 'setup cwd=%s worktree=%s workspace=%s\\n' "$PWD" "$AGENT_WORKTREE" "$AGENT_WORKSPACE" >>"$TEST_AGENT_LOG"\nprintf 'resource-id=test-resource\\n'\n`);
+  writeExecutable(cleanupHook, `#!/bin/sh\nprintf 'cleanup cwd=%s setup-output=%s\\n' "$PWD" "$AGENT_SETUP_OUTPUT_FILE" >>"$TEST_AGENT_LOG"\n`);
   writeFileSync(join(workspace, "README"), "fixture\n");
   execFileSync("git", ["init", "-q", workspace]);
   execFileSync("git", ["-C", workspace, "config", "user.email", "agent@example.invalid"]);
@@ -125,7 +141,8 @@ function createFixture(extraEnv: Record<string, string> = {}) {
   return {
     root,
     workspace,
-    projects,
+    setupHook,
+    cleanupHook,
     worktree,
     state,
     log,
@@ -134,7 +151,6 @@ function createFixture(extraEnv: Record<string, string> = {}) {
       ...process.env,
       AGENTD_DB_FILE: database,
       AGENT_HOOK_OUTPUT_DIR: state,
-      AGENT_PROJECTS_ROOT: projects,
       AGENT_WORKTREE_ROOT: worktree,
       AGENT_CLAUDE_BIN: fakeClaude,
       AGENT_ASSUME_YES: "1",
@@ -175,9 +191,6 @@ function sessionFixture(backend: "codex" | "claude"): AgentSessionRecord {
     branch: null,
     baseCommit: null,
     useWorktree: false,
-    projectId: null,
-    projectName: null,
-    projectDirectory: null,
     setupHook: null,
     cleanupHook: null,
     setupOutputFile: null,

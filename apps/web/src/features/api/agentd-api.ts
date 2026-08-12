@@ -4,7 +4,7 @@ import {
   createServeConnection,
   type AgentdConnection,
 } from "@mobile-agent/agentd-client";
-import type { CreatePaneRequest, CreateSessionRequest, PaneSummary, ProjectOption, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { CreatePaneRequest, CreateSessionRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
 
 export function getAgentdConnection(serveUrl?: string): AgentdConnection {
   const httpOverride = import.meta.env.VITE_AGENTD_HTTP_URL as string | undefined;
@@ -43,8 +43,12 @@ export function fetchWorkspaces(connection?: AgentdConnection): Promise<Workspac
   return agentdClient(connection).workspaces();
 }
 
-export function fetchProjects(connection?: AgentdConnection): Promise<ProjectOption[]> {
-  return agentdClient(connection).projects();
+export function fetchWorkspaceDirectories(path?: string, connection?: AgentdConnection): Promise<WorkspaceDirectory[]> {
+  return agentdClient(connection).browseWorkspaces(path);
+}
+
+export function registerWorkspace(input: RegisterWorkspaceRequest, connection?: AgentdConnection): Promise<WorkspaceDirectory> {
+  return agentdClient(connection).registerWorkspace(input);
 }
 
 export function fetchSessions(connection?: AgentdConnection): Promise<TmuxSession[]> {

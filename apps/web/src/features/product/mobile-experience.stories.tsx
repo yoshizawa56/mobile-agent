@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary, ProjectOption, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@mobile-agent/protocol";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TmuxSession } from "../connection/connection-flow-viewmodel";
@@ -46,7 +46,6 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
   const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>(initialSelectionMode);
-  const [newPaneProjectId, setNewPaneProjectId] = useState<string | null>("project-mobile-agent");
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("right");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>("%0");
 
@@ -55,13 +54,16 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     name: "mobile-agent",
     directory: "~/work/mobile-agent",
     isGit: true,
+    setupScriptPath: "~/.config/agent/setup",
+    cleanupScriptPath: "~/.config/agent/cleanup",
   }, {
     id: "workspace-scratch",
     name: "scratch",
     directory: "~/tmp/scratch",
     isGit: false,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
   }];
-  const storyProjects: ProjectOption[] = [{ id: "project-mobile-agent", name: "mobile-agent", directory: "~/.config/agent/projects/mobile-agent" }];
   const pickerStatus: WorkspacePickerStatus = initialWorkspaceState === "loading" ? "loading" : initialWorkspaceState === "error" ? "error" : "ready";
 
   const selectedTerminal = mockTerminals.find((terminal) => terminal.id === terminalId) ?? mockTerminals[0];
@@ -77,7 +79,6 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       windowId: "@4",
       name: `${newSession.name} shell`,
       cwd: newSession.cwd,
-      projectId: newSession.project,
       state: "running" as const,
       title: "zsh",
     }];
@@ -158,19 +159,31 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     name: newPaneName,
     workspacePicker: {
       workspaces: storyWorkspaces,
-      projects: storyProjects,
+      workspaceCandidates: storyWorkspaces,
       workspaceId: newPaneWorkspaceId,
       mode: newPaneSelectionMode,
-      projectId: newPaneProjectId,
       workspaceStatus: pickerStatus,
-      projectStatus: pickerStatus,
+      browserStatus: pickerStatus,
+      browserPath: null,
+      registrationOpen: false,
+      registrationDirectory: "",
+      setupScriptPath: "",
+      cleanupScriptPath: "",
+      isRegisteringWorkspace: false,
+      registrationError: null,
       errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
       onWorkspaceChange: setNewPaneWorkspaceId,
       onModeChange: (mode: WorkspaceSelectionMode) => {
         setNewPaneSelectionMode(mode);
-        if (mode === "workspace") setNewPaneProjectId(null);
       },
-      onProjectChange: setNewPaneProjectId,
+      onOpenRegistration: () => undefined,
+      onCloseRegistration: () => undefined,
+      onBrowseWorkspace: () => undefined,
+      onSelectWorkspaceDirectory: () => undefined,
+      onRegistrationDirectoryChange: () => undefined,
+      onSetupScriptPathChange: () => undefined,
+      onCleanupScriptPathChange: () => undefined,
+      onRegisterWorkspace: () => undefined,
     },
     kind: newPaneKind,
     agentId: newPaneAgent,
@@ -189,23 +202,36 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => setStage("session-overview"),
     onBack: () => setStage("session-overview"),
-  }), [initialWorkspaceState, newPaneAgent, newPaneKind, newPaneName, newPanePlacement, newPaneProjectId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, pickerStatus, selectedSession, selectedTerminal, sessionPanes, storyProjects, storyWorkspaces]);
+  }), [initialWorkspaceState, newPaneAgent, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, pickerStatus, selectedSession, selectedTerminal, sessionPanes, storyWorkspaces]);
 
   const newSessionViewModel = useMemo<NewSessionViewModel>(() => ({
     terminal: selectedTerminal,
     name: newSessionName,
     workspacePicker: {
       workspaces: storyWorkspaces,
-      projects: [],
+      workspaceCandidates: storyWorkspaces,
       workspaceId: newSessionWorkspaceId,
       mode: "workspace",
-      projectId: null,
       workspaceStatus: pickerStatus,
-      projectStatus: "ready",
+      browserStatus: pickerStatus,
+      browserPath: null,
+      registrationOpen: false,
+      registrationDirectory: "",
+      setupScriptPath: "",
+      cleanupScriptPath: "",
+      isRegisteringWorkspace: false,
+      registrationError: null,
       errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
       onWorkspaceChange: setNewSessionWorkspaceId,
       onModeChange: () => undefined,
-      onProjectChange: () => undefined,
+      onOpenRegistration: () => undefined,
+      onCloseRegistration: () => undefined,
+      onBrowseWorkspace: () => undefined,
+      onSelectWorkspaceDirectory: () => undefined,
+      onRegistrationDirectoryChange: () => undefined,
+      onSetupScriptPathChange: () => undefined,
+      onCleanupScriptPathChange: () => undefined,
+      onRegisterWorkspace: () => undefined,
     },
     onNameChange: setNewSessionName,
     onBack: () => setStage("sessions"),
@@ -214,7 +240,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       if (!workspace) return;
       const created: TmuxSession = {
         name: newSessionName.trim(),
-        project: newSessionName.trim(),
+        workspace: workspace.name,
         cwd: workspace.directory,
         paneCount: 1,
         waitingCount: 0,
@@ -329,12 +355,12 @@ export const WorkspaceDirectoryError: Story = {
 };
 
 export const EmptyAllowedWorkspaceDirectories: Story = {
-  name: "Setup / no allowed workspace directories",
+  name: "Setup / no registered workspaces",
   render: () => <MobileExperience initialNewSession initialTerminalId="macbook-air" initialWorkspaceState="empty" />,
 };
 
-export const ProjectWorktreePicker: Story = {
-  name: "Session / project worktree picker",
+export const WorkspaceWorktreePicker: Story = {
+  name: "Session / workspace worktree picker",
   render: () => <MobileExperience initialStage="new-pane" initialTerminalId="macbook-air" initialSelectionMode="worktree" />,
 };
 

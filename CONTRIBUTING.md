@@ -21,7 +21,7 @@ pnpm test
 pnpm build
 ```
 
-`pnpm dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks the HTTP/API/WebSocket routes before reporting ready, supervises owned child process groups, and prints recovery instructions for port conflicts. It does not install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `pnpm dev` running in another terminal.
+`pnpm dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks the HTTP/API/WebSocket routes before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `pnpm dev` running in another terminal.
 
 The runtime dependencies are a local `tmux` installation and a supported Node.js runtime. The browser mock mode can be used without a running `agentd`:
 

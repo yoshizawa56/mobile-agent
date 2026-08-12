@@ -12,10 +12,7 @@ export const DEFAULT_DEV_CONFIG = {
   webHost: "0.0.0.0",
   webPort: 5227,
   readyTimeoutMs: 15_000,
-  healthIntervalMs: 2_000,
   shutdownTimeoutMs: 2_000,
-  maxRestarts: 3,
-  restartWindowMs: 30_000,
   probeTimeoutMs: 1_500,
 };
 
@@ -64,7 +61,6 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
     webHost,
     webPort,
     readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, environment),
-    healthIntervalMs: readDuration("MOBILE_AGENT_DEV_HEALTH_INTERVAL_MS", DEFAULT_DEV_CONFIG.healthIntervalMs, environment),
     shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, environment),
   };
 }
@@ -409,11 +405,14 @@ export function signalProcess(child, signal, platform = process.platform) {
   }
 
   if (platform !== "win32") {
+    // Detached children are process-group leaders. Do not fall back to a
+    // reused PID if the group has already disappeared.
     try {
       process.kill(-child.pid, signal);
       return true;
     } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
+      if (error?.code === "ESRCH") return false;
+      throw error;
     }
   }
 
@@ -451,11 +450,7 @@ class DevSupervisor {
     this.signalProcess = options.signalProcess ?? signalProcess;
     this.services = serviceDefinitions(this.config);
     this.records = new Map();
-    this.restartHistory = new Map();
-    this.recoveryPromises = new Map();
     this.state = "created";
-    this.monitorTimer = undefined;
-    this.monitorPromise = undefined;
     this.failure = undefined;
     this.resolveExit = undefined;
     this.exitPromise = new Promise((resolveResult) => {
@@ -478,9 +473,10 @@ class DevSupervisor {
 
     try {
       await this.ensureService("agentd");
+      if (this.state !== "starting") return this;
       await this.ensureService("web");
+      if (this.state !== "starting") return this;
       this.state = "running";
-      this.startMonitor();
       this.log("info", `[dev] ready: ${this.services.agentd.url}/health is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
       this.log("info", "[dev] press Ctrl-C to stop processes started by this supervisor");
@@ -500,39 +496,30 @@ class DevSupervisor {
     if (this.state === "stopping") return this.stopPromise;
 
     this.state = "stopping";
-    if (this.monitorTimer) clearInterval(this.monitorTimer);
-    this.monitorTimer = undefined;
     this.log("info", `[dev] stopping local stack (${reason})`);
     this.stopPromise = (async () => {
       const records = [...this.records.values()];
-      await Promise.all(records.filter((record) => record.owned).map((record) => this.terminateRecord(record)));
+      const results = await Promise.allSettled(
+        records.filter((record) => record.owned).map((record) => this.terminateRecord(record)),
+      );
+      let finalExitCode = exitCode;
+      for (const result of results) {
+        if (result.status !== "rejected") continue;
+        const error = result.reason instanceof DevRuntimeError
+          ? result.reason
+          : new DevRuntimeError(errorMessage(result.reason), { cause: result.reason });
+        this.failure ??= error;
+        this.log("error", error.message);
+      }
+      if (this.failure && finalExitCode === 0) finalExitCode = 1;
       this.state = "stopped";
-      this.resolveExit?.({ exitCode, reason, failure: this.failure });
+      this.resolveExit?.({ exitCode: finalExitCode, reason, failure: this.failure });
     })();
     return this.stopPromise;
   }
 
-  async checkNow() {
-    if (this.state !== "running") return;
-    if (this.monitorPromise) return this.monitorPromise;
-
-    this.monitorPromise = this.monitorOnce().catch(async (error) => {
-      this.failure = error instanceof DevRuntimeError ? error : new DevRuntimeError(errorMessage(error), { cause: error });
-      this.log("error", this.failure.message);
-      await this.stop("runtime failure", 1);
-    }).finally(() => {
-      this.monitorPromise = undefined;
-    });
-    return this.monitorPromise;
-  }
-
-  startMonitor() {
-    this.monitorTimer = setInterval(() => {
-      void this.checkNow();
-    }, this.config.healthIntervalMs);
-  }
-
   async ensureService(name) {
+    if (this.state !== "starting") return undefined;
     const definition = this.services[name];
     const inspection = await this.inspectPort(definition.host, definition.port);
     if (inspection.available) {
@@ -652,145 +639,80 @@ class DevSupervisor {
     return checkWebHealth(this.config, { http: this.probeHttp, websocket: this.probeWebSocket });
   }
 
-  async monitorOnce() {
-    const agentdResult = await this.checkRuntimeService(this.records.get("agentd"));
-    if (!agentdResult.ok) await this.restartOrFail(this.records.get("agentd"), agentdResult.detail);
-
-    const webResult = await this.checkRuntimeService(this.records.get("web"));
-    if (!webResult.ok) await this.restartOrFail(this.records.get("web"), webResult.detail);
-  }
-
-  async checkRuntimeService(record) {
-    if (!record) return failedHealth("service is not registered with the supervisor");
-    if (record.exited) {
-      return failedHealth(`${record.name} exited (exit ${record.exitCode ?? "unknown"}${record.exitSignal ? `, ${record.exitSignal}` : ""})`);
-    }
-
-    const inspection = await this.inspectPort(record.definition.host, record.definition.port);
-    if (inspection.available) return failedHealth(`${record.name} is no longer listening on ${record.definition.host}:${record.definition.port}`);
-    if (record.ownerSnapshot && !ownersEqual(record.ownerSnapshot, inspection.owners)) {
-      throw this.replacedProcessError(record.definition, record.ownerSnapshot, inspection.owners);
-    }
-
-    return this.checkHealth(record.definition);
-  }
-
-  async restartOrFail(record, reason) {
-    const existing = record && this.recoveryPromises.get(record.name);
-    if (existing) return existing;
-
-    const recovery = this.restartOrFailOnce(record, reason);
-    if (record) this.recoveryPromises.set(record.name, recovery);
-    try {
-      return await recovery;
-    } finally {
-      if (record && this.recoveryPromises.get(record.name) === recovery) this.recoveryPromises.delete(record.name);
-    }
-  }
-
-  async restartOrFailOnce(record, reason) {
-    if (!record?.owned) {
-      throw new DevRuntimeError(
-        `${record?.name ?? "service"} is unhealthy and is owned by another process; stop or repair it, then rerun pnpm dev.`,
-        { service: record?.name },
-      );
-    }
-    await this.restartService(record, reason);
-  }
-
-  async restartService(record, reason) {
-    const now = Date.now();
-    const recentRestarts = (this.restartHistory.get(record.name) ?? []).filter((timestamp) => now - timestamp < this.config.restartWindowMs);
-    if (recentRestarts.length >= this.config.maxRestarts) {
-      throw new DevRuntimeError(
-        `${record.name} exceeded ${this.config.maxRestarts} restarts in ${this.config.restartWindowMs}ms: ${reason}. Check the child output and rerun with a free, healthy environment.`,
-        { service: record.name },
-      );
-    }
-    recentRestarts.push(now);
-    this.restartHistory.set(record.name, recentRestarts);
-
-    this.log("warn", `[dev] ${record.name} is unhealthy (${reason}); restarting it`);
-    await this.assertCurrentOwner(record);
-    await this.terminateRecord(record);
-    await this.waitForPortToFree(record.definition);
-
-    const replacement = this.launch(record.definition);
-    this.records.set(record.name, replacement);
-    try {
-      await this.waitForReady(replacement);
-      this.log("info", `[dev] ${record.name} restarted and is healthy`);
-    } catch (error) {
-      throw this.withPortRecovery(record.definition, error);
-    }
-  }
-
-  async assertCurrentOwner(record) {
-    if (!record.ownerSnapshot) return;
-    const inspection = await this.inspectPort(record.definition.host, record.definition.port);
-    if (!inspection.available && !ownersEqual(record.ownerSnapshot, inspection.owners)) {
-      throw this.replacedProcessError(record.definition, record.ownerSnapshot, inspection.owners);
-    }
-  }
-
-  async waitForPortToFree(definition) {
-    const deadline = Date.now() + this.config.shutdownTimeoutMs;
-    while (Date.now() <= deadline) {
-      const inspection = await this.inspectPort(definition.host, definition.port);
-      if (inspection.available) return;
-      if (Date.now() >= deadline) break;
-      await this.sleep(Math.min(50, Math.max(1, deadline - Date.now())));
-    }
-    throw new DevRuntimeError(
-      `${definition.name} port ${definition.host}:${definition.port} stayed occupied while restarting. ${recoveryHint(definition)}`,
-      { service: definition.name },
-    );
-  }
-
   async handleUnexpectedExit(record, code, signal) {
     if (this.state !== "running" || record.intentionalStop) return;
-    const reason = `exited with ${signal ? `signal ${signal}` : `code ${code ?? 1}`}`;
-    return this.restartOrFail(record, reason).catch(async (error) => {
-      this.failure = error instanceof DevRuntimeError ? error : new DevRuntimeError(errorMessage(error), { cause: error });
-      this.log("error", this.failure.message);
-      await this.stop("runtime failure", 1);
-    });
+    const reason = signal ? `signal ${signal}` : `exit code ${code ?? 1}`;
+    this.failure = new DevRuntimeError(
+      `[dev] ${record.name} stopped unexpectedly with ${reason}; automatic restart is disabled`,
+      { service: record.name },
+    );
+    this.log("error", this.failure.message);
+    await this.stop("runtime failure", 1);
   }
 
   async terminateRecord(record) {
     if (!record?.owned || record.intentionalStop) return;
     record.intentionalStop = true;
-    if (record.ownerSnapshot) {
-      const inspection = await this.inspectPort(record.definition.host, record.definition.port);
-      if (!inspection.available && !ownersEqual(record.ownerSnapshot, inspection.owners)) {
-        this.log("warn", `[dev] ${record.name} is now owned by ${formatPortOwners(inspection.owners)}; leaving that replacement process untouched`);
-        return;
-      }
-    }
-    if (!record.exited) {
-      try {
-        this.signalProcess(record.child, "SIGTERM");
-      } catch (error) {
-        this.log("warn", `[dev] could not send SIGTERM to ${record.name}: ${errorMessage(error)}`);
-      }
+    try {
+      this.signalProcess(record.child, "SIGTERM");
+    } catch (error) {
+      this.log("warn", `[dev] could not send SIGTERM to ${record.name}: ${errorMessage(error)}`);
     }
     await this.waitForRecordExit(record, this.config.shutdownTimeoutMs);
-    if (!record.exited) {
+    let portStatus = { released: false, owners: [] };
+    try {
+      portStatus = await this.waitForPortToFree(record.definition);
+    } catch (error) {
+      this.log("warn", `[dev] could not verify that ${record.name} released its port: ${errorMessage(error)}`);
+    }
+    if (!record.exited || !portStatus.released) {
       try {
         this.signalProcess(record.child, "SIGKILL");
       } catch (error) {
         this.log("warn", `[dev] could not send SIGKILL to ${record.name}: ${errorMessage(error)}`);
       }
       await this.waitForRecordExit(record, this.config.shutdownTimeoutMs);
+      if (!portStatus.released) {
+        try {
+          portStatus = await this.waitForPortToFree(record.definition);
+        } catch (error) {
+          this.log("warn", `[dev] could not verify that ${record.name} released its port after SIGKILL: ${errorMessage(error)}`);
+        }
+      }
     }
-    if (!record.exited) {
-      this.log("error", `[dev] ${record.name} may still be running (PID ${record.child?.pid ?? "unknown"}); inspect its port with ${recoveryHint(record.definition)}`);
+    const replacementListener = Boolean(!portStatus.released
+      && record.ownerSnapshot?.length
+      && portStatus.owners?.length
+      && !ownersEqual(record.ownerSnapshot, portStatus.owners));
+    if (!record.exited || (!portStatus.released && !replacementListener)) {
+      const error = new DevRuntimeError(
+        `[dev] ${record.name} may still be running (PID ${record.child?.pid ?? "unknown"}); inspect its port with ${recoveryHint(record.definition)}`,
+        { service: record.name },
+      );
+      this.failure ??= error;
+      this.log("error", error.message);
     }
   }
 
   async waitForRecordExit(record, timeoutMs) {
     if (record.exited || !record.child?.pid) return;
     await Promise.race([record.exitPromise, delay(timeoutMs)]);
+  }
+
+  async waitForPortToFree(definition) {
+    const deadline = Date.now() + this.config.shutdownTimeoutMs;
+    let lastInspection = { available: false, owners: [] };
+    while (Date.now() <= deadline) {
+      lastInspection = await this.inspectPort(definition.host, definition.port);
+      if (lastInspection.available) return { released: true, owners: [] };
+      if (Date.now() >= deadline) break;
+      await this.sleep(Math.min(50, Math.max(1, deadline - Date.now())));
+    }
+    this.log(
+      "warn",
+      `[dev] ${definition.name} port ${definition.host}:${definition.port} is still occupied by ${formatPortOwners(lastInspection.owners)}`,
+    );
+    return { released: false, owners: lastInspection.owners ?? [] };
   }
 
   withPortRecovery(definition, error, inspection) {

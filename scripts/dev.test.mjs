@@ -20,10 +20,7 @@ function createFakeRuntime(overrides = {}) {
     repoRoot: "/repo",
     baseEnvironment: { PATH: "/test/bin" },
     readyTimeoutMs: 25,
-    healthIntervalMs: 60_000,
     shutdownTimeoutMs: 25,
-    maxRestarts: 3,
-    restartWindowMs: 30_000,
     probeTimeoutMs: 5,
   };
   const ports = new Map();
@@ -166,6 +163,7 @@ describe("dev orchestration diagnostics", () => {
 
     assert.equal(runtime.supervisor.state, "stopped");
     assert.deepEqual(runtime.signals.map(({ name, signal }) => `${name}:${signal}`), ["agentd:SIGTERM", "web:SIGTERM"]);
+    assert.equal(runtime.ports.size, 0);
   });
 
   it("reuses healthy listeners without claiming or killing them", async () => {
@@ -199,32 +197,36 @@ describe("dev orchestration diagnostics", () => {
     assert.equal(runtime.spawnCalls.length, 0);
   });
 
-  it("restarts an owned service after its listener disappears", async () => {
+  it("stops the stack when an owned service exits instead of restarting it", async () => {
     const runtime = createFakeRuntime();
     await runtime.supervisor.start();
+    const webCall = runtime.spawnCalls.find((call) => call.name === "web");
+    const webChild = runtime.children.find((child) => child.pid === webCall.pid);
 
     runtime.ports.delete("web");
-    await runtime.supervisor.checkNow();
+    webChild.emit("exit", 1, null);
+    const result = await runtime.supervisor.waitForExit();
 
-    assert.deepEqual(runtime.spawnCalls.map((call) => call.name), ["agentd", "web", "web"]);
-    assert.equal(runtime.ports.get("web")?.healthy, true);
-    assert.equal(runtime.logs.some(({ message }) => message.includes("web restarted and is healthy")), true);
-
-    await runtime.supervisor.stop("test", 0);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.name), ["agentd", "web"]);
+    assert.equal(result.exitCode, 1);
+    assert.equal(runtime.supervisor.state, "stopped");
+    assert.equal(runtime.logs.some(({ message }) => message.includes("automatic restart is disabled")), true);
+    assert.equal(runtime.signals.some(({ name, signal }) => name === "agentd" && signal === "SIGTERM"), true);
   });
 
-  it("detects a replacement and leaves the replacement process untouched", async () => {
+  it("stops its own process group without killing a replacement listener", async () => {
     const runtime = createFakeRuntime();
     await runtime.supervisor.start();
     const webChild = runtime.spawnCalls.find((call) => call.name === "web");
 
     runtime.ports.set("web", { healthy: true, owners: [{ pid: "999", command: "replacement" }] });
-    await runtime.supervisor.checkNow();
+    await runtime.supervisor.stop("test", 0);
     const result = await runtime.supervisor.waitForExit();
 
-    assert.equal(result.exitCode, 1);
+    assert.equal(result.exitCode, 0);
     assert.equal(runtime.supervisor.state, "stopped");
-    assert.equal(runtime.signals.some(({ pid }) => pid === webChild.pid), false);
-    assert.equal(runtime.logs.some(({ message }) => message.includes("was replaced")), true);
+    assert.equal(runtime.signals.some(({ pid }) => pid === webChild.pid), true);
+    assert.deepEqual(runtime.ports.get("web")?.owners, [{ pid: "999", command: "replacement" }]);
+    assert.equal(runtime.logs.some(({ message }) => message.includes("still occupied by PID 999 (replacement)")), true);
   });
 });

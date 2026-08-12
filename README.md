@@ -38,9 +38,9 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`mise.toml` defines the default local ports. `pnpm dev` supervises the local stack: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the supervisor run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned `pnpm`, Vite, or tsx processes.
+`mise.toml` defines the default local ports. `pnpm dev` starts the local stack: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned `pnpm`, Vite, or tsx processes.
 
-Before printing `ready`, the supervisor checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. During the session it repeats those checks, restarts an unhealthy service that it owns, and stops safely if the expected port owner is replaced by another process. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
+Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `pnpm dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
 
 ```sh
 AGENTD_PORT=4321 VITE_DEV_PORT=5228 pnpm dev
@@ -62,7 +62,7 @@ pnpm --filter @mobile-agent/web dev
 VITE_AGENTD_MOCK_MODE=true pnpm --filter @mobile-agent/web dev
 ```
 
-The web dev server uses strict port binding. When running it directly, if `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 pnpm --filter @mobile-agent/web dev`. The supervised `pnpm dev` command performs the same check and gives the port owner's PID plus a recovery hint.
+The web dev server uses strict port binding. When running it directly, if `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 pnpm --filter @mobile-agent/web dev`. The `pnpm dev` command performs the same check and gives the port owner's PID plus a recovery hint.
 
 Tailscale Serve is opt-in. Start the local stack first, then in a second terminal expose the web port through an already installed and configured Tailscale CLI:
 

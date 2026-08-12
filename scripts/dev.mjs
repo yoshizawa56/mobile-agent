@@ -1,10 +1,17 @@
 #!/usr/bin/env bun
-import { execFile, spawn as spawnChild } from "node:child_process";
+import { execFile, spawn as spawnChild, spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createConnection, createServer } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  acquireRuntimeLock,
+  initializeWorktreeDatabase,
+  removeRuntimeManifest,
+  resolveWorktreeRuntime,
+  writeRuntimeManifest,
+} from "./dev-state.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
   agentdHost: "127.0.0.1",
@@ -43,17 +50,25 @@ function readDuration(name, fallback, environment) {
 }
 
 export function resolveDevConfig(environment = process.env, cwd = process.cwd()) {
+  const runtime = resolveWorktreeRuntime(environment, cwd);
   const agentdHost = environment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
-  const agentdPort = readPort("AGENTD_PORT", DEFAULT_DEV_CONFIG.agentdPort, environment);
+  const agentdPort = runtime.agentdPort;
   const webHost = environment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
-  const webPort = readPort("VITE_DEV_PORT", DEFAULT_DEV_CONFIG.webPort, environment);
+  const webPort = runtime.webPort;
   const agentdProbeHost = probeHostForBind(agentdHost);
   const agentdProxyHost = agentdProbeHost;
 
   return {
     ...DEFAULT_DEV_CONFIG,
     repoRoot: cwd,
-    baseEnvironment: { ...environment },
+    baseEnvironment: {
+      ...environment,
+      AGENTD_DB_FILE: runtime.databaseFile,
+      AGENTD_DEFAULT_TMUX_TARGET: runtime.tmuxTarget,
+      AGENTD_TMUX_SOCKET: runtime.tmuxSocket,
+      AGENTD_WORKTREE_ID: runtime.worktreeId,
+    },
+    runtime,
     agentdHost,
     agentdPort,
     agentdProbeHost,
@@ -462,6 +477,10 @@ function delay(milliseconds) {
   return new Promise((resolveResult) => setTimeout(resolveResult, milliseconds));
 }
 
+function stopDedicatedTmuxServer(socketPath) {
+  spawnSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
+}
+
 function logWith(logger, level, message) {
   const method = logger?.[level] ?? logger?.log ?? console.log;
   method.call(logger ?? console, message);
@@ -490,6 +509,7 @@ class DevSupervisor {
       this.resolveExit = resolveResult;
     });
     this.stopPromise = undefined;
+    this.runtimeManifestWritten = false;
   }
 
   async run() {
@@ -509,6 +529,10 @@ class DevSupervisor {
       if (this.state !== "starting") return this;
       await this.ensureService("web");
       if (this.state !== "starting") return this;
+      if (this.config.runtime) {
+        writeRuntimeManifest(this.config.runtime);
+        this.runtimeManifestWritten = true;
+      }
       this.state = "running";
       this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
@@ -545,6 +569,11 @@ class DevSupervisor {
         this.log("error", error.message);
       }
       if (this.failure && finalExitCode === 0) finalExitCode = 1;
+      if (this.config.runtime?.ownsTmuxSocket) stopDedicatedTmuxServer(this.config.runtime.tmuxSocket);
+      if (this.runtimeManifestWritten && this.config.runtime) {
+        removeRuntimeManifest(this.config.runtime);
+        this.runtimeManifestWritten = false;
+      }
       this.state = "stopped";
       this.resolveExit?.({ exitCode: finalExitCode, reason, failure: this.failure });
     })();
@@ -563,29 +592,10 @@ class DevSupervisor {
       return record;
     }
 
-    this.log("warn", `[dev] ${portDescription(definition, inspection)}; checking whether it is a healthy ${name}`);
-    const record = this.createAdoptedRecord(definition, inspection);
-    this.records.set(name, record);
-    try {
-      await this.waitForReady(record);
-    } catch (error) {
-      throw this.withPortRecovery(definition, error, inspection);
-    }
-    this.log("info", `[dev] reusing healthy ${name} on ${definition.host}:${definition.port} (${formatPortOwners(record.ownerSnapshot)})`);
-    return record;
-  }
-
-  createAdoptedRecord(definition, inspection) {
-    return {
-      name: definition.name,
-      definition,
-      child: undefined,
-      owned: false,
-      exited: false,
-      intentionalStop: false,
-      ownerSnapshot: inspection.owners?.length ? normalizeOwners(inspection.owners) : undefined,
-      exitPromise: Promise.resolve(),
-    };
+    throw new DevRuntimeError(
+      `[dev] ${portDescription(definition, inspection)}; refusing to reuse a service from another process or worktree. ${recoveryHint(definition)}.`,
+      { service: name },
+    );
   }
 
   launch(definition) {
@@ -650,6 +660,17 @@ class DevSupervisor {
       if (lastInspection.available) {
         lastHealth = failedHealth(`${record.name} is not listening on ${record.definition.host}:${record.definition.port}`);
       } else {
+        if (
+          record.child?.pid
+          && lastInspection.owners?.length
+          && !lastInspection.owners.some((owner) => String(owner.pid) === String(record.child.pid))
+        ) {
+          throw this.replacedProcessError(
+            record.definition,
+            [{ pid: String(record.child.pid), command: record.definition.command }],
+            lastInspection.owners,
+          );
+        }
         if (record.ownerSnapshot && !ownersEqual(record.ownerSnapshot, lastInspection.owners)) {
           throw this.replacedProcessError(record.definition, record.ownerSnapshot, lastInspection.owners);
         }
@@ -778,9 +799,16 @@ class DevSupervisor {
 
 export async function main(options = {}) {
   let supervisor;
+  let runtimeLock;
   try {
-    supervisor = createDevSupervisor(options);
+    const config = options.config ?? resolveDevConfig();
+    if (config.runtime && options.prepareRuntime !== false) {
+      runtimeLock = acquireRuntimeLock(config.runtime);
+      initializeWorktreeDatabase(config.runtime);
+    }
+    supervisor = createDevSupervisor({ ...options, config });
   } catch (error) {
+    runtimeLock?.release();
     const message = error instanceof DevRuntimeError ? error.message : `[dev] ${errorMessage(error)}`;
     console.error(message);
     process.exitCode = 1;
@@ -805,6 +833,7 @@ export async function main(options = {}) {
   } finally {
     process.removeListener("SIGINT", onSignal);
     process.removeListener("SIGTERM", onSignal);
+    runtimeLock?.release();
   }
 }
 

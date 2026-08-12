@@ -191,17 +191,13 @@ describe("dev orchestration diagnostics", () => {
     assert.equal(runtime.ports.size, 0);
   });
 
-  it("reuses healthy listeners without claiming or killing them", async () => {
+  it("refuses healthy listeners owned by another process", async () => {
     const runtime = createFakeRuntime();
     runtime.ports.set("agentd", { healthy: true, owners: [{ pid: "201", command: "agentd" }] });
     runtime.ports.set("web", { healthy: true, owners: [{ pid: "202", command: "vite" }] });
 
-    await runtime.supervisor.start();
+    await assert.rejects(runtime.supervisor.start(), /refusing to reuse/);
     assert.equal(runtime.spawnCalls.length, 0);
-    assert.equal(runtime.logs.some(({ message }) => message.includes("reusing healthy agentd")), true);
-    assert.equal(runtime.logs.some(({ message }) => message.includes("reusing healthy web")), true);
-
-    await runtime.supervisor.stop("test", 0);
     assert.equal(runtime.signals.length, 0);
   });
 

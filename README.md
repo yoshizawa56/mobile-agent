@@ -38,7 +38,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-`mise.toml` defines the default local ports and pins Bun, Node, and tmux. `bun run dev` starts the local stack from one entrypoint: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
+`mise.toml` pins Bun, Node, and tmux. `bun run dev` starts an isolated local stack from one entrypoint. The primary worktree uses agentd `127.0.0.1:4317` and Web `0.0.0.0:5227`; linked worktrees derive a stable, separate port pair from their canonical worktree path. A healthy listener is never reused: if the selected port is occupied, startup fails with the owner and an override hint. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
 
 Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `bun run dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
 
@@ -46,11 +46,13 @@ Before printing `ready`, the command checks agentd's `/health`, the web HTML she
 AGENTD_PORT=4321 VITE_DEV_PORT=5228 bun run dev
 ```
 
+`bun run dev` also sets `AGENTD_DB_FILE` to `.mobile-agent/dev/agentd.sqlite` inside the current worktree. On first start, the primary worktree snapshots the legacy `~/.local/state/mobile-agent/agentd.sqlite` when it exists; a linked worktree snapshots the primary worktree database. Existing worktree databases are never overwritten, and an absent source produces a new empty database. The supervisor also gives agentd a worktree-specific tmux socket and default session target; shutdown only removes that dedicated tmux server and never touches the user's normal tmux server. Explicitly setting `AGENTD_DB_FILE` or `AGENT_DATABASE_FILE` opts out of this per-worktree database isolation. The runtime manifest in `.mobile-agent/dev/runtime.json` records the actual ports for `mise run dev-serve`.
+
 `mise` pins Bun, Node.js, and tmux. Bun pins JavaScript dependencies through `bun.lock`.
 
 When adding or updating dependencies, verify the latest stable registry release and the project's official release information first. Use `bun run deps:check` for the repository's dependency checks. Alpha, beta, and release-candidate versions are not used by default.
 
-agentd exposes an HTTP API at `http://127.0.0.1:4317`, a terminal WebSocket at `ws://127.0.0.1:4317/terminal`, and an event WebSocket at `ws://127.0.0.1:4317/events`. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use the terminal WebSocket. The event WebSocket sends only session invalidation notifications; clients refetch changed data through HTTP. agentd is the host-side control-plane daemon for tmux, agent plugins, and SQLite.
+agentd exposes an HTTP API at its worktree-specific port, a terminal WebSocket at `/terminal`, and an event WebSocket at `/events`. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use the terminal WebSocket. The event WebSocket sends only session invalidation notifications; clients refetch changed data through HTTP. agentd is the host-side control-plane daemon for tmux, agent plugins, and the worktree-local SQLite database.
 
 The HTTP API is built from a dependency-injected Hono app returned by `createAgentdApp(deps)`. Its type, `ReturnType<typeof createAgentdApp>`, is shared with the TypeScript client as `AgentdApp`. Tailscale Serve and SSH port forwarding are connection routes to the same agentd instance; the web client does not need to know which route established the connection.
 
@@ -71,7 +73,7 @@ bun run dev
 mise run dev-serve
 ```
 
-`dev-serve` maps the local web server to HTTPS port `8449` by default and never installs or configures Tailscale. Override the ports when needed with `TAILSCALE_DEV_PORT` and `VITE_DEV_PORT`. After exposing the host-side service, register its full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
+`dev-serve` reads the current worktree's runtime manifest, verifies that its Web server is alive, and exposes the recorded Web port. Its HTTPS port is also worktree-specific by default; override it with `TAILSCALE_DEV_PORT` when needed. It never installs or configures Tailscale. After exposing the host-side service, register its full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
 
 To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.
 
@@ -125,7 +127,7 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch and runs the project-defined `agent/setup` and `agent/cleanup` hooks. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-The default state database is `~/.local/state/mobile-agent/agentd.sqlite`. Override it with `AGENTD_DB_FILE`, `AGENT_PROJECTS_ROOT`, `AGENT_WORKTREE_ROOT`, or `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state is stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
+The standalone `agent daemon start` command defaults to `~/.local/state/mobile-agent/agentd.sqlite`; override it with `AGENTD_DB_FILE`, `AGENT_PROJECTS_ROOT`, `AGENT_WORKTREE_ROOT`, or `AGENT_HOOK_OUTPUT_DIR`. The `bun run dev` supervisor overrides the database location with the current worktree's `.mobile-agent/dev/agentd.sqlite` and seeds it once from the primary worktree. Lifecycle state is stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 
 When publishing inside a tailnet, keep agentd bound to localhost and expose port 4317 through Tailscale Serve and ACLs. The current MVP uses Tailscale Serve/ACL as its authentication boundary. Identity-header verification and per-device pairing tokens are planned security improvements.
 

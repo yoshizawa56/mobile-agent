@@ -33,4 +33,3 @@ coverage
 !.env.example
 apps/web/vite.config.timestamp-*.mjs
 .worktrees
-.mobile-agent

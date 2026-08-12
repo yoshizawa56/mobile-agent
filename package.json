@@ -28,7 +28,7 @@
     "dev": "bun scripts/dev.mjs",
     "audit:public": "bun scripts/audit-public-repo.mjs",
     "lint": "bunx --no-install turbo run lint",
-    "test": "bun test scripts/dev.test.mjs scripts/dev-state.test.mjs && bunx --no-install turbo run test",
+    "test": "bun test scripts/dev.test.mjs && bunx --no-install turbo run test",
     "typecheck": "bunx --no-install turbo run typecheck"
   },
   "devDependencies": {

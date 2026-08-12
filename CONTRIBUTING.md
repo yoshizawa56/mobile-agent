@@ -21,9 +21,9 @@ bun run test
 bun run build
 ```
 
-`bun run dev` is the recommended dogfooding entrypoint. It starts an isolated `agentd` and Web stack for the current worktree, checks the HTTP/API/WebSocket routes before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It never adopts a healthy listener from another process or worktree, does not automatically restart failed services, and does not install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `bun run dev` running in another terminal.
+`bun run dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks the HTTP/API/WebSocket routes before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `bun run dev` running in another terminal.
 
-The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and agentd; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. Development state and runtime metadata are kept under the current worktree's `.mobile-agent/dev`; the first linked-worktree start snapshots the primary worktree database without overwriting an existing local copy. Each worktree also uses a dedicated tmux socket, and shutdown only removes the server owned by that worktree. The browser mock mode can be used without a running `agentd`:
+The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and agentd; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. The browser mock mode can be used without a running `agentd`:
 
 ```sh
 VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev

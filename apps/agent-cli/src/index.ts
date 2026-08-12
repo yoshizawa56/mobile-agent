@@ -5,8 +5,8 @@ const args = process.argv.slice(2);
 
 if (args[0] === "daemon") {
   try {
-    const { startAgentd } = await import("@mobile-agent/agentd/daemon");
-    startAgentd(args.slice(1));
+    const { runAgentdCommand } = await import("@mobile-agent/agentd/daemon");
+    await runAgentdCommand(args.slice(1));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`agent daemon: ${message}\n`);

@@ -30,7 +30,8 @@ export { AgentdHttpError, createAgentdApp } from "./http/app.js";
 export function createAgentdServer(options: AgentdOptions) {
   const tmux = new TmuxAdapter();
   const viewportManager = new TmuxViewportManager(tmux);
-  const database = createAgentDatabase(options.databaseFile ?? defaultDatabaseFile());
+  const databaseFile = options.databaseFile ?? defaultDatabaseFile();
+  const database = createAgentDatabase(databaseFile);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
@@ -115,17 +116,30 @@ export function createAgentdServer(options: AgentdOptions) {
 
   return {
     app,
-    start() {
-      try {
-        tmux.ensureSession(defaultTarget, process.cwd());
-      } catch (error) {
-        console.warn(`agentd could not prepare default tmux session: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    start(): Promise<void> {
+      return new Promise((resolveStart, rejectStart) => {
+        const onError = (error: Error) => {
+          httpServer.removeListener("listening", onListening);
+          rejectStart(error);
+        };
+        const onListening = () => {
+          httpServer.removeListener("error", onError);
+          tmuxStateMonitor.start();
+          viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
+          console.log(`agentd listening on http://${options.host}:${options.port}`);
+          resolveStart();
+        };
 
-      httpServer.listen(options.port, options.host, () => {
-        tmuxStateMonitor.start();
-        viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
-        console.log(`agentd listening on http://${options.host}:${options.port}`);
+        httpServer.once("error", onError);
+        httpServer.once("listening", onListening);
+
+        try {
+          tmux.ensureSession(defaultTarget, process.cwd());
+        } catch (error) {
+          console.warn(`agentd could not prepare default tmux session: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        httpServer.listen(options.port, options.host);
       });
     },
     stop() {
@@ -135,7 +149,7 @@ export function createAgentdServer(options: AgentdOptions) {
       webSocketServer.close();
       eventWebSocketServer.close();
       eventHub.close();
-      httpServer.close();
+      if (httpServer.listening) httpServer.close();
       database.close();
     },
   };
@@ -236,11 +250,11 @@ async function createPane(
     state: input.kind === "agent" ? "starting" : "running",
   };
   await repository.upsert(record);
-  tmux.setPaneOption(tmuxPaneId, "@agentd.pane_id", record.id);
-  tmux.setPaneOption(tmuxPaneId, "@agentd.pane_name", input.name);
-  tmux.setPaneOption(tmuxPaneId, "@agentd.agent_id", input.agentId ?? "");
-  tmux.setPaneOption(tmuxPaneId, "@agentd.kind", input.kind);
-  tmux.setPaneOption(tmuxPaneId, "@agentd.workspace_id", input.workspaceId ?? "");
+  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_id", record.id);
+  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_name", input.name);
+  tmux.setAgentPaneMetadata(tmuxPaneId, "agent_id", input.agentId ?? "");
+  tmux.setAgentPaneMetadata(tmuxPaneId, "kind", input.kind);
+  tmux.setAgentPaneMetadata(tmuxPaneId, "workspace_id", input.workspaceId ?? "");
   return record;
 }
 

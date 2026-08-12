@@ -5,12 +5,14 @@ import { request as httpsRequest } from "node:https";
 import { createConnection, createServer } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
   agentdHost: "127.0.0.1",
   agentdPort: 4317,
   webHost: "0.0.0.0",
   webPort: 5227,
+  adoptExistingServices: true,
   readyTimeoutMs: 15_000,
   shutdownTimeoutMs: 2_000,
   probeTimeoutMs: 1_500,
@@ -43,25 +45,30 @@ function readDuration(name, fallback, environment) {
 }
 
 export function resolveDevConfig(environment = process.env, cwd = process.cwd()) {
-  const agentdHost = environment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
-  const agentdPort = readPort("AGENTD_PORT", DEFAULT_DEV_CONFIG.agentdPort, environment);
-  const webHost = environment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
-  const webPort = readPort("VITE_DEV_PORT", DEFAULT_DEV_CONFIG.webPort, environment);
+  const baseEnvironment = applyDevWorktreeProfile(environment, cwd);
+  const agentdHost = baseEnvironment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
+  const agentdPort = readPort("AGENTD_PORT", baseEnvironment.AGENTD_PORT ?? DEFAULT_DEV_CONFIG.agentdPort, baseEnvironment);
+  const webHost = baseEnvironment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
+  const webPort = readPort("VITE_DEV_PORT", baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort, baseEnvironment);
   const agentdProbeHost = probeHostForBind(agentdHost);
   const agentdProxyHost = agentdProbeHost;
 
   return {
     ...DEFAULT_DEV_CONFIG,
     repoRoot: cwd,
-    baseEnvironment: { ...environment },
+    baseEnvironment,
     agentdHost,
     agentdPort,
     agentdProbeHost,
-    agentdProxyTarget: environment.VITE_AGENTD_PROXY_TARGET ?? `http://${formatHost(agentdProxyHost)}:${agentdPort}`,
+    agentdProxyTarget: baseEnvironment.VITE_AGENTD_PROXY_TARGET ?? `http://${formatHost(agentdProxyHost)}:${agentdPort}`,
     webHost,
     webPort,
-    readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, environment),
-    shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, environment),
+    // A linked worktree must never silently attach to another worktree's
+    // agentd or Vite process. Reusing an existing listener remains available
+    // to direct supervisor tests and explicitly constructed configurations.
+    adoptExistingServices: false,
+    readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, baseEnvironment),
+    shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, baseEnvironment),
   };
 }
 
@@ -501,6 +508,8 @@ class DevSupervisor {
     if (this.state !== "created") return this;
     this.state = "starting";
     this.log("info", "[dev] starting local stack (Tailscale Serve is opt-in)");
+    this.log("info", `[dev] profile=${this.config.baseEnvironment.AGENT_PROFILE ?? "dev"} worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
+    this.log("info", `[dev] database=${this.config.baseEnvironment.AGENTD_DB_FILE ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
     this.log("info", `[dev] agentd target: ${this.services.agentd.url}`);
     this.log("info", `[dev] web target: ${this.services.web.url} (proxy ${this.config.agentdProxyTarget})`);
 
@@ -561,6 +570,14 @@ class DevSupervisor {
       this.records.set(name, record);
       await this.waitForReady(record);
       return record;
+    }
+
+    if (this.config.adoptExistingServices === false) {
+      throw this.withPortRecovery(
+        definition,
+        new DevRuntimeError(`existing ${name} adoption is disabled for the current worktree profile`, { service: name }),
+        inspection,
+      );
     }
 
     this.log("warn", `[dev] ${portDescription(definition, inspection)}; checking whether it is a healthy ${name}`);

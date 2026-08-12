@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import { strict as assert } from "node:assert";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, it } from "bun:test";
 import {
   checkWebHealth,
@@ -8,6 +11,7 @@ import {
   formatPortOwners,
   parsePortOwners,
   probeWebSocket,
+  resolveDevConfig,
 } from "./dev.mjs";
 
 function createFakeRuntime(overrides = {}) {
@@ -114,6 +118,22 @@ function createFakeRuntime(overrides = {}) {
 }
 
 describe("dev orchestration diagnostics", () => {
+  it("assigns a worktree profile and refuses to adopt another runtime", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "mobile-agent-dev-test-"));
+    let config;
+    try {
+      config = resolveDevConfig({ AGENT_DEV_STATE_ROOT: stateRoot }, process.cwd());
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+
+    assert.equal(config.adoptExistingServices, false);
+    assert.equal(config.baseEnvironment.AGENT_PROFILE, "dev");
+    assert.match(config.baseEnvironment.AGENT_WORKTREE_ID, /^[0-9a-f]{16}$/);
+    assert.match(config.baseEnvironment.AGENTD_DB_FILE, /worktrees\/[^/]+\/agentd\.sqlite$/);
+    assert.equal(config.baseEnvironment.AGENTD_TMUX_SOCKET, undefined);
+  });
+
   it("parses lsof process-field output and formats actionable owners", () => {
     const owners = parsePortOwners("p123\ncnode\np123\ncnode\np456\ncvite\n");
 
@@ -203,6 +223,22 @@ describe("dev orchestration diagnostics", () => {
 
     await runtime.supervisor.stop("test", 0);
     assert.equal(runtime.signals.length, 0);
+  });
+
+  it("does not adopt a healthy listener for a worktree profile", async () => {
+    const runtime = createFakeRuntime({ config: { adoptExistingServices: false, readyTimeoutMs: 5 } });
+    runtime.ports.set("agentd", { healthy: true, owners: [{ pid: "401", command: "other-worktree-agentd" }] });
+
+    await assert.rejects(
+      runtime.supervisor.start(),
+      (error) => {
+        assert.equal(error instanceof DevRuntimeError, true);
+        assert.match(error.message, /adoption is disabled/);
+        assert.match(error.message, /PID 401 \(other-worktree-agentd\)/);
+        return true;
+      },
+    );
+    assert.equal(runtime.spawnCalls.length, 0);
   });
 
   it("fails a foreign port conflict with the owner and recovery command", async () => {

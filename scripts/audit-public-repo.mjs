@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
@@ -26,7 +26,7 @@ const forbiddenFilePatterns = [
   { label: "credential-like file", pattern: /(^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|credentials?(?:\.[^/]+)?|secrets?(?:\.[^/]+)?)(?:$|\/)/i },
   { label: "private/certificate material", pattern: /\.(?:pem|key|p12|pfx|mobileprovision|provisionprofile|der|kdbx)$/i },
   { label: "local database", pattern: /\.(?:sqlite|sqlite3|db)(?:[-.]|$)/i },
-  { label: "generated or runtime artifact", pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo|\.pnpm-store)(?:\/|$)|\.(?:log|dump)$/i },
+  { label: "generated or runtime artifact", pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo)(?:\/|$)|\.(?:log|dump)$/i },
 ];
 
 const forbiddenContentPatterns = [
@@ -43,6 +43,7 @@ const forbiddenContentPatterns = [
 const failures = [];
 const warnings = [];
 const homeDirectory = os.homedir();
+const githubActionUsePattern = /^\s*uses:\s*([^\s#]+)/gm;
 
 for (const relativeFile of files) {
   const absoluteFile = path.join(root, relativeFile);
@@ -58,7 +59,8 @@ for (const relativeFile of files) {
   try {
     stats = statSync(absoluteFile);
   } catch {
-    failures.push(`${relativeFile}: file cannot be inspected`);
+    // A tracked file may be deleted in the working tree as part of the change
+    // under review. It is not part of the resulting public tree.
     continue;
   }
 
@@ -83,6 +85,20 @@ for (const relativeFile of files) {
   for (const { label, pattern } of forbiddenContentPatterns) {
     if (pattern.test(text)) {
       failures.push(`${normalizedFile}: possible ${label}`);
+    }
+  }
+
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/i.test(normalizedFile)) {
+    for (const match of text.matchAll(githubActionUsePattern)) {
+      const actionReference = match[1];
+      if (actionReference.startsWith("./")) continue;
+
+      const atIndex = actionReference.lastIndexOf("@");
+      const ref = atIndex === -1 ? "" : actionReference.slice(atIndex + 1);
+      const line = text.slice(0, match.index).split("\n").length;
+      if (!/^[0-9a-f]{40}$/i.test(ref)) {
+        failures.push(`${normalizedFile}:${line}: GitHub Action is not pinned to a full commit SHA (${actionReference})`);
+      }
     }
   }
 

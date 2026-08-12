@@ -74,8 +74,11 @@ export class TmuxError extends Error {
 export class TmuxAdapter {
   private readonly commandPrefix: string[];
 
-  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET) {
-    this.commandPrefix = socketPath ? ["-S", socketPath] : [];
+  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET, configFile?: string) {
+    this.commandPrefix = [
+      ...(configFile ? ["-f", configFile] : []),
+      ...(socketPath ? ["-S", socketPath] : []),
+    ];
   }
 
   public command(args: string[]): CommandResult {
@@ -150,7 +153,13 @@ export class TmuxAdapter {
     return this.require(args).trim();
   }
 
-  public splitWindow(cwd: string, command: string | undefined, placement: Exclude<PanePlacement, "window">, targetPaneId: string): string {
+  public splitWindow(
+    cwd: string,
+    command: string | undefined,
+    placement: Exclude<PanePlacement, "window">,
+    targetPaneId: string,
+    keepZoomed = false,
+  ): string {
     const args = [
       "split-window",
       "-d",
@@ -158,6 +167,7 @@ export class TmuxAdapter {
       "-F",
       "#{pane_id}",
     ];
+    if (keepZoomed) args.push("-Z");
     if (placement === "right") args.push("-h");
     args.push("-t", targetPaneId, "-c", resolveTmuxCwd(cwd));
     if (command) args.push(command);
@@ -189,7 +199,7 @@ export class TmuxAdapter {
 
   public listPanes(): TmuxPane[] {
     const separator = "\u001f";
-    const output = this.require([
+    const args = [
       "list-panes",
       "-a",
       "-F",
@@ -215,7 +225,20 @@ export class TmuxAdapter {
         "#{@agentd.agent_id}",
         "#{@agentd.run_id}",
       ].join(separator),
-    ]);
+    ];
+    const result = this.command(args);
+    if (result.status !== 0) {
+      // tmux exits its server after the last session disappears. An empty
+      // live snapshot is more useful to callers than treating that normal
+      // lifecycle transition as an infrastructure failure.
+      if (isTmuxServerGone(result.stderr)) return [];
+      throw new TmuxError(
+        result.stderr.trim() || `tmux ${args.join(" ")} failed`,
+        args,
+        result,
+      );
+    }
+    const output = result.stdout;
 
     return output
       .split("\n")
@@ -339,12 +362,22 @@ export class TmuxAdapter {
     return [...this.commandPrefix, "attach-session", "-f", "active-pane", "-t", target];
   }
 
-  public switchClient(clientName: string, targetPane: string): void {
-    this.require(["switch-client", "-c", clientName, "-t", targetPane]);
+  public switchClient(clientName: string, targetPane: string, keepZoomed = false): void {
+    const args = ["switch-client"];
+    if (keepZoomed) args.push("-Z");
+    args.push("-c", clientName, "-t", targetPane);
+    this.require(args);
   }
 
   public setClientFlags(clientName: string, flags: string): void {
     this.require(["refresh-client", "-f", flags, "-t", clientName]);
+  }
+
+  public refreshClient(clientName: string): void {
+    // refresh-client without -S requests a complete client redraw. Do not use
+    // -r here: in newer tmux versions it reports terminal colours for control
+    // mode clients, and older versions reject it entirely.
+    this.require(["refresh-client", "-t", clientName]);
   }
 
   public selectPane(paneId: string, keepZoomed = false): void {
@@ -458,4 +491,9 @@ function nonEmpty(value: string | undefined): string | undefined {
 function resolveTmuxCwd(cwd: string): string {
   const expanded = cwd === "~" ? homedir() : cwd.startsWith("~/") ? `${homedir()}/${cwd.slice(2)}` : cwd;
   return resolve(expanded);
+}
+
+function isTmuxServerGone(stderr: string): boolean {
+  const message = stderr.toLowerCase();
+  return message.includes("no server running") || message.includes("no sessions") || message.includes("server exited");
 }

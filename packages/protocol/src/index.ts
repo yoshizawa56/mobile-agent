@@ -15,9 +15,18 @@ export const agentdCapabilitiesSchema = z.object({
     tmuxSessions: z.boolean(),
     terminalWebSocket: z.boolean(),
     paneState: z.boolean(),
+    resourceInvalidationEvents: z.boolean(),
   }),
 });
 export type AgentdCapabilities = z.infer<typeof agentdCapabilitiesSchema>;
+
+export const agentdEventSchema = z.object({
+  type: z.literal("session_updated"),
+  sessionName: z.string().min(1),
+  reason: z.enum(["pane_created", "pane_deleted", "pane_changed"]),
+  revision: z.number().int().nonnegative(),
+});
+export type AgentdEvent = z.infer<typeof agentdEventSchema>;
 
 const dimensionsSchema = z.object({
   cols: z.number().int().min(1).max(500),

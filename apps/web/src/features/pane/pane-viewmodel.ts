@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { serverControlMessageSchema } from "@mobile-agent/protocol";
@@ -16,13 +16,16 @@ export type PaneViewModel = {
   errorMessage: string | null;
   viewportOwner: PaneViewportOwner;
   viewportReason: string | null;
-  terminalContainerRef: React.RefObject<HTMLDivElement | null>;
+  terminalContainerRef: RefCallback<HTMLDivElement>;
   reconnect: () => void;
   claim: () => void;
 };
 
-export function usePaneViewModel({ target, active = true, connection }: { target: string; active?: boolean; connection?: AgentdConnection }): PaneViewModel {
-  const terminalContainerRef = useRef<HTMLDivElement>(null);
+export function usePaneViewModel({ target, connection }: { target: string; connection?: AgentdConnection }): PaneViewModel {
+  const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
+  const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
+    setTerminalContainer(node);
+  }, []);
   const [status, setStatus] = useState<PaneConnectionStatus>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
@@ -49,9 +52,13 @@ export function usePaneViewModel({ target, active = true, connection }: { target
   }, []);
 
   useEffect(() => {
-    if (!active || !target) return;
+    // The terminal surface is mounted by the control-room route. The hook lives
+    // above that route, so the DOM ref is the reliable lifecycle signal here;
+    // gating on the route stage can race with the ref callback during SPA
+    // navigation and leave the surface permanently uninitialized.
+    if (!target) return;
 
-    const container = terminalContainerRef.current;
+    const container = terminalContainer;
     if (!container) return;
 
     const terminal = new Terminal({
@@ -238,7 +245,7 @@ export function usePaneViewModel({ target, active = true, connection }: { target
       if (socketRef.current === socket) socketRef.current = null;
       terminal.dispose();
     };
-  }, [active, claim, connectionVersion, target]);
+  }, [claim, connectionVersion, target, terminalContainer]);
 
   return {
     target,

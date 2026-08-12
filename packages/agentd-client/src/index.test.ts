@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createAgentdClient, createSameOriginConnection, createServeConnection } from "./index.js";
 
-describe("agentd RPC client", () => {
-  afterEach(() => vi.unstubAllGlobals());
+const originalFetch = globalThis.fetch;
 
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+describe("agentd RPC client", () => {
   it.each([
     {
       name: "reads sessions through the typed RPC path",
@@ -21,10 +25,10 @@ describe("agentd RPC client", () => {
     },
   ])("$name", async ({ requestPath, response, read, assert }) => {
     const requests: string[] = [];
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    globalThis.fetch = async (input: RequestInfo | URL) => {
       requests.push(String(input));
       return new Response(JSON.stringify(response), { status: 200, headers: { "content-type": "application/json" } });
-    });
+    };
 
     const client = createAgentdClient({
       httpBaseUrl: "http://agentd.local",
@@ -38,7 +42,7 @@ describe("agentd RPC client", () => {
 
   it("creates a pane through the typed RPC path", async () => {
     const requests: string[] = [];
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    globalThis.fetch = async (input: RequestInfo | URL) => {
       requests.push(String(input));
       return new Response(JSON.stringify({
         pane: {
@@ -58,7 +62,7 @@ describe("agentd RPC client", () => {
           lastSeenAt: "2026-08-10T00:00:00.000Z",
         },
       }), { status: 201, headers: { "content-type": "application/json" } });
-    });
+    };
 
     const client = createAgentdClient({ httpBaseUrl: "http://agentd.local", websocketUrl: "ws://agentd.local/terminal" });
     const pane = await client.createPane({
@@ -86,6 +90,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "https://workstation.tailnet.ts.net",
         websocketUrl: "wss://workstation.tailnet.ts.net/terminal",
+        eventsWebsocketUrl: "wss://workstation.tailnet.ts.net/events",
         route: "serve",
       },
       create: createServeConnection,
@@ -96,6 +101,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "https://example.test/agentd",
         websocketUrl: "wss://example.test/agentd/terminal",
+        eventsWebsocketUrl: "wss://example.test/agentd/events",
         route: "serve",
       },
       create: createServeConnection,
@@ -106,6 +112,7 @@ describe("agentd route helpers", () => {
       expected: {
         httpBaseUrl: "http://localhost:5173",
         websocketUrl: "ws://localhost:5173/terminal",
+        eventsWebsocketUrl: "ws://localhost:5173/events",
         route: "same-origin",
       },
       create: createSameOriginConnection,

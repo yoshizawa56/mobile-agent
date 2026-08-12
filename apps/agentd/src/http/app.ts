@@ -62,6 +62,7 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
           tmuxSessions: true,
           terminalWebSocket: true,
           paneState: true,
+          resourceInvalidationEvents: true,
         },
       };
       return c.json(agentdCapabilitiesSchema.parse(response));

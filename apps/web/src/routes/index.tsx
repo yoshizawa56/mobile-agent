@@ -1,12 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { MobileExperienceView } from "../features/product/mobile-experience-view";
-import { useMobileExperienceViewModel } from "../features/product/mobile-experience-viewmodel";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
-  component: IndexRoute,
+  beforeLoad: () => {
+    throw redirect({ to: "/terminals" });
+  },
 });
-
-function IndexRoute() {
-  const viewModel = useMobileExperienceViewModel();
-  return <MobileExperienceView viewModel={viewModel} />;
-}

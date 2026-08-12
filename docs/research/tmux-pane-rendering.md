@@ -10,7 +10,7 @@ The MVP shares the same tmux pane between desktop and mobile and acquires a view
 xterm.js
   <-> WebSocket (control JSON + terminal bytes)
 agentd
-  <-> node-pty
+  <-> Bun.Terminal
 tmux attach-session -t <target>
   <->
 tmux window / pane TUI
@@ -26,7 +26,7 @@ tmux Control Mode is useful for pane discovery, lifecycle management, input, res
 
 The terminal data route and the management route are therefore separate:
 
-- terminal data route: run tmux attach-session through node-pty and relay raw bytes over WebSocket;
+- terminal data route: run tmux attach-session through Bun.Terminal and relay raw bytes over WebSocket;
 - management route: use tmux Control Mode inside agentd for pane discovery, user options, Run state, and events;
 - web client: interpret and render terminal bytes with xterm.js.
 

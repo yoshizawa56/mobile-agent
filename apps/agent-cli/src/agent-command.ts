@@ -918,6 +918,7 @@ export class AgentCommand {
   agent cleanup [--global] [--force] NAME
   agent project list [--json]
   agent doctor [--verbose]
+  agent daemon start [--host HOST] [--port PORT]
 
 Run options:
   -n, --name NAME          Logical session name; does not create a worktree.

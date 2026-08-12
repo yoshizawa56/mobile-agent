@@ -18,8 +18,7 @@ labels: [bug]
 ## Environment
 
 - OS:
-- Node.js:
-- pnpm:
+- Bun:
 - tmux:
 - Browser or app:
 

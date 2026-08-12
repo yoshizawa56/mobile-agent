@@ -6,7 +6,7 @@ Status: implementation baseline and ongoing design
 
 ## 1. Overview
 
-Mobile Agent is a system for managing agent runtimes on tmux panes from a mobile UI. A long-running TypeScript and Node.js process named agentd runs on the development host, while an iPhone connects through the web client.
+Mobile Agent is a system for managing agent runtimes on tmux panes from a mobile UI. A long-running TypeScript and Bun process named agentd runs on the development host, while an iPhone connects through the web client.
 
 The primary goal is to let a phone operate an existing desktop tmux environment without replacing the desktop workflow:
 
@@ -20,7 +20,8 @@ The primary goal is to let a phone operate an existing desktop tmux environment 
 
 ### Decisions
 
-- The host daemon is a TypeScript and Node.js process named agentd.
+- The host daemon is a TypeScript and Bun process named agentd.
+- Bun is the workspace package manager and the runtime for agentd and the unified agent CLI. The Web package uses the pinned Node LTS runtime for Vite, Storybook, Vitest, and TypeScript; this keeps the browser toolchain on its primary ecosystem without changing the shipped browser code.
 - The agentd HTTP API is implemented with Hono. createAgentdApp(deps) returns a dependency-injected Hono app. Process startup, SQLite, tmux, PTY, and WebSocket wiring live outside that function.
 - ReturnType<typeof createAgentdApp> is exported as AgentdApp and shared with the Hono RPC client in the agentd-client package.
 - The mobile API client, connection state, WebSocket handling, and xterm.js integration are implemented in TypeScript. An SSH port-forwarding native bridge may create a route and hand its URLs to the TypeScript client.
@@ -485,7 +486,7 @@ The initial mobile terminal does not project Control Mode events directly onto t
 For the one-pane mobile view, agentd creates a PTY and attaches a client to the same tmux session with active-pane.
 
 ~~~text
-xterm.js <-> WebSocket <-> agentd <-> node-pty <-> tmux attach-session -t <target>
+xterm.js <-> WebSocket <-> agentd <-> Bun.Terminal <-> tmux attach-session -t <target>
 ~~~
 
 - agentd forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
@@ -866,7 +867,7 @@ run associates the worktree, project hooks, Claude session ID, and Codex Remote 
 The following commands are planned as agentd and TUI extensions:
 
 ~~~sh
-agent daemon run
+agent daemon start
 agent daemon status
 agent daemon stop
 
@@ -941,7 +942,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 
 ### Phase 0: contracts and skeleton
 
-- Turborepo and pnpm monorepo;
+- Turborepo and Bun workspace monorepo, with Node LTS reserved for the Web toolchain;
 - Domain, Application, and Protocol packages;
 - Pane, Run, and AgentState types;
 - WebSocket frame schemas;
@@ -953,7 +954,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 - agentd start, stop, and status;
 - browser connection settings through Tailscale Serve;
 - viewport monitoring through tmux hooks and client polling, with Control Mode management as the next step;
-- shell-pane display, input, and resize through node-pty and tmux attach-session -f active-pane;
+- shell-pane display, input, and resize through Bun.Terminal and tmux attach-session -f active-pane;
 - viewport lease with mobile zoom, desktop takeover, and size/layout restoration;
 - xterm.js mobile viewport;
 - SQLite and Drizzle;
@@ -1037,5 +1038,5 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 
 - Before adding or updating a dependency, verify the public stable npm release and the project's official release information.
 - Do not use alpha, beta, or release-candidate versions unless there is an explicit adoption reason.
-- After an update, run pnpm deps:check, pnpm typecheck, pnpm test, and pnpm build.
+- After an update, run bun run deps:check, bun run typecheck, bun run test, and bun run build.
 - If the latest versions are incompatible, do not silently pin an older version. Consider a replacement library or a platform feature and record the reason in the architecture documentation.

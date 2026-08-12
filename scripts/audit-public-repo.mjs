@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
@@ -26,7 +26,7 @@ const forbiddenFilePatterns = [
   { label: "credential-like file", pattern: /(^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|credentials?(?:\.[^/]+)?|secrets?(?:\.[^/]+)?)(?:$|\/)/i },
   { label: "private/certificate material", pattern: /\.(?:pem|key|p12|pfx|mobileprovision|provisionprofile|der|kdbx)$/i },
   { label: "local database", pattern: /\.(?:sqlite|sqlite3|db)(?:[-.]|$)/i },
-  { label: "generated or runtime artifact", pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo|\.pnpm-store)(?:\/|$)|\.(?:log|dump)$/i },
+  { label: "generated or runtime artifact", pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo)(?:\/|$)|\.(?:log|dump)$/i },
 ];
 
 const forbiddenContentPatterns = [
@@ -59,7 +59,8 @@ for (const relativeFile of files) {
   try {
     stats = statSync(absoluteFile);
   } catch {
-    failures.push(`${relativeFile}: file cannot be inspected`);
+    // A tracked file may be deleted in the working tree as part of the change
+    // under review. It is not part of the resulting public tree.
     continue;
   }
 

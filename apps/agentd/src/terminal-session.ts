@@ -1,6 +1,6 @@
 import type { RawData } from "ws";
 import { WebSocket } from "ws";
-import { spawn as spawnPty, type IPty } from "node-pty";
+import { spawnPty, type PtyProcess } from "./pty.js";
 import {
   clientControlMessageSchema,
   type ClientControlMessage,
@@ -15,7 +15,7 @@ type TerminalSessionOptions = {
 };
 
 export class TerminalSession {
-  private pty: IPty | undefined;
+  private pty: PtyProcess | undefined;
   private lease: ViewportLease | undefined;
   private disposed = false;
   private attachGeneration = 0;
@@ -93,7 +93,7 @@ export class TerminalSession {
     this.stopPty();
 
     let prepared: ReturnType<TmuxViewportManager["prepare"]> | undefined;
-    let pty: IPty | undefined;
+    let pty: PtyProcess | undefined;
     try {
       prepared = this.options.viewportManager.prepare(target, this.options.cwd, cols, rows);
       pty = spawnPty(

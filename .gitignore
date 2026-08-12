@@ -1,4 +1,5 @@
 node_modules
+# Legacy pnpm cache directories may exist on migrated workstations; never publish them.
 .pnpm-store
 dist
 storybook-static
@@ -31,3 +32,4 @@ coverage
 .env.*
 !.env.example
 apps/web/vite.config.timestamp-*.mjs
+.worktrees

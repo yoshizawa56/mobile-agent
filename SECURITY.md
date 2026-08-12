@@ -25,7 +25,7 @@ Known limitations in the current MVP:
 
 The repository applies two baseline controls to dependency and CI supply chains:
 
-- pnpm will not install a newly published package until it is at least seven days old. The policy is strict and fails when no eligible version exists or registry publication-time metadata is missing.
+- Bun will not install a newly published package until it is at least seven days old. The policy is strict and fails when no eligible version exists or registry publication-time metadata is missing.
 - GitHub Actions references are pinned to full commit SHAs rather than mutable version tags. The public-repository audit checks workflow files and fails if a future action reference is not SHA-pinned.
 
 These controls reduce exposure to short-lived malicious releases and moved action tags, but they do not replace review of dependency updates, lockfile changes, action provenance, or runner security.
@@ -41,10 +41,10 @@ Please use GitHub's private security advisory flow for this repository when it i
 Before publishing a commit or release, run:
 
 ```sh
-pnpm audit:public
-pnpm typecheck
-pnpm test
-pnpm build
+bun run audit:public
+bun run typecheck
+bun run test
+bun run build
 ```
 
 Review the complete staged diff and the relevant Git history. If a secret has ever been committed, assume it is compromised: revoke or rotate it first, then remove it from history with an agreed repository-wide procedure.

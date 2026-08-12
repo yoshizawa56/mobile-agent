@@ -1,8 +1,8 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { execFile, spawn as spawnChild } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -92,7 +92,9 @@ function serviceDefinitions(config) {
       environmentVariable: "AGENTD_PORT",
       url: endpoint(config.agentdProbeHost, config.agentdPort),
       healthUrl: endpoint(config.agentdProbeHost, config.agentdPort, "/health"),
-      args: ["--filter", "@mobile-agent/agentd", "dev"],
+      command: "bun",
+      args: ["--watch", "src/index.ts"],
+      cwd: resolve(config.repoRoot, "apps/agentd"),
       environment: {
         ...config.baseEnvironment,
         AGENTD_HOST: config.agentdHost,
@@ -105,7 +107,9 @@ function serviceDefinitions(config) {
       port: config.webPort,
       environmentVariable: "VITE_DEV_PORT",
       url: endpoint(browserHost(config.webHost), config.webPort),
-      args: ["--filter", "@mobile-agent/web", "dev"],
+      command: "node",
+      args: ["./node_modules/vite/bin/vite.js"],
+      cwd: resolve(config.repoRoot, "apps/web"),
       environment: {
         ...config.baseEnvironment,
         VITE_DEV_HOST: config.webHost,
@@ -117,6 +121,30 @@ function serviceDefinitions(config) {
 }
 
 export function isPortAvailable(host, port) {
+  return isPortListening(host, port).then((listening) => {
+    if (listening) return false;
+    return canBindPort(host, port);
+  });
+}
+
+function isPortListening(host, port) {
+  return new Promise((resolveResult) => {
+    const socket = createConnection({ host, port });
+    let settled = false;
+    const finish = (listening) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolveResult(listening);
+    };
+
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(250, () => finish(false));
+  });
+}
+
+function canBindPort(host, port) {
   return new Promise((resolveResult, reject) => {
     const server = createServer();
     const onError = (error) => {
@@ -230,7 +258,12 @@ export function probeHttp(url, options = {}) {
 export function probeWebSocket(url, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_DEV_CONFIG.probeTimeoutMs;
   const parsed = new URL(url);
-  const request = (parsed.protocol === "wss:" ? httpsRequest : httpRequest)(parsed, {
+  const requestUrl = new URL(parsed);
+  requestUrl.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+  const requestImplementation = options.request ?? ((target, requestOptions) => (
+    target.protocol === "https:" ? httpsRequest : httpRequest
+  )(target, requestOptions));
+  const request = requestImplementation(requestUrl, {
     method: "GET",
     headers: {
       connection: "Upgrade",
@@ -265,6 +298,10 @@ export function probeWebSocket(url, options = {}) {
     });
     request.once("response", (response) => {
       response.resume();
+      if (response.statusCode === 101) {
+        finish(resolveResult, { statusCode: 101 });
+        return;
+      }
       finish(reject, new Error(`WebSocket route returned HTTP ${response.statusCode ?? 0} instead of 101`));
     });
     request.end();
@@ -391,10 +428,6 @@ function portDescription(definition, inspection) {
   return `${definition.name} port ${definition.host}:${definition.port} is owned by ${formatPortOwners(inspection.owners)}`;
 }
 
-function pnpmCommand() {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-}
-
 export function signalProcess(child, signal, platform = process.platform) {
   if (!child?.pid) return false;
 
@@ -477,7 +510,7 @@ class DevSupervisor {
       await this.ensureService("web");
       if (this.state !== "starting") return this;
       this.state = "running";
-      this.log("info", `[dev] ready: ${this.services.agentd.url}/health is healthy`);
+      this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
       this.log("info", "[dev] press Ctrl-C to stop processes started by this supervisor");
       return this;
@@ -556,8 +589,8 @@ class DevSupervisor {
   }
 
   launch(definition) {
-    const child = this.spawnProcess(pnpmCommand(), definition.args, {
-      cwd: this.config.repoRoot,
+    const child = this.spawnProcess(definition.command, definition.args, {
+      cwd: definition.cwd,
       env: definition.environment,
       shell: false,
       detached: process.platform !== "win32",

@@ -4,22 +4,22 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "bin": {
-    "agentd": "dist/index.js"
-  },
   "exports": {
     "./server": {
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
-    "postinstall": "node scripts/fix-node-pty.mjs",
-    "test": "vitest run src",
-    "typecheck": "tsc -p tsconfig.json"
+    "build": "bunx --bun tsc -p tsconfig.build.json",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun dist/index.js",
+    "test": "bun test src",
+    "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.12",
@@ -28,13 +28,12 @@
     "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
     "hono": "^4.12.32",
-    "node-pty": "^1.1.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/ws": "^8.18.1",
-    "tsx": "^4.23.5",
+    "bun-types": "^1.3.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

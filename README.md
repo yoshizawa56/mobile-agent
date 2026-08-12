@@ -16,7 +16,7 @@ Mobile Agent is a monorepo for operating tmux-hosted agents and shells one pane 
 Before publishing a branch or pull request, audit tracked and non-ignored files with:
 
 ```sh
-pnpm audit:public
+bun run audit:public
 ```
 
 ## Smallest vertical slice under development
@@ -34,21 +34,21 @@ pnpm audit:public
 
 ```sh
 mise install
-pnpm install --frozen-lockfile
-pnpm dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
-`mise.toml` defines the default local ports. `pnpm dev` starts the local stack: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned `pnpm`, Vite, or tsx processes.
+`mise.toml` defines the default local ports and pins Bun, Node, and tmux. `bun run dev` starts the local stack from one entrypoint: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
 
-Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `pnpm dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
+Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `bun run dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
 
 ```sh
-AGENTD_PORT=4321 VITE_DEV_PORT=5228 pnpm dev
+AGENTD_PORT=4321 VITE_DEV_PORT=5228 bun run dev
 ```
 
-`pnpm dev` does not install Node, pnpm, tmux, Tailscale, Homebrew, or any other system dependency. `mise` pins the Node.js, pnpm, and tmux toolchain, while pnpm pins JavaScript dependencies through `pnpm-lock.yaml`; install those repository tools separately when setting up a machine.
+`mise` pins Bun, Node.js, and tmux. Bun pins JavaScript dependencies through `bun.lock`.
 
-When adding or updating dependencies, verify the latest stable npm release and the project's official release information first. Use `pnpm deps:check` for the repository's dependency checks. Alpha, beta, and release-candidate versions are not used by default.
+When adding or updating dependencies, verify the latest stable registry release and the project's official release information first. Use `bun run deps:check` for the repository's dependency checks. Alpha, beta, and release-candidate versions are not used by default.
 
 agentd exposes an HTTP API at `http://127.0.0.1:4317`, a terminal WebSocket at `ws://127.0.0.1:4317/terminal`, and an event WebSocket at `ws://127.0.0.1:4317/events`. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use the terminal WebSocket. The event WebSocket sends only session invalidation notifications; clients refetch changed data through HTTP. agentd is the host-side control-plane daemon for tmux, agent plugins, and SQLite.
 
@@ -57,17 +57,17 @@ The HTTP API is built from a dependency-injected Hono app returned by `createAge
 The browser build stores only a full Tailscale Serve URL as its connection setting. A custom external port belongs in that URL, for example `https://workstation.tailnet.ts.net:8449`; the internal `AGENTD_PORT` is not a mobile setting. It does not store private keys or passwords. Storybook runs with mock data, while the regular Vite development server connects to agentd through the supervisor-managed proxy.
 
 ```sh
-pnpm --filter @mobile-agent/web dev
+bun run --filter @mobile-agent/web dev
 # Use this mode to inspect the UI without agentd.
-VITE_AGENTD_MOCK_MODE=true pnpm --filter @mobile-agent/web dev
+VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
 ```
 
-The web dev server uses strict port binding. When running it directly, if `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 pnpm --filter @mobile-agent/web dev`. The `pnpm dev` command performs the same check and gives the port owner's PID plus a recovery hint.
+The web dev server uses strict port binding. If `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 bun run --filter @mobile-agent/web dev`.
 
 Tailscale Serve is opt-in. Start the local stack first, then in a second terminal expose the web port through an already installed and configured Tailscale CLI:
 
 ```sh
-pnpm dev
+bun run dev
 mise run dev-serve
 ```
 
@@ -78,7 +78,7 @@ To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET
 Storybook can be used to inspect individual screens. It listens on `0.0.0.0:6006`; after configuring Tailscale Serve, open it at `https://<this-Mac's-tailnet-hostname>:8448/`.
 
 ```sh
-pnpm --filter @mobile-agent/web storybook
+bun run --filter @mobile-agent/web storybook
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8448 6006
 ```
 
@@ -88,15 +88,15 @@ To inspect the real app from the tailnet, add the tailnet hostname to Vite's hos
 VITE_AGENTD_PROXY_TARGET=http://127.0.0.1:4318 \
 VITE_ALLOWED_HOSTS=<tailnet-hostname> \
 VITE_DEV_HOST=0.0.0.0 VITE_DEV_PORT=5227 \
-pnpm --filter @mobile-agent/web dev
+bun run --filter @mobile-agent/web dev
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 5227
 ```
 
 The web app uses clean client-side routes. Use Vite's dev or preview server when exposing it through Tailscale Serve; both are configured as SPA servers and fall back to `index.html` for a deep-link reload. Do not serve `apps/web/dist` with a raw static file server unless that server is configured with the same fallback.
 
 ```sh
-pnpm --filter @mobile-agent/web build
-pnpm --filter @mobile-agent/web preview --host 0.0.0.0 --port 4173
+bun run --filter @mobile-agent/web build
+bun run --filter @mobile-agent/web preview --host 0.0.0.0 --port 4173
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 4173
 ```
 
@@ -113,6 +113,14 @@ agent list --global
 agent cleanup review --force
 agent project list
 agent doctor --verbose
+agent daemon start --host 127.0.0.1 --port 4317
+```
+
+The unified `agent` binary includes the lifecycle CLI and the long-running `agentd` daemon. Build it with Bun's standalone executable target and run the daemon from the same file:
+
+```sh
+bun run build:agent
+./dist/agent daemon start --port 4317
 ```
 
 With `--worktree`, the CLI creates an `agent/<name>` branch and runs the project-defined `agent/setup` and `agent/cleanup` hooks. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.

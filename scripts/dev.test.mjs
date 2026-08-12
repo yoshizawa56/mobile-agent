@@ -1,12 +1,13 @@
 import { EventEmitter } from "node:events";
 import { strict as assert } from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it } from "bun:test";
 import {
   checkWebHealth,
   createDevSupervisor,
   DevRuntimeError,
   formatPortOwners,
   parsePortOwners,
+  probeWebSocket,
 } from "./dev.mjs";
 
 function createFakeRuntime(overrides = {}) {
@@ -64,7 +65,7 @@ function createFakeRuntime(overrides = {}) {
   };
 
   const spawnProcess = (command, args, options) => {
-    const name = args.includes("@mobile-agent/agentd") ? "agentd" : "web";
+    const name = command === "bun" ? "agentd" : "web";
     const pid = nextPid++;
     const child = new EventEmitter();
     child.pid = pid;
@@ -146,6 +147,25 @@ describe("dev orchestration diagnostics", () => {
     assert.deepEqual(runtime.websocketRequests, ["/terminal", "/events"]);
   });
 
+  it("probes WebSocket URLs through HTTP and accepts a 101 response event", async () => {
+    let requestedUrl;
+    const result = await probeWebSocket("ws://127.0.0.1:14317/terminal", {
+      request: (url) => {
+        requestedUrl = url;
+        const request = new EventEmitter();
+        request.destroy = () => {};
+        request.end = () => queueMicrotask(() => request.emit("response", {
+          statusCode: 101,
+          resume: () => {},
+        }));
+        return request;
+      },
+    });
+
+    assert.equal(requestedUrl.protocol, "http:");
+    assert.equal(result.statusCode, 101);
+  });
+
   it("starts the two services, reports readiness, and kills their process groups", async () => {
     const runtime = createFakeRuntime();
 
@@ -153,7 +173,12 @@ describe("dev orchestration diagnostics", () => {
 
     assert.equal(runtime.supervisor.state, "running");
     assert.deepEqual(runtime.spawnCalls.map((call) => call.name), ["agentd", "web"]);
-    assert.equal(runtime.spawnCalls.every((call) => call.command === "pnpm"), true);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.command), ["bun", "node"]);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.args), [
+      ["--watch", "src/index.ts"],
+      ["./node_modules/vite/bin/vite.js"],
+    ]);
+    assert.deepEqual(runtime.spawnCalls.map((call) => call.options.cwd), ["/repo/apps/agentd", "/repo/apps/web"]);
     assert.equal(runtime.spawnCalls.every((call) => call.options.detached === true), true);
     assert.equal(runtime.spawnCalls.every((call) => call.options.shell === false), true);
     assert.equal(runtime.websocketRequests.join(","), "/terminal,/events");

@@ -74,8 +74,11 @@ export class TmuxError extends Error {
 export class TmuxAdapter {
   private readonly commandPrefix: string[];
 
-  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET) {
-    this.commandPrefix = socketPath ? ["-S", socketPath] : [];
+  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET, configFile?: string) {
+    this.commandPrefix = [
+      ...(configFile ? ["-f", configFile] : []),
+      ...(socketPath ? ["-S", socketPath] : []),
+    ];
   }
 
   public command(args: string[]): CommandResult {
@@ -368,6 +371,13 @@ export class TmuxAdapter {
 
   public setClientFlags(clientName: string, flags: string): void {
     this.require(["refresh-client", "-f", flags, "-t", clientName]);
+  }
+
+  public refreshClient(clientName: string): void {
+    // refresh-client without -S requests a complete client redraw. Do not use
+    // -r here: in newer tmux versions it reports terminal colours for control
+    // mode clients, and older versions reject it entirely.
+    this.require(["refresh-client", "-t", clientName]);
   }
 
   public selectPane(paneId: string, keepZoomed = false): void {

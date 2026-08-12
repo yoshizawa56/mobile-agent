@@ -11,9 +11,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run src",
-    "typecheck": "tsc -p tsconfig.json"
+    "build": "bunx --bun tsc -p tsconfig.build.json",
+    "test": "bun test src",
+    "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
     "@mobile-agent/domain": "workspace:*"

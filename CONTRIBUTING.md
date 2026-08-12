@@ -7,7 +7,7 @@ Thank you for helping build a safer, more useful way to operate terminal agents 
 - Read the [README](README.md) and [security policy](SECURITY.md).
 - Use the repository toolchain managed by [`mise.toml`](mise.toml).
 - Never put SSH keys, Tailscale auth keys, API keys, passwords, private terminal output, or personal data in commits, fixtures, screenshots, or issue reports.
-- Run `pnpm audit:public` before opening a pull request.
+- Run `bun run audit:public` before opening a pull request.
 
 The project is currently pre-alpha. Interfaces may change without a compatibility promise while the core architecture is being stabilized.
 
@@ -15,16 +15,18 @@ The project is currently pre-alpha. Interfaces may change without a compatibilit
 
 ```sh
 mise install
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
 ```
 
-The runtime dependencies are a local `tmux` installation and a supported Node.js runtime. The browser mock mode can be used without a running `agentd`:
+`bun run dev` is the recommended dogfooding entrypoint. It starts the local `agentd` and Web services and stops them together on exit. It does not install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `bun run dev` running in another terminal.
+
+The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and agentd; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. The browser mock mode can be used without a running `agentd`:
 
 ```sh
-VITE_AGENTD_MOCK_MODE=true pnpm --filter @mobile-agent/web dev
+VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
 ```
 
 ## Pull requests
@@ -38,7 +40,7 @@ Pull request titles, descriptions, review replies, and linked issue references m
 3. Add or update table-driven tests for domain, application, adapter, and HTTP behavior.
 4. Add or update Storybook stories for meaningful view states.
 5. Update the architecture or security documentation when behavior or trust boundaries change.
-6. Run `pnpm audit:public`, `pnpm typecheck`, `pnpm test`, and `pnpm build` locally.
+6. Run `bun run audit:public`, `bun run typecheck`, `bun run test`, and `bun run build` locally.
 7. Do not include generated output, local databases, logs, credentials, or machine-specific paths.
 
 The pull request should be ready for review before requesting merge. CI must pass, and author changes should be pushed as additional commits or a force-push to the same feature branch only; the target branch must not be updated directly.

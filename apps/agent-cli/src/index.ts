@@ -1,15 +1,28 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { AgentCommand, AgentCommandError } from "./agent-command.js";
 
-const command = new AgentCommand();
+const args = process.argv.slice(2);
 
-try {
-  const status = await command.execute(process.argv.slice(2));
-  process.exitCode = status;
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${error instanceof AgentCommandError ? "agent" : "agent: unexpected error"}: ${message}\n`);
-  process.exitCode = error instanceof AgentCommandError ? 2 : 1;
-} finally {
-  command.close();
+if (args[0] === "daemon") {
+  try {
+    const { startAgentd } = await import("@mobile-agent/agentd/daemon");
+    startAgentd(args.slice(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`agent daemon: ${message}\n`);
+    process.exitCode = 2;
+  }
+} else {
+  const command = new AgentCommand();
+
+  try {
+    const status = await command.execute(args);
+    process.exitCode = status;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${error instanceof AgentCommandError ? "agent" : "agent: unexpected error"}: ${message}\n`);
+    process.exitCode = error instanceof AgentCommandError ? 2 : 1;
+  } finally {
+    command.close();
+  }
 }

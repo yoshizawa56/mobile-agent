@@ -2,8 +2,10 @@ import type { PaneViewModel } from "./pane-viewmodel";
 import { PaneBoardView } from "../pane-board/pane-board-view";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import type { PaneLayoutOverlayVariant } from "../pane-board/pane-layout-overlay-view";
+import { useWindowMapGesture } from "./window-map-gesture";
 
 export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWorkspaceSwitch, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onWorkspaceSwitch?: () => void; onNewPane?: () => void }) {
+  const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
   const agentName = selectedPane?.agentId ?? (selectedPane?.kind === "shell" ? "shell" : "agent");
@@ -13,7 +15,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
   const waitingCount = paneBoard.panes.filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval").length;
 
   return (
-    <main className="app-shell app-shell-terminal">
+    <main ref={windowMapSurfaceRef} className="app-shell app-shell-terminal">
       <header className="app-topbar">
         <div className="brand-lockup">
           <span className="brand-mark">⌁</span>
@@ -92,9 +94,20 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
                 <span className="terminal-session">{sessionName}</span>
                 <span className="terminal-cwd">{cwd}</span>
               </div>
-              <div className="terminal-toolbar-actions"><span className="terminal-pane-id">{viewModel.target}</span><span className="terminal-size">80 × 24</span>{onNewPane ? <button className="terminal-action terminal-new-pane-action" type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane">＋</button> : null}{onWorkspaceSwitch ? <button className="terminal-action terminal-workspace-action" type="button" onClick={onWorkspaceSwitch} aria-label="Open workspace switcher">☰</button> : null}<button className="terminal-action" type="button" onClick={paneBoard.toggle} aria-label="Open tmux window map">⌄</button></div>
+              <div className="terminal-toolbar-actions"><span className="terminal-pane-id">{viewModel.target}</span><span className="terminal-size">80 × 24</span>{onNewPane ? <button className="terminal-action terminal-new-pane-action" type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane">＋</button> : null}{onWorkspaceSwitch ? <button className="terminal-action terminal-workspace-action" type="button" onClick={onWorkspaceSwitch} aria-label="Open workspace switcher">☰</button> : null}<button className={`terminal-action terminal-selection-action${viewModel.selectionMode ? " terminal-selection-action-active" : ""}`} type="button" onClick={viewModel.selectionMode ? viewModel.exitSelectionMode : viewModel.enterSelectionMode} aria-pressed={viewModel.selectionMode} aria-label={viewModel.selectionMode ? "Exit terminal selection mode" : "Select terminal text"} title={viewModel.selectionMode ? "Exit selection mode" : "Select terminal text"}>⌗</button><button className="terminal-action" type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"}>⌄</button></div>
             </div>
-            <div ref={viewModel.terminalContainerRef} className="terminal-container" />
+            {viewModel.selectionMode || viewModel.hasSelection || viewModel.selectionNotice ? (
+              <div className="terminal-selection-bar" role="toolbar" aria-label="Terminal text selection">
+                <span className="terminal-selection-state" role="status" aria-live="polite">{viewModel.selectionNotice ?? (viewModel.selectionMode ? "ドラッグして範囲を選択" : "範囲を選択中")}</span>
+                <div className="terminal-selection-actions">
+                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.copySelection()} disabled={!viewModel.hasSelection}>コピー</button>
+                  <button className="terminal-selection-button" type="button" onClick={viewModel.selectAll}>全選択</button>
+                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.pasteFromClipboard()}>貼り付け</button>
+                  <button className="terminal-selection-button terminal-selection-button-muted" type="button" onClick={viewModel.clearSelection}>解除</button>
+                </div>
+              </div>
+            ) : null}
+            <div ref={viewModel.terminalContainerRef} className={`terminal-container${viewModel.selectionMode ? " terminal-container-selection-mode" : ""}`} />
             <div className="terminal-statusbar">
               <span><span className="statusbar-led" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>
               <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>

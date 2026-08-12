@@ -7,14 +7,14 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
 
   return (
     <div className={`pane-board-shell${alwaysOpen ? " pane-board-shell-always" : ""}`}>
-      <button className={`pane-picker-button${viewModel.isOpen ? " pane-picker-button-open" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen}>
+      <button className={`pane-picker-button${viewModel.isOpen ? " pane-picker-button-open" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
         <span className="button-glyph">⌘</span>
         <span>All panes</span>
         <span className="button-count">{viewModel.panes.length || "—"}</span>
       </button>
       <aside className={`pane-board${alwaysOpen ? " pane-board-desktop" : ""}${showLayout ? " pane-board-layout" : ""}`} data-open={viewModel.isOpen} aria-label="tmux panes">
         {showLayout ? (
-          <PaneLayoutOverlay panes={viewModel.panes} selectedTarget={viewModel.selectedTarget} onSelect={viewModel.select} onClose={viewModel.toggle} variant={layoutVariant} />
+          <PaneLayoutOverlay id="tmux-window-map" panes={viewModel.panes} selectedTarget={viewModel.selectedTarget} onSelect={viewModel.select} onClose={viewModel.close} variant={layoutVariant} />
         ) : null}
         {!showLayout ? (
           <>
@@ -26,7 +26,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
           <div className="board-actions">
             <span className="board-count">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
             <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="ペイン一覧を更新" title="Refresh panes">↻</button>
-            <button className="icon-button board-close" type="button" onClick={viewModel.toggle} aria-label="ペイン一覧を閉じる">×</button>
+            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="ペイン一覧を閉じる">×</button>
           </div>
         </div>
         <div className="board-divider" />

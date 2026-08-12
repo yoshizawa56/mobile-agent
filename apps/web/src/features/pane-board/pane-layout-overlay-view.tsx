@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PaneSummary } from "@mobile-agent/protocol";
 import { paneStateLabel } from "./pane-board-viewmodel";
@@ -6,12 +6,14 @@ import { paneStateLabel } from "./pane-board-viewmodel";
 export type PaneLayoutOverlayVariant = "ghost";
 
 export function PaneLayoutOverlay({
+  id,
   panes,
   selectedTarget,
   onSelect,
   onClose,
   variant = "ghost",
 }: {
+  id?: string;
   panes: PaneSummary[];
   selectedTarget: string;
   onSelect: (pane: PaneSummary) => void;
@@ -21,14 +23,45 @@ export function PaneLayoutOverlay({
   const windows = useMemo(() => groupByWindow(panes), [panes]);
   const selectedPane = panes.find((pane) => pane.tmuxPaneId === selectedTarget);
   const [activeWindowId, setActiveWindowId] = useState(selectedPane?.windowId ?? windows[0]?.id ?? "");
+  const overlayRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeWindow = windows.find((window) => window.id === activeWindowId) ?? windows[0];
 
   useEffect(() => {
     if (selectedPane && selectedPane.windowId !== activeWindowId) setActiveWindowId(selectedPane.windowId);
   }, [activeWindowId, selectedPane]);
 
+  useEffect(() => {
+    if (!onClose) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(overlayRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? [])]
+        .filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
+      if (!focusable.length) return;
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex === focusable.length - 1 ? 0 : currentIndex + 1);
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus({ preventScroll: true });
+    };
+  }, [onClose]);
+
   return (
-    <section className={`pane-layout-overlay pane-layout-overlay-${variant}`} aria-label="tmux window layout">
+    <section ref={overlayRef} id={id} className={`pane-layout-overlay pane-layout-overlay-${variant}`} role={onClose ? "dialog" : "region"} aria-modal={onClose ? true : undefined} aria-label="tmux window layout" tabIndex={onClose ? -1 : undefined}>
       <div className="layout-overlay-header">
         <div className="layout-overlay-title-group">
           <span className="section-kicker"><span className="live-mark" /> WINDOW MAP</span>
@@ -36,7 +69,7 @@ export function PaneLayoutOverlay({
         </div>
         <div className="layout-overlay-actions">
           <span className="layout-preview-count">{windows.length} windows</span>
-          {onClose ? <button className="layout-close-button" type="button" onClick={onClose} aria-label="Close window map">×</button> : null}
+          {onClose ? <button ref={closeButtonRef} className="layout-close-button" type="button" onClick={onClose} aria-label="Close window map">×</button> : null}
         </div>
       </div>
 
@@ -96,6 +129,8 @@ export function PaneLayoutOverlay({
     </section>
   );
 }
+
+const FOCUSABLE_SELECTOR = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
 
 function windowNumber(id: string): string {
   return id.replace(/^@/, "");

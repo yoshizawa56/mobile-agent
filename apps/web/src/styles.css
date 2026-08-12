@@ -4047,3 +4047,439 @@ kbd {
     text-shadow: 0 1px 2px #020503;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Mobile app interaction contract
+
+   The rules below are intentionally kept as a final contract layer. The
+   feature styles above describe the visual language; this layer makes every
+   route obey the same phone viewport, selection, safe-area, and touch rules.
+   -------------------------------------------------------------------------- */
+:root {
+  --app-viewport-height: 100dvh;
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  color-scheme: dark;
+}
+
+html {
+  min-height: var(--app-viewport-height);
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: var(--app-viewport-height);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#root {
+  min-height: var(--app-viewport-height);
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.xterm,
+.xterm * {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+button,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell,
+.connection-flow,
+.connection-settings-view,
+.session-overview,
+.new-session-view {
+  min-height: var(--app-viewport-height);
+  touch-action: pan-x pan-y;
+}
+
+.app-shell-terminal {
+  height: var(--app-viewport-height);
+}
+
+.pane-list,
+.window-tabs,
+.workspace-picker-directory-list {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: 3px solid rgb(139 255 154 / 72%);
+  outline-offset: 3px;
+}
+
+@media (max-width: 920px) {
+  .app-shell-terminal .terminal-card {
+    height: var(--app-viewport-height);
+    min-height: 0;
+  }
+
+  .app-shell-terminal .terminal-toolbar {
+    min-height: calc(44px + var(--safe-area-top));
+    padding-top: var(--safe-area-top);
+    padding-right: max(8px, var(--safe-area-right));
+    padding-left: max(8px, var(--safe-area-left));
+  }
+
+  .app-shell-terminal .terminal-toolbar-actions {
+    gap: 2px;
+  }
+
+  .app-shell-terminal .terminal-action {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  .app-shell-terminal .terminal-pane-id,
+  .app-shell-terminal .terminal-size {
+    display: none;
+  }
+
+  .app-shell-terminal .terminal-container {
+    padding-bottom: max(8px, var(--safe-area-bottom));
+  }
+
+  .app-shell-terminal .pane-layout-overlay {
+    min-height: var(--app-viewport-height);
+    padding-top: calc(12px + var(--safe-area-top));
+    padding-right: max(12px, var(--safe-area-right));
+    padding-bottom: calc(12px + var(--safe-area-bottom));
+    padding-left: max(12px, var(--safe-area-left));
+  }
+
+  .layout-close-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .window-tabs {
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 4px;
+  }
+
+  .window-tab {
+    min-height: 44px;
+    padding-inline: 12px;
+    scroll-snap-align: start;
+  }
+
+  .tmux-layout-pane:not(.tmux-layout-pane-real) {
+    min-height: 80px;
+    padding: 12px;
+  }
+
+  .tmux-layout-pane-real {
+    min-height: 44px;
+  }
+
+  .session-overview-add-pane,
+  .connection-flow-inline-action,
+  .workspace-picker-register,
+  .workspace-picker-registration-heading button,
+  .workspace-picker-browser-actions button,
+  .workspace-picker-directory > button:last-child {
+    min-height: 44px;
+  }
+
+  .new-pane-choice,
+  .new-pane-placement,
+  .new-pane-toggle {
+    min-height: 56px;
+    padding: 12px;
+  }
+
+  .connection-flow-primary {
+    min-height: 52px;
+    font-size: 0.88rem;
+  }
+
+  .connection-flow-secondary {
+    min-height: 44px;
+  }
+
+  .new-session-field input,
+  .new-session-field select,
+  .connection-settings-form .new-session-field input {
+    min-height: 48px;
+  }
+
+  .connection-flow,
+  .connection-settings-view,
+  .session-overview,
+  .new-session-view {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell-terminal .terminal-location {
+    gap: 5px;
+  }
+
+  .app-shell-terminal .terminal-cwd,
+  .app-shell-terminal .terminal-slash {
+    display: none;
+  }
+
+  .app-shell-terminal .terminal-container {
+    padding: 5px 6px max(8px, var(--safe-area-bottom));
+  }
+
+  .app-shell-terminal .xterm {
+    font-size: 11px;
+  }
+
+  .connection-flow-topbar,
+  .connection-settings-toolbar,
+  .session-overview-toolbar,
+  .new-session-toolbar {
+    min-height: calc(56px + var(--safe-area-top));
+    padding-top: var(--safe-area-top);
+    padding-right: max(14px, var(--safe-area-right));
+    padding-left: max(14px, var(--safe-area-left));
+  }
+
+  .connection-flow-content,
+  .connection-settings-content,
+  .session-overview-content,
+  .new-session-content {
+    width: 100%;
+    padding-top: 32px;
+    padding-right: max(14px, var(--safe-area-right));
+    padding-bottom: calc(32px + var(--safe-area-bottom));
+    padding-left: max(14px, var(--safe-area-left));
+  }
+
+  .connection-flow-footer {
+    padding-right: max(14px, var(--safe-area-right));
+    padding-bottom: calc(18px + var(--safe-area-bottom));
+    padding-left: max(14px, var(--safe-area-left));
+  }
+
+  .connection-flow-intro p,
+  .session-overview-intro p {
+    font-size: 0.88rem;
+  }
+
+  .connection-flow-note,
+  .session-overview-hint,
+  .new-session-field small,
+  .new-session-agent-note small,
+  .workspace-picker-empty,
+  .workspace-mode-help,
+  .workspace-picker-hook-help {
+    font-size: 0.72rem;
+  }
+
+  .connection-terminal-card,
+  .connection-session-card {
+    min-height: 72px;
+    padding: 14px;
+  }
+
+  .connection-terminal-copy small,
+  .connection-session-copy small {
+    font-size: 0.68rem;
+  }
+
+  .session-overview-map-shell {
+    height: min(54dvh, 470px);
+    min-height: 330px;
+  }
+
+  .session-overview-map-shell .tmux-layout-pane {
+    min-height: 72px;
+    padding: 10px;
+  }
+
+  .session-overview-back,
+  .session-overview-disconnect,
+  .new-session-back {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .new-session-back {
+    padding-inline: 4px;
+  }
+
+  .new-session-field > span,
+  .new-pane-choice-group legend {
+    font-size: 0.62rem;
+  }
+}
+
+@media (hover: none) {
+  .connection-terminal-card:hover,
+  .connection-session-card:hover,
+  .pane-list-item:hover,
+  .tmux-layout-pane:hover,
+  .window-tab:hover,
+  .topbar-icon:hover,
+  .icon-button:hover,
+  .terminal-action:hover {
+    transform: none;
+  }
+}
+
+.app-shell-terminal .terminal-card {
+  position: relative;
+}
+
+.app-shell-terminal .terminal-container-selection-mode {
+  touch-action: none;
+}
+
+.app-shell-terminal .terminal-container,
+.app-shell-terminal .terminal-container .xterm,
+.app-shell-terminal .terminal-container .xterm * {
+  -webkit-touch-callout: none;
+}
+
+.terminal-selection-action-active {
+  border-color: var(--lime) !important;
+  color: #061008 !important;
+  background: var(--lime) !important;
+}
+
+.terminal-selection-bar {
+  position: absolute;
+  z-index: 20;
+  top: 45px;
+  right: 0;
+  left: 0;
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #15351d;
+  color: #a8c8ad;
+  background: #0a160d;
+  box-shadow: 0 12px 24px rgb(0 0 0 / 28%);
+}
+
+.terminal-selection-state {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: #8cb793;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-selection-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.terminal-selection-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #286039;
+  border-radius: 8px;
+  color: #baf5c1;
+  background: #102417;
+  font-size: 0.66rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.terminal-selection-button:hover {
+  border-color: var(--lime);
+  color: #061008;
+  background: var(--lime);
+}
+
+.terminal-selection-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.terminal-selection-button-muted {
+  border-color: #1d4c29;
+  color: #81a986;
+  background: transparent;
+}
+
+@media (max-width: 920px) {
+  .app-shell-terminal .terminal-selection-bar {
+    top: calc(44px + var(--safe-area-top));
+    min-height: 48px;
+    padding: 4px max(8px, var(--safe-area-right)) 4px max(8px, var(--safe-area-left));
+  }
+
+  .app-shell-terminal .terminal-selection-button {
+    min-height: 40px;
+    padding-inline: 12px;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell-terminal .terminal-selection-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 3px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  .app-shell-terminal .terminal-selection-state {
+    flex: 0 0 auto;
+    font-size: 0.58rem;
+  }
+
+  .app-shell-terminal .terminal-selection-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .app-shell-terminal .terminal-selection-button {
+    min-width: 0;
+    padding-inline: 4px;
+    font-size: 0.62rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

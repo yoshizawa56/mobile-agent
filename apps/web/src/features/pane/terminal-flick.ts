@@ -25,18 +25,32 @@ export function terminalInputForFlick(direction: TerminalFlickDirection): string
 
 export function installTerminalFlickInput(container: HTMLElement, onInput: (data: string) => void): () => void {
   let start: { pointerId: number; x: number; y: number; startedAt: number } | null = null;
+  let activeTouchPointers = 0;
 
   const reset = () => {
     start = null;
+    activeTouchPointers = 0;
   };
 
   const onPointerDown = (event: PointerEvent) => {
-    if (event.pointerType === "mouse" || start) return;
+    if (event.pointerType === "mouse") return;
+    activeTouchPointers += 1;
+    if (activeTouchPointers > 1 || start) {
+      // A pinch must never finish the first finger's pending flick and send
+      // an arrow key to the terminal.
+      start = null;
+      return;
+    }
     start = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startedAt: performance.now() };
   };
 
   const onPointerUp = (event: PointerEvent) => {
-    if (!start || event.pointerId !== start.pointerId) return;
+    if (event.pointerType === "mouse") return;
+    if (activeTouchPointers > 1 || !start || event.pointerId !== start.pointerId) {
+      activeTouchPointers = Math.max(activeTouchPointers - 1, 0);
+      if (activeTouchPointers === 0) start = null;
+      return;
+    }
 
     const direction = classifyTerminalFlick({
       dx: event.clientX - start.x,

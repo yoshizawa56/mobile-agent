@@ -260,6 +260,8 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     panes: sessionPanes,
     status: "ready",
     errorMessage: null,
+    open: () => setMapOpen(true),
+    close: () => setMapOpen(false),
     toggle: () => setMapOpen((open) => !open),
     select: (pane) => {
       setSelectedPaneId(pane.tmuxPaneId);

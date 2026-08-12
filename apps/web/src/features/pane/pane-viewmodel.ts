@@ -11,6 +11,7 @@ import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import { getAgentdWebSocketEndpoint } from "../api/agentd-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
 import { installTerminalFlickInput } from "./terminal-flick";
+import { installTerminalSelectionGesture } from "./terminal-selection";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -27,10 +28,19 @@ export type PaneViewModel = {
   errorMessage: string | null;
   viewportOwner: PaneViewportOwner;
   viewportReason: string | null;
+  selectionMode: boolean;
+  hasSelection: boolean;
+  selectionNotice: string | null;
   terminalContainerRef: RefCallback<HTMLDivElement>;
   reconnect: () => void;
   claim: () => void;
   detach: () => void;
+  enterSelectionMode: () => void;
+  exitSelectionMode: () => void;
+  selectAll: () => void;
+  clearSelection: () => void;
+  copySelection: () => Promise<boolean>;
+  pasteFromClipboard: () => Promise<boolean>;
 };
 
 export function usePaneViewModel({ target, connection }: { target: string; connection?: AgentdConnection }): PaneViewModel {
@@ -42,9 +52,15 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
   const [viewportReason, setViewportReason] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const connectRef = useRef<(() => void) | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const selectionModeRef = useRef(false);
+  const selectionNoticeTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
   const resumeRef = useRef<PaneResumeState | null>(null);
@@ -75,6 +91,74 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     detachRef.current?.();
   }, [clearRetryTimer]);
 
+  const showSelectionNotice = useCallback((message: string) => {
+    if (selectionNoticeTimerRef.current !== null) window.clearTimeout(selectionNoticeTimerRef.current);
+    setSelectionNotice(message);
+    selectionNoticeTimerRef.current = window.setTimeout(() => {
+      selectionNoticeTimerRef.current = null;
+      setSelectionNotice(null);
+    }, 2_400);
+  }, []);
+
+  const enterSelectionMode = useCallback(() => {
+    selectionModeRef.current = true;
+    setSelectionMode(true);
+    terminalRef.current?.focus();
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    selectionModeRef.current = false;
+    setSelectionMode(false);
+  }, []);
+
+  const selectAll = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    selectionModeRef.current = true;
+    setSelectionMode(true);
+    terminal.selectAll();
+    terminal.focus();
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    terminalRef.current?.clearSelection();
+    selectionModeRef.current = false;
+    setSelectionMode(false);
+    setHasSelection(false);
+  }, []);
+
+  const copySelection = useCallback(async () => {
+    const terminal = terminalRef.current;
+    const text = terminal?.getSelection() ?? "";
+    if (!text) {
+      showSelectionNotice("コピーする範囲を選択してください");
+      return false;
+    }
+
+    const copied = await writeTextToClipboard(text);
+    showSelectionNotice(copied ? "コピーしました" : "クリップボードへのコピーに失敗しました");
+    return copied;
+  }, [showSelectionNotice]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    const terminal = terminalRef.current;
+    if (!terminal || typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+      showSelectionNotice("この環境では貼り付けを利用できません");
+      return false;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      terminal.focus();
+      terminal.paste(text);
+      showSelectionNotice(text ? "貼り付けました" : "クリップボードは空です");
+      return true;
+    } catch {
+      showSelectionNotice("貼り付けにはクリップボードの許可が必要です");
+      return false;
+    }
+  }, [showSelectionNotice]);
+
   useEffect(() => {
     // The terminal surface is mounted by the control-room route. The hook lives
     // above that route, so the DOM ref is the reliable lifecycle signal here;
@@ -99,6 +183,20 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     fitAddon.fit();
+    terminalRef.current = terminal;
+    setHasSelection(terminal.hasSelection());
+    setSelectionMode(selectionModeRef.current);
+
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      setHasSelection(terminal.hasSelection());
+    });
+    const selectionGestureCleanup = installTerminalSelectionGesture(container, terminal, {
+      isSelectionMode: () => selectionModeRef.current,
+      onSelectionModeChange: (active) => {
+        selectionModeRef.current = active;
+        setSelectionMode(active);
+      },
+    });
 
     const endpoint = getAgentdWebSocketEndpoint(connection);
     const storageKey = terminalResumeStorageKey(endpoint, target);
@@ -276,8 +374,14 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+        selectionGestureCleanup();
+        selectionDisposable.dispose();
         flickCleanup();
         inputDisposable.dispose();
+        terminalRef.current = null;
+        selectionModeRef.current = false;
+        setHasSelection(false);
+        setSelectionMode(false);
         terminal.dispose();
       };
     }
@@ -316,6 +420,8 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       window.removeEventListener("focus", claimWhenVisible);
       resizeObserver.disconnect();
       window.removeEventListener("resize", sendResize);
+      selectionGestureCleanup();
+      selectionDisposable.dispose();
       inputDisposable.dispose();
       flickCleanup();
       resizeDisposable.dispose();
@@ -326,9 +432,17 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
         // lets a remounted pane resume the same PTY during the grace window.
         closeNetworkSocket(socket);
       }
+      terminalRef.current = null;
+      selectionModeRef.current = false;
+      setHasSelection(false);
+      setSelectionMode(false);
       terminal.dispose();
     };
   }, [claim, clearRetryTimer, connection, target, terminalContainer]);
+
+  useEffect(() => () => {
+    if (selectionNoticeTimerRef.current !== null) window.clearTimeout(selectionNoticeTimerRef.current);
+  }, []);
 
   return {
     target,
@@ -336,10 +450,19 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     errorMessage,
     viewportOwner,
     viewportReason,
+    selectionMode,
+    hasSelection,
+    selectionNotice,
     terminalContainerRef,
     reconnect,
     claim,
     detach,
+    enterSelectionMode,
+    exitSelectionMode,
+    selectAll,
+    clearSelection,
+    copySelection,
+    pasteFromClipboard,
   };
 }
 
@@ -457,7 +580,34 @@ function isResumeState(value: unknown): value is PaneResumeState {
 }
 
 function terminalFontSize(): number {
-  if (typeof window !== "undefined" && window.innerWidth <= 620) return 8;
-  if (typeof window !== "undefined" && window.innerWidth <= 920) return 10;
+  if (typeof window !== "undefined" && window.innerWidth <= 620) return 11;
+  if (typeof window !== "undefined" && window.innerWidth <= 920) return 12;
   return 12;
+}
+
+async function writeTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the legacy copy path for embedded or older browsers.
+    }
+  }
+
+  if (typeof document === "undefined") return false;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
 }

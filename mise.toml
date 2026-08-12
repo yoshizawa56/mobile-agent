@@ -8,7 +8,7 @@ description = "Install the locked workspace dependencies"
 run = "bun install --frozen-lockfile"
 
 [tasks.dev]
-description = "Start the health-checked local agentd and web development stack"
+description = "Start the local agentd and web development stack with child-process cleanup"
 run = "bun dev"
 
 [tasks.dev-serve]

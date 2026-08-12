@@ -38,7 +38,9 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-`mise.toml` defines the default local ports and pins Bun, Node, and tmux. `bun run dev` starts the local stack as one process group: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. Override them only when needed:
+`mise.toml` defines the default local ports and pins Bun, Node, and tmux. `bun run dev` starts the local stack from one entrypoint: agentd listens on `127.0.0.1:4317`, and the Web app listens on `0.0.0.0:5227` with its `/api`, `/terminal`, and `/events` proxy pointed at that agentd instance. It starts a service only when its port is free, reuses a listener that passes the full health check, and reports the owning PID when a stale or foreign listener cannot be adopted. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
+
+Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `bun run dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
 
 ```sh
 AGENTD_PORT=4321 VITE_DEV_PORT=5228 bun run dev
@@ -62,14 +64,14 @@ VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
 
 The web dev server uses strict port binding. If `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 bun run --filter @mobile-agent/web dev`.
 
-To use a Serve connection, register the Serve URL from the web app's `settings` screen after exposing the host-side service:
+Tailscale Serve is opt-in. Start the local stack first, then in a second terminal expose the web port through an already installed and configured Tailscale CLI:
 
 ```sh
 bun run dev
 mise run dev-serve
 ```
 
-The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
+`dev-serve` maps the local web server to HTTPS port `8449` by default and never installs or configures Tailscale. Override the ports when needed with `TAILSCALE_DEV_PORT` and `VITE_DEV_PORT`. After exposing the host-side service, register its full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
 
 To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.
 
@@ -121,6 +123,12 @@ bun run build:agent
 ```
 
 With `--worktree`, the CLI creates an `agent/<name>` branch and runs the registered workspace setup and cleanup scripts when present. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
+
+### Releases
+
+Pushing a semantic version tag such as `v0.0.1-beta.1` starts the release workflow. It runs the repository checks, builds standalone executables for Linux x64, Linux ARM64, macOS ARM64, and macOS x64, and attaches the binaries and `SHA256SUMS.txt` to the GitHub Release.
+
+GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
 
 The default state database is `~/.local/state/mobile-agent/agentd.sqlite`. Override it with `AGENTD_DB_FILE`, `AGENT_WORKTREE_ROOT`, or `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state and registered workspace hook paths are stored in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 

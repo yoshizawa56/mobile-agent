@@ -9,14 +9,12 @@ import { fileURLToPath } from "node:url";
 import type {
   AgentBackend,
   AgentSessionRecord,
-  ProjectRecord,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 import {
   defaultAgentDatabaseFile,
   createAgentDatabase,
   DrizzleAgentSessionRepository,
-  DrizzleProjectRepository,
   DrizzleWorkspaceRepository,
   recordAuditEvent,
   type AgentDatabase,
@@ -43,7 +41,6 @@ type RunOptions = {
   name?: string;
   useWorktree: boolean;
   worktreeRoot?: string;
-  projectName?: string;
   setupHook?: string;
   cleanupHook?: string;
   setupHookExplicit: boolean;
@@ -64,14 +61,13 @@ type ProcessResult = {
 };
 
 const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-const projectNamePattern = sessionNamePattern;
 const defaultCodexProfile = "local-agent";
 
 /**
  * Clean TypeScript implementation of the dotfiles `agent` wrapper.
  *
  * The command deliberately keeps lifecycle state in SQLite instead of shell
- * state files. It owns the backend process, managed git worktree, project
+ * state files. It owns the backend process, managed git worktree, workspace
  * hooks, resume metadata, and Codex Remote Control lifecycle as one unit.
  */
 export class AgentCommand {
@@ -80,13 +76,11 @@ export class AgentCommand {
   private readonly io: AgentCommandIO;
   private readonly repositoryRoot: string;
   private readonly hookOutputRoot: string;
-  private readonly projectsRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
-  private projects!: DrizzleProjectRepository;
 
   public constructor(options: AgentCommandOptions = {}) {
     this.cwd = realpathSafe(options.cwd ?? process.cwd());
@@ -94,7 +88,6 @@ export class AgentCommand {
     this.io = options.io ?? { out: process.stdout, err: process.stderr };
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
-    this.projectsRoot = resolveFromRoot(this.env.AGENT_PROJECTS_ROOT ?? join(this.repositoryRoot, "projects"), this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
     this.databaseFile = options.databaseFile ?? defaultAgentDatabaseFile(this.env);
   }
@@ -138,10 +131,6 @@ export class AgentCommand {
           return 0;
         }
         return this.doctor(this.parseDoctorOptions(args.slice(1)));
-      case "project":
-        if (args[1] !== "list") throw new AgentCommandError("project requires list");
-        this.ensureDatabase();
-        return this.listProjects(args.slice(2));
       case "help":
       case "--help":
       case "-h":
@@ -157,7 +146,6 @@ export class AgentCommand {
     let name: string | undefined;
     let useWorktree = false;
     let worktreeRoot: string | undefined;
-    let projectName = this.env.AGENT_PROJECT;
     let setupHook: string | undefined;
     let cleanupHook: string | undefined;
     let setupHookExplicit = false;
@@ -193,10 +181,6 @@ export class AgentCommand {
         worktreeRoot = requireOptionValue(argument, args[++index]);
       } else if (argument.startsWith("--worktree-root=")) {
         worktreeRoot = argument.slice("--worktree-root=".length);
-      } else if (argument === "--project") {
-        projectName = requireOptionValue(argument, args[++index]);
-      } else if (argument.startsWith("--project=")) {
-        projectName = argument.slice("--project=".length);
       } else if (argument === "--setup-hook") {
         setupHook = requireOptionValue(argument, args[++index]);
         setupHookExplicit = true;
@@ -216,7 +200,7 @@ export class AgentCommand {
         cleanupHook = undefined;
         cleanupHookExplicit = true;
       } else if (argument === "--setup-task" || argument === "--cleanup-task" || argument.startsWith("--setup-task=") || argument.startsWith("--cleanup-task=")) {
-        throw new AgentCommandError(`${argument} is no longer supported; use project hooks or --setup-hook/--cleanup-hook`);
+        throw new AgentCommandError(`${argument} is no longer supported; use workspace hooks or --setup-hook/--cleanup-hook`);
       } else if (argument === "--codex-profile") {
         codexProfile = requireOptionValue(argument, args[++index]);
       } else if (argument.startsWith("--codex-profile=")) {
@@ -240,7 +224,6 @@ export class AgentCommand {
       name,
       useWorktree,
       worktreeRoot,
-      projectName,
       setupHook,
       cleanupHook,
       setupHookExplicit,
@@ -335,23 +318,12 @@ export class AgentCommand {
     this.ensureDatabase();
     await ensureCodexRemoteControl(backend, options.backendArgs, backendBinary, this.defaultCodexRemote, this.env);
     const workspace = await this.resolveWorkspace();
-    let project = await this.resolveProject(workspace, options.projectName);
-    if (options.setupHookExplicit || options.cleanupHookExplicit) {
-      project ??= {
-        id: projectId(options.projectName ?? workspace.name),
-        name: options.projectName ?? workspace.name,
-        directory: workspace.rootPath,
-        setupHook: null,
-        cleanupHook: null,
-        createdAt: timestamp(),
-        updatedAt: timestamp(),
-      };
-    }
-    if (project && options.setupHookExplicit) project = { ...project, setupHook: options.setupHook ? this.resolveHookPath(options.setupHook, workspace.rootPath) : null };
-    if (project && options.cleanupHookExplicit) project = { ...project, cleanupHook: options.cleanupHook ? this.resolveHookPath(options.cleanupHook, workspace.rootPath) : null };
-    if (project && !options.useWorktree && !options.setupHookExplicit) project = { ...project, setupHook: null };
-    if (project && !options.useWorktree && !options.cleanupHookExplicit) project = { ...project, cleanupHook: null };
-    if (project) await this.projects.upsert(project);
+    const setupHook = options.setupHookExplicit
+      ? (options.setupHook ? this.resolveHookPath(options.setupHook, workspace.rootPath) : null)
+      : options.useWorktree ? this.resolveStoredHook(workspace.setupScriptPath) : null;
+    const cleanupHook = options.cleanupHookExplicit
+      ? (options.cleanupHook ? this.resolveHookPath(options.cleanupHook, workspace.rootPath) : null)
+      : options.useWorktree ? this.resolveStoredHook(workspace.cleanupScriptPath) : null;
 
     const name = options.name ?? await this.generateName(workspace.id, backend);
     validateSessionName(name);
@@ -369,11 +341,8 @@ export class AgentCommand {
       workspaceName: workspace.name,
       ...worktree,
       useWorktree: options.useWorktree,
-      projectId: project?.id ?? null,
-      projectName: project?.name ?? null,
-      projectDirectory: project?.directory ?? null,
-      setupHook: project?.setupHook ?? null,
-      cleanupHook: project?.cleanupHook ?? null,
+      setupHook,
+      cleanupHook,
       setupOutputFile: null,
       cleanupOutputFile: null,
       backendSessionId: backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : null,
@@ -459,17 +428,6 @@ export class AgentCommand {
     return 0;
   }
 
-  private async listProjects(args: string[]): Promise<number> {
-    if (args.length && args[0] !== "--json") throw new AgentCommandError(`unknown project option: ${args[0]}`);
-    const projects = await this.projects.list();
-    if (args[0] === "--json") this.write(`${JSON.stringify(projects)}\n`);
-    else {
-      this.write("NAME\tDIRECTORY\tSETUP\tCLEANUP\n");
-      for (const project of projects) this.write(`${project.name}\t${project.directory}\t${project.setupHook ?? "-"}\t${project.cleanupHook ?? "-"}\n`);
-    }
-    return 0;
-  }
-
   private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
     const session = await this.locateSession(options.reference, options.global);
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
@@ -510,11 +468,9 @@ export class AgentCommand {
       status = 1;
     }
     const mise = commandPath("mise", this.env);
-    this.write(mise ? `mise: ${mise}\n` : "mise: unavailable (not required for project hooks)\n");
+    this.write(mise ? `mise: ${mise}\n` : "mise: unavailable (not required for workspace hooks)\n");
     if (options.verbose) {
       this.write(`database: ${this.databaseFile}\n`);
-      this.write(`projects root: ${this.projectsRoot}\n`);
-      this.write(`projects directory: ${existsSync(this.projectsRoot) ? "available" : "missing (project hooks will be skipped)"}\n`);
       this.write(`codex remote: ${this.defaultCodexRemote || "native local mode"}\n`);
       this.write("worktree root pattern: <workspace-parent>/<workspace-name>.worktrees/<session-name>\n");
     }
@@ -524,11 +480,15 @@ export class AgentCommand {
   private async resolveWorkspace(): Promise<WorkspaceContext> {
     const gitRoot = gitWorkspaceRoot(this.cwd);
     const root = gitRoot ?? this.cwd;
+    const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
+    const existing = await this.workspaces.findById(id);
     const context: WorkspaceContext = {
-      id: createHash("sha256").update(root).digest("hex").slice(0, 16),
+      id,
       rootPath: root,
       name: basename(root),
       isGit: Boolean(gitRoot),
+      setupScriptPath: existing?.setupScriptPath ?? null,
+      cleanupScriptPath: existing?.cleanupScriptPath ?? null,
       createdAt: timestamp(),
       updatedAt: timestamp(),
     };
@@ -536,34 +496,16 @@ export class AgentCommand {
     return context;
   }
 
-  private async resolveProject(workspace: WorkspaceContext, requested?: string): Promise<ProjectRecord | null> {
-    const name = requested ?? workspace.name;
-    validateProjectName(name);
-    const directory = join(this.projectsRoot, name);
-    if (!existsSync(directory)) {
-      if (requested) throw new AgentCommandError(`project definition not found: ${name} (${directory})`);
-      return null;
-    }
-    const projectDirectory = realpathSafe(directory);
-    const setupHook = projectHook(projectDirectory, "setup");
-    const cleanupHook = projectHook(projectDirectory, "cleanup");
-    return {
-      id: projectId(name),
-      name,
-      directory: projectDirectory,
-      setupHook,
-      cleanupHook,
-      createdAt: timestamp(),
-      updatedAt: timestamp(),
-    };
-  }
-
   private resolveHookPath(value: string, workspaceRoot: string): string {
     const path = realpathSafe(isAbsolute(value) ? value : join(workspaceRoot, value));
-    if (!existsSync(path)) throw new AgentCommandError(`project hook does not exist: ${value}`);
+    if (!existsSync(path)) throw new AgentCommandError(`workspace hook does not exist: ${value}`);
     accessSync(path, constants.X_OK);
-    if (!statSync(path).isFile()) throw new AgentCommandError(`project hook is not a file: ${path}`);
+    if (!statSync(path).isFile()) throw new AgentCommandError(`workspace hook is not a file: ${path}`);
     return path;
+  }
+
+  private resolveStoredHook(path: string | null): string | null {
+    return path ? this.resolveHookPath(path, this.cwd) : null;
   }
 
   private async generateName(workspaceId: string, backend: AgentBackend): Promise<string> {
@@ -600,14 +542,12 @@ export class AgentCommand {
       return false;
     }
     const outputFile = `${this.outputFileFor(session, kind)}.${randomUUID()}`;
-    this.info(`running project hook '${hook}' (${kind})`);
+    this.info(`running workspace hook '${hook}' (${kind})`);
     const args = [
       "--name", session.name,
       "--backend", session.backend,
       "--workspace", session.workspaceRoot,
       "--worktree", session.worktreePath ?? "",
-      "--project", session.projectName ?? "",
-      "--project-dir", session.projectDirectory ?? "",
       "--session-id", session.backendSessionId ?? "",
       "--state-id", session.id,
       "--resuming", session.resuming ? "1" : "0",
@@ -621,8 +561,6 @@ export class AgentCommand {
         AGENT_BACKEND: session.backend,
         AGENT_WORKSPACE: session.workspaceRoot,
         AGENT_WORKTREE: session.worktreePath ?? "",
-        AGENT_PROJECT_NAME: session.projectName ?? "",
-        AGENT_PROJECT_DIR: session.projectDirectory ?? "",
         AGENT_SESSION_ID: session.backendSessionId ?? "",
         AGENT_STATE_ID: session.id,
         AGENT_HOOK_KIND: kind,
@@ -907,7 +845,6 @@ export class AgentCommand {
     this.database = createAgentDatabase(this.databaseFile);
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
-    this.projects = new DrizzleProjectRepository(this.database.db);
   }
 
   private printUsage(): void {
@@ -916,7 +853,6 @@ export class AgentCommand {
   agent resume [--global] NAME [-- BACKEND_ARGS...]
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
-  agent project list [--json]
   agent doctor [--verbose]
   agent daemon start [--host HOST] [--port PORT]
 
@@ -925,11 +861,10 @@ Run options:
   -w, --worktree [NAME]    Create a managed worktree and agent/<name> branch.
       --no-worktree        Explicitly run in the current workspace.
       --worktree-root PATH Override the managed worktree parent directory.
-      --project NAME        Select a project definition.
-      --setup-hook PATH     Override the project setup hook.
-      --cleanup-hook PATH   Override the project cleanup hook.
-      --no-setup-hook       Disable the project setup hook.
-      --no-cleanup-hook     Disable the project cleanup hook.
+      --setup-hook PATH     Override the workspace setup hook.
+      --cleanup-hook PATH   Override the workspace cleanup hook.
+      --no-setup-hook       Disable the workspace setup hook.
+      --no-cleanup-hook     Disable the workspace cleanup hook.
       --codex-profile NAME  Codex profile (default: ${defaultCodexProfile}).
 `);
   }
@@ -994,7 +929,7 @@ function toSessionJson(session: AgentSessionRecord): Record<string, unknown> {
     status: session.status,
     workspace: session.workspaceRoot,
     workspace_id: session.workspaceId,
-    project: session.projectName,
+    workspace_name: session.workspaceName,
     worktree: session.worktreePath,
     branch: session.branch,
     session_id: session.backendSessionId,
@@ -1036,22 +971,6 @@ function requireOptionValue(option: string, value: string | undefined): string {
 
 function validateSessionName(name: string): void {
   if (!sessionNamePattern.test(name)) throw new AgentCommandError(`invalid session name '${name}'; use 1-64 letters, digits, '.', '_' or '-'`);
-}
-
-function validateProjectName(name: string): void {
-  if (!projectNamePattern.test(name)) throw new AgentCommandError(`invalid project name '${name}'; use 1-64 letters, digits, '.', '_' or '-'`);
-}
-
-function projectId(name: string): string {
-  return createHash("sha256").update(`project:${name}`).digest("hex").slice(0, 24);
-}
-
-function projectHook(directory: string, kind: "setup" | "cleanup"): string | null {
-  const path = join(directory, "agent", kind);
-  if (!existsSync(path)) return null;
-  if (!statSync(path).isFile()) throw new AgentCommandError(`project hook is not a file: ${path}`);
-  accessSync(path, constants.X_OK);
-  return realpathSafe(path);
 }
 
 function gitWorkspaceRoot(cwd: string): string | undefined {

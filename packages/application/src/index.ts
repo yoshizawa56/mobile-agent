@@ -2,7 +2,6 @@ import type {
   AgentSessionRecord,
   PaneId,
   PaneRecord,
-  ProjectRecord,
   RunRecord,
   RunState,
   WorkspaceRecord,
@@ -28,13 +27,9 @@ export interface RunRepository {
 
 export interface WorkspaceRepository {
   findById(id: string): Promise<WorkspaceRecord | undefined>;
+  list(): Promise<WorkspaceRecord[]>;
   upsert(record: WorkspaceRecord): Promise<void>;
-}
-
-export interface ProjectRepository {
-  findByName(name: string): Promise<ProjectRecord | undefined>;
-  list(): Promise<ProjectRecord[]>;
-  upsert(record: ProjectRecord): Promise<void>;
+  delete(id: string): Promise<void>;
 }
 
 export interface AgentSessionRepository {

@@ -1,7 +1,9 @@
 import type { NewSessionViewModel } from "./new-session-viewmodel";
+import { WorkspacePickerView } from "../workspace/workspace-picker-view";
+import { workspacePickerState } from "../workspace/workspace-picker-viewmodel";
 
 export function NewSessionView({ viewModel }: { viewModel: NewSessionViewModel }) {
-  const canCreate = viewModel.name.trim().length > 0 && viewModel.cwd.trim().length > 0;
+  const canCreate = viewModel.name.trim().length > 0 && workspacePickerState(viewModel.workspacePicker).canContinue;
 
   return (
     <main className="new-session-view">
@@ -22,11 +24,7 @@ export function NewSessionView({ viewModel }: { viewModel: NewSessionViewModel }
             <input value={viewModel.name} onChange={(event) => viewModel.onNameChange(event.target.value)} placeholder="mobile-agent" autoComplete="off" />
             <small>Use a short name you can recognize on every device.</small>
           </label>
-          <label className="new-session-field">
-            <span>PROJECT DIRECTORY</span>
-            <input value={viewModel.cwd} onChange={(event) => viewModel.onCwdChange(event.target.value)} placeholder="~/work/project" autoComplete="off" />
-            <small>The first pane starts as a normal shell in this directory.</small>
-          </label>
+          <WorkspacePickerView viewModel={viewModel.workspacePicker} showMode={false} />
           <div className="new-session-agent-note"><span>⌁</span><span><strong>Shell first</strong><small>Create agent panes from the session overview when you need them.</small></span></div>
           {viewModel.errorMessage ? <p className="new-session-error" role="alert">{viewModel.errorMessage}</p> : null}
           <button className="connection-flow-primary" type="submit" disabled={!canCreate || viewModel.isCreating}>{viewModel.isCreating ? "Creating session…" : "Create session"}<span>{viewModel.isCreating ? "…" : "→"}</span></button>

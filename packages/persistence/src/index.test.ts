@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
-  DrizzleProjectRepository,
   DrizzleRunRepository,
   DrizzleWorkspaceRepository,
   createAgentDatabase,
   recordAuditEvent,
 } from "./index.js";
-import type { AgentSessionRecord, PaneRecord, ProjectRecord, RunRecord, WorkspaceRecord } from "@mobile-agent/domain";
+import type { AgentSessionRecord, PaneRecord, RunRecord, WorkspaceRecord } from "@mobile-agent/domain";
 
 const pane: PaneRecord = {
   id: "pane-1",
@@ -18,7 +17,6 @@ const pane: PaneRecord = {
   kind: "agent",
   name: "review",
   cwd: "/work/repo",
-  projectId: "project-1",
   workspaceId: "workspace-1",
   agentId: "codex",
   runId: "run-1",
@@ -42,16 +40,8 @@ const workspace: WorkspaceRecord = {
   rootPath: "/work/repo",
   name: "repo",
   isGit: true,
-  createdAt: "2026-08-09T00:00:00.000Z",
-  updatedAt: "2026-08-09T00:00:00.000Z",
-};
-
-const project: ProjectRecord = {
-  id: "project-1",
-  name: "repo",
-  directory: "/config/projects/repo",
-  setupHook: "/config/projects/repo/agent/setup",
-  cleanupHook: "/config/projects/repo/agent/cleanup",
+  setupScriptPath: "/config/hooks/setup",
+  cleanupScriptPath: "/config/hooks/cleanup",
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
 };
@@ -69,11 +59,8 @@ const session: AgentSessionRecord = {
   branch: "agent/review",
   baseCommit: "abc123",
   useWorktree: true,
-  projectId: "project-1",
-  projectName: "repo",
-  projectDirectory: "/config/projects/repo",
-  setupHook: project.setupHook,
-  cleanupHook: project.cleanupHook,
+  setupHook: workspace.setupScriptPath,
+  cleanupHook: workspace.cleanupScriptPath,
   setupOutputFile: "/state/setup.log",
   cleanupOutputFile: null,
   backendSessionId: "codex-session",
@@ -95,12 +82,10 @@ describe("sqlite persistence", () => {
       const panes = new DrizzlePaneRepository(database.db);
       const runs = new DrizzleRunRepository(database.db);
       const workspaces = new DrizzleWorkspaceRepository(database.db);
-      const projects = new DrizzleProjectRepository(database.db);
       const sessions = new DrizzleAgentSessionRepository(database.db);
       await panes.upsert(pane);
       await runs.upsert(run);
       await workspaces.upsert(workspace);
-      await projects.upsert(project);
       await sessions.insert(session);
       recordAuditEvent(database.db, {
         eventType: "run.waiting",
@@ -117,13 +102,8 @@ describe("sqlite persistence", () => {
         rootPath: workspace.rootPath,
         name: workspace.name,
         isGit: workspace.isGit,
-      });
-      await expect(projects.findByName(project.name)).resolves.toMatchObject({
-        id: project.id,
-        name: project.name,
-        directory: project.directory,
-        setupHook: project.setupHook,
-        cleanupHook: project.cleanupHook,
+        setupScriptPath: workspace.setupScriptPath,
+        cleanupScriptPath: workspace.cleanupScriptPath,
       });
       await expect(sessions.findByName(workspace.id, session.name)).resolves.toMatchObject({
         id: session.id,

@@ -1,6 +1,7 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { spawn } from "node:child_process";
 import net from "node:net";
+import { resolve } from "node:path";
 
 const agentdHost = process.env.AGENTD_HOST ?? "127.0.0.1";
 const agentdPort = readPort("AGENTD_PORT", 4317);
@@ -21,7 +22,9 @@ const baseEnvironment = {
 
 const agentd = startService(
   "agentd",
-  ["--filter", "@mobile-agent/agentd", "dev"],
+  "bun",
+  ["--watch", "src/index.ts"],
+  resolve(repoRoot, "apps/agentd"),
   {
     ...baseEnvironment,
     AGENTD_HOST: agentdHost,
@@ -38,7 +41,9 @@ try {
 
 startService(
   "web",
-  ["--filter", "@mobile-agent/web", "dev"],
+  "node",
+  ["./node_modules/vite/bin/vite.js"],
+  resolve(repoRoot, "apps/web"),
   {
     ...baseEnvironment,
     VITE_DEV_HOST: webHost,
@@ -47,9 +52,9 @@ startService(
   },
 );
 
-function startService(name, args, environment) {
-  const child = spawn("pnpm", args, {
-    cwd: repoRoot,
+function startService(name, command, args, cwd, environment) {
+  const child = spawn(command, args, {
+    cwd,
     env: environment,
     stdio: "inherit",
   });

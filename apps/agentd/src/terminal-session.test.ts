@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import type { IPty } from "node-pty";
 import { clientControlMessageSchema, serverControlMessageSchema, terminalProtocolVersion } from "@mobile-agent/protocol";
+import type { PtyProcess } from "./pty.js";
 import {
   TerminalSession,
   TerminalSessionRegistry,
@@ -131,7 +131,7 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}) {
     }),
     tmux: { attachArgs: vi.fn(() => ["attach-session", "-t", "agentd"]) },
   };
-  const spawn = vi.fn(() => pty.asIPty());
+  const spawn = vi.fn(() => pty.asPty());
   const registry = new TerminalSessionRegistry();
   const options: TerminalSessionOptions = {
     cwd: "/tmp",
@@ -234,7 +234,7 @@ class FakePty {
     this.dataHandler?.(data);
   }
 
-  public asIPty(): IPty {
-    return this as unknown as IPty;
+  public asPty(): PtyProcess {
+    return this as unknown as PtyProcess;
   }
 }

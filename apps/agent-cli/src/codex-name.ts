@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { manageCodexThread } from "./codex-remote.js";
 
 const args = process.argv.slice(2);

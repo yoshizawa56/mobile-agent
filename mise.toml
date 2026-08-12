@@ -1,12 +1,26 @@
 [tools]
+bun = "1.3.14"
 node = "24.19.0"
-pnpm = "11.21.0"
 tmux = "3.7b"
 
 [tasks.install]
 description = "Install the locked workspace dependencies"
-run = "pnpm install --frozen-lockfile"
+run = "bun install --frozen-lockfile"
+
+[tasks.dev]
+description = "Start the health-checked local agentd and web development stack"
+run = "bun dev"
+
+[tasks.dev-serve]
+description = "Expose an already-running web dev server through an existing Tailscale CLI"
+run = """
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo "tailscale CLI not found; install and configure Tailscale separately, then rerun 'mise run dev-serve'." >&2
+  exit 1
+fi
+tailscale serve --bg --https="${TAILSCALE_DEV_PORT:-8449}" "${VITE_DEV_PORT:-5227}"
+"""
 
 [tasks.check]
 description = "Run the public-repository audit and project checks"
-run = "pnpm audit:public && pnpm typecheck && pnpm test && pnpm build"
+run = "bun run audit:public && bun run typecheck && bun run test && bun run build"

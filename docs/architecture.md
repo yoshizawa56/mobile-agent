@@ -12,7 +12,7 @@ The primary goal is to let a phone operate an existing desktop tmux environment 
 
 - list and select agents and shells by pane;
 - display one pane in a mobile-sized terminal;
-- inspect the agent name, project, worktree, and state;
+- inspect the agent name, workspace, worktree, and state;
 - find panes waiting for input or approval;
 - send input, resize, and stop a pane;
 - notify the user about waiting-state transitions through notifications and Live Activity;
@@ -89,7 +89,7 @@ Configuration that overrides an existing plugin command, environment, detection 
 
 ### Workspace
 
-The working directory for a project. This includes a regular checkout, a git worktree, or another managed work environment.
+A host directory explicitly registered with agentd. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths; a generated git worktree is an execution directory derived from that workspace.
 
 ### Separating Pane and Run
 
@@ -99,7 +99,7 @@ tmux panes are long-lived, while Runs are replaced within a pane. Therefore a pa
 Pane
   id: mobile-pane-uuid
   tmuxPaneId: tmux-pane-id
-  session: project
+  session: workspace
   window: 0
   currentRunId: run-uuid
 
@@ -108,7 +108,6 @@ Run
   kind: agent | shell
   agentId: codex | claude | custom | null
   name: string
-  projectId: string | null
   workspaceId: string | null
   state: starting | running | waiting_input | waiting_approval |
          completed | failed | shell | unknown
@@ -124,7 +123,6 @@ tmux pane identifiers can change after a pane is recreated or moved, so mobilePa
 @agentd.kind
 @agentd.run_id
 @agentd.agent_id
-@agentd.project_id
 @agentd.workspace_id
 @agentd.profile_id
 ~~~
@@ -177,7 +175,7 @@ packages/
   persistence/            # SQLite and Drizzle
   tmux/                   # tmux Control Mode adapter
   agents/                 # AgentPlugin API and built-in plugins
-  workspaces/             # project and worktree adapters
+  workspaces/             # workspace and worktree adapters
   notifications/          # NotificationPort implementations
   tailscale/               # Serve, identity, and bootstrap helpers
   config/                 # configuration loading and validation
@@ -377,7 +375,7 @@ Profiles change an existing agent's behavior without writing code:
 
 - launch command, arguments, and cwd;
 - environment variables;
-- project and worktree selection;
+- workspace and worktree selection;
 - state-detection rules;
 - notification states;
 - initial input;
@@ -586,6 +584,9 @@ The current AgentdApp exposes:
 GET  /health
 GET  /api/capabilities
 GET  /api/terminals
+GET  /api/workspaces
+GET  /api/workspace-directories?path=<host-directory>
+POST /api/workspaces              # register a directory and optional hook paths
 GET  /api/sessions
 POST /api/sessions              # create a tmux session
 GET  /api/panes?session=<name>
@@ -605,17 +606,11 @@ agentd currently discovers changes with a short tmux reconciliation poll. This
 also observes panes created directly from a desktop tmux client, without
 requiring that client to use the Mobile Agent CLI.
 
-POST /api/panes validates cwd existence, session existence, and agent/agentId consistency on the agentd side. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
+POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 
 ### Workspace directory picker
 
-Rather than making a mobile user type arbitrary host absolute paths, select workspace directories below workspace roots managed by agentd. Candidates are provided in this order:
-
-- recently used workspaces, favorites, and the current session cwd;
-- git repository roots and directories below them;
-- directories below roots allowed by AGENTD_WORKSPACE_ROOTS or SQLite.
-
-The API returns workspace and directory IDs instead of raw path strings. agentd resolves the path with realpath and verifies that it remains below an allowed root. The UI has Recent, Git Projects, and Browse folders stages, with search and breadcrumbs for deeper directories. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
+Rather than auto-selecting every directory below a host root, the UI first browses directories allowed by agentd and explicitly registers the selected directory. `GET /api/workspaces` returns only registered workspaces; `GET /api/workspace-directories` exposes browse candidates. Registration also stores optional executable setup and cleanup script paths on the workspace. Hook paths are resolved on the host and may live outside the repository, while the hook process runs with the generated worktree as cwd. The API returns stable workspace IDs; agentd resolves the path with realpath and verifies that it remains below an allowed root. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
 
 ## 10. Persistence
 
@@ -624,7 +619,6 @@ Use SQLite and Drizzle for host-side persistence.
 ### Main tables
 
 ~~~text
-projects
 workspaces
 panes
 runs
@@ -639,7 +633,7 @@ audit_events
 
 ### Storage policy
 
-- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; workspace and project definitions belong to workspaces and projects.
+- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; registered workspace directories and their personal hook paths belong to workspaces.
 - Persist important state transitions as an event history.
 - Do not store every terminal output byte by default.
 - Store only the latest capture or a short ring buffer when needed.
@@ -666,7 +660,7 @@ React Native remains an option if terminal rendering or iOS-specific UI must be 
 
 1. Pane Board
    - pane list;
-   - agent name, Run name, project, and worktree;
+   - agent name, Run name, workspace, and worktree;
    - running, waiting_input, waiting_approval, and failed states.
 2. Pane Picker Overlay
    - simplified representation of the original tmux layout;
@@ -679,7 +673,7 @@ React Native remains an option if terminal rendering or iOS-specific UI must be 
 4. Open Pane
    - agent or shell;
    - name;
-   - project;
+   - workspace;
    - whether and how to create a worktree;
    - profile;
    - new window, right split, or bottom split;
@@ -807,7 +801,7 @@ Example notification states:
 - completed, when enabled by the user;
 - host or agentd disconnected.
 
-Deduplicate notifications by runId and transitionId. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, project name, and reason.
+Deduplicate notifications by runId and transitionId. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, workspace name, and reason.
 
 ## 14. Desktop experience
 
@@ -827,7 +821,7 @@ Do not build a desktop native app initially. Combine:
 agent tui
 agent pane list
 agent pane focus --waiting
-agent pane open --agent codex --project mobile-agent --worktree auto
+agent pane open --agent codex --worktree auto
 agent config edit
 agent plugin list
 agent workspace list
@@ -857,11 +851,10 @@ agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
 agent resume [--global] NAME [-- BACKEND_ARGS...]
 agent list [--global] [--names|--json]
 agent cleanup [--global] [--force] NAME
-agent project list [--json]
 agent doctor [--verbose]
 ~~~
 
-run associates the worktree, project hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --no-worktree, implicit project hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
+run associates the worktree, workspace hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --no-worktree, stored workspace hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
 
 The following commands are planned as agentd and TUI extensions:
 
@@ -874,16 +867,15 @@ agent mobile serve --stdio
 agent mobile status
 
 agent pane list
-agent pane open --agent codex --name review --project repo --worktree auto
-agent pane open --shell --project repo
+agent pane open --agent codex --name review --worktree auto
+agent pane open --shell
 agent pane focus <pane-id>
 agent pane send <pane-id> --text 'continue'
 agent pane resize <pane-id> --cols 120 --rows 40
 agent pane close <pane-id>
 
-agent project list
 agent workspace list
-agent workspace create
+agent workspace register
 
 agent agent list
 agent profile list

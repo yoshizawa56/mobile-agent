@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion } from "./index.js";
+import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, createSessionRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion, workspaceSelectionSchema } from "./index.js";
 
 type TableCase = {
   name: string;
@@ -137,7 +137,6 @@ describe("pane board protocol", () => {
           kind: "shell",
           name: "shell",
           cwd: "/tmp",
-          projectId: null,
           workspaceId: null,
           agentId: null,
           runId: null,
@@ -175,9 +174,46 @@ describe("pane creation protocol", () => {
       cwd: "/tmp",
       agentId: null,
       useWorktree: false,
-      projectName: null,
       ...input,
     });
     expect(result.success).toBe(valid);
+  });
+});
+
+describe("workspace selection protocol", () => {
+  it.each([
+    {
+      name: "accepts a direct workspace selection",
+      input: { workspaceId: "workspace-1", mode: "workspace" },
+      valid: true,
+    },
+    {
+      name: "accepts a workspace worktree selection",
+      input: { workspaceId: "workspace-1", mode: "worktree" },
+      valid: true,
+    },
+  ])("$name", ({ input, valid }) => {
+    expect(workspaceSelectionSchema.safeParse(input).success).toBe(valid);
+  });
+
+  it.each([
+    { name: "accepts the selected workspace for a new session", input: { name: "review", workspaceId: "workspace-1" }, valid: true },
+    { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/mobile-agent" }, valid: true },
+    { name: "rejects a session without a workspace selection", input: { name: "review" }, valid: false },
+  ])("$name", ({ input, valid }) => {
+    expect(createSessionRequestSchema.safeParse(input).success).toBe(valid);
+  });
+
+  it("accepts a pane request that selects a workspace by id", () => {
+    expect(createPaneRequestSchema.safeParse({
+      sessionName: "agentd",
+      kind: "agent",
+      name: "review",
+      workspaceId: "workspace-1",
+      agentId: "codex",
+      useWorktree: true,
+      placement: "window",
+      targetPaneId: null,
+    }).success).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary } from "@mobile-agent/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@mobile-agent/protocol";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TmuxSession } from "../connection/connection-flow-viewmodel";
@@ -24,10 +24,12 @@ import { DisconnectedView } from "../../routes/terminals/$terminalId/sessions/$s
 import type { DisconnectedViewModel } from "../../routes/terminals/$terminalId/sessions/$sessionName/disconnected/-disconnected-viewmodel";
 import { EndedView } from "../../routes/terminals/$terminalId/sessions/$sessionName/ended/-ended-view";
 import type { EndedViewModel } from "../../routes/terminals/$terminalId/sessions/$sessionName/ended/-ended-viewmodel";
+import type { WorkspacePickerStatus, WorkspaceSelectionMode } from "../workspace/workspace-picker-viewmodel";
 
 type ProductStage = ConnectionFlowStage | "new-session" | "new-pane" | "session-overview" | "control-room";
+type WorkspaceStoryState = "ready" | "loading" | "error" | "empty";
 
-function MobileExperience({ initialStage = "terminals", initialTerminalId = null, initialSessionName = null, initialPaneId = null, initialMapOpen = false, initialNewSession = false, autoAdvance = true }: { initialStage?: ProductStage; initialTerminalId?: string | null; initialSessionName?: string | null; initialPaneId?: string | null; initialMapOpen?: boolean; initialNewSession?: boolean; autoAdvance?: boolean }) {
+function MobileExperience({ initialStage = "terminals", initialTerminalId = null, initialSessionName = null, initialPaneId = null, initialMapOpen = false, initialNewSession = false, initialWorkspaceState = "ready", initialSelectionMode = "workspace", autoAdvance = true }: { initialStage?: ProductStage; initialTerminalId?: string | null; initialSessionName?: string | null; initialPaneId?: string | null; initialMapOpen?: boolean; initialNewSession?: boolean; initialWorkspaceState?: WorkspaceStoryState; initialSelectionMode?: WorkspaceSelectionMode; autoAdvance?: boolean }) {
   const [stage, setStage] = useState<ProductStage>(initialNewSession ? "new-session" : initialStage);
   const [terminalId, setTerminalId] = useState<string | null>(initialTerminalId);
   const [sessionName, setSessionName] = useState<string | null>(initialSessionName);
@@ -36,17 +38,33 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const [connectionStep, setConnectionStep] = useState(initialStage === "connecting" ? 2 : 0);
   const [newSession, setNewSession] = useState<TmuxSession | null>(null);
   const [newSessionName, setNewSessionName] = useState("design-lab");
-  const [newSessionCwd, setNewSessionCwd] = useState("~/work/mobile-agent");
+  const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState("workspace-mobile-agent");
   const [settingsName, setSettingsName] = useState("MacBook Air");
   const [settingsUrl, setSettingsUrl] = useState("https://macbook-air.tailnet.ts.net");
   const [newPaneName, setNewPaneName] = useState("review");
-  const [newPaneCwd, setNewPaneCwd] = useState("~/work/mobile-agent");
+  const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("workspace-mobile-agent");
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
-  const [newPaneWorktree, setNewPaneWorktree] = useState(false);
-  const [newPaneProject, setNewPaneProject] = useState("mobile-agent");
+  const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>(initialSelectionMode);
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("right");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>("%0");
+
+  const storyWorkspaces: WorkspaceDirectory[] = initialWorkspaceState === "empty" ? [] : [{
+    id: "workspace-mobile-agent",
+    name: "mobile-agent",
+    directory: "~/work/mobile-agent",
+    isGit: true,
+    setupScriptPath: "~/.config/agent/setup",
+    cleanupScriptPath: "~/.config/agent/cleanup",
+  }, {
+    id: "workspace-scratch",
+    name: "scratch",
+    directory: "~/tmp/scratch",
+    isGit: false,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
+  }];
+  const pickerStatus: WorkspacePickerStatus = initialWorkspaceState === "loading" ? "loading" : initialWorkspaceState === "error" ? "error" : "ready";
 
   const selectedTerminal = mockTerminals.find((terminal) => terminal.id === terminalId) ?? mockTerminals[0];
   const selectedSession = newSession?.name === sessionName ? newSession : mockSessions.find((session) => session.name === sessionName) ?? null;
@@ -61,7 +79,6 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       windowId: "@4",
       name: `${newSession.name} shell`,
       cwd: newSession.cwd,
-      projectId: newSession.project,
       state: "running" as const,
       title: "zsh",
     }];
@@ -140,40 +157,91 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     terminal: selectedTerminal,
     session: selectedSession ?? mockSessions[0],
     name: newPaneName,
-    cwd: newPaneCwd,
+    workspacePicker: {
+      workspaces: storyWorkspaces,
+      workspaceCandidates: storyWorkspaces,
+      workspaceId: newPaneWorkspaceId,
+      mode: newPaneSelectionMode,
+      workspaceStatus: pickerStatus,
+      browserStatus: pickerStatus,
+      browserPath: null,
+      registrationOpen: false,
+      registrationDirectory: "",
+      setupScriptPath: "",
+      cleanupScriptPath: "",
+      isRegisteringWorkspace: false,
+      registrationError: null,
+      errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
+      onWorkspaceChange: setNewPaneWorkspaceId,
+      onModeChange: (mode: WorkspaceSelectionMode) => {
+        setNewPaneSelectionMode(mode);
+      },
+      onOpenRegistration: () => undefined,
+      onCloseRegistration: () => undefined,
+      onBrowseWorkspace: () => undefined,
+      onSelectWorkspaceDirectory: () => undefined,
+      onRegistrationDirectoryChange: () => undefined,
+      onSetupScriptPathChange: () => undefined,
+      onCleanupScriptPathChange: () => undefined,
+      onRegisterWorkspace: () => undefined,
+    },
     kind: newPaneKind,
     agentId: newPaneAgent,
-    useWorktree: newPaneWorktree,
-    projectName: newPaneProject,
     existingPanes: sessionPanes,
     placement: newPanePlacement,
     targetPaneId: newPaneTargetPaneId,
     isCreating: false,
     errorMessage: null,
     onNameChange: setNewPaneName,
-    onCwdChange: setNewPaneCwd,
-    onKindChange: setNewPaneKind,
+    onKindChange: (kind: NewPaneKind) => {
+      setNewPaneKind(kind);
+      if (kind === "shell") setNewPaneSelectionMode("workspace");
+    },
     onAgentChange: setNewPaneAgent,
-    onUseWorktreeChange: setNewPaneWorktree,
-    onProjectNameChange: setNewPaneProject,
     onPlacementChange: setNewPanePlacement,
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => setStage("session-overview"),
     onBack: () => setStage("session-overview"),
-  }), [newPaneAgent, newPaneCwd, newPaneKind, newPaneName, newPanePlacement, newPaneProject, newPaneTargetPaneId, newPaneWorktree, selectedSession, selectedTerminal, sessionPanes]);
+  }), [initialWorkspaceState, newPaneAgent, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, pickerStatus, selectedSession, selectedTerminal, sessionPanes, storyWorkspaces]);
 
   const newSessionViewModel = useMemo<NewSessionViewModel>(() => ({
     terminal: selectedTerminal,
     name: newSessionName,
-    cwd: newSessionCwd,
+    workspacePicker: {
+      workspaces: storyWorkspaces,
+      workspaceCandidates: storyWorkspaces,
+      workspaceId: newSessionWorkspaceId,
+      mode: "workspace",
+      workspaceStatus: pickerStatus,
+      browserStatus: pickerStatus,
+      browserPath: null,
+      registrationOpen: false,
+      registrationDirectory: "",
+      setupScriptPath: "",
+      cleanupScriptPath: "",
+      isRegisteringWorkspace: false,
+      registrationError: null,
+      errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
+      onWorkspaceChange: setNewSessionWorkspaceId,
+      onModeChange: () => undefined,
+      onOpenRegistration: () => undefined,
+      onCloseRegistration: () => undefined,
+      onBrowseWorkspace: () => undefined,
+      onSelectWorkspaceDirectory: () => undefined,
+      onRegistrationDirectoryChange: () => undefined,
+      onSetupScriptPathChange: () => undefined,
+      onCleanupScriptPathChange: () => undefined,
+      onRegisterWorkspace: () => undefined,
+    },
     onNameChange: setNewSessionName,
-    onCwdChange: setNewSessionCwd,
     onBack: () => setStage("sessions"),
     onCreate: () => {
+      const workspace = storyWorkspaces.find((candidate) => candidate.id === newSessionWorkspaceId) ?? storyWorkspaces[0];
+      if (!workspace) return;
       const created: TmuxSession = {
         name: newSessionName.trim(),
-        project: newSessionName.trim(),
-        cwd: newSessionCwd.trim(),
+        workspace: workspace.name,
+        cwd: workspace.directory,
         paneCount: 1,
         waitingCount: 0,
         detail: "1 shell · new",
@@ -184,7 +252,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       setSelectedPaneId(null);
       setStage("session-overview");
     },
-  }), [newSessionCwd, newSessionName, selectedTerminal]);
+  }), [initialWorkspaceState, newSessionName, newSessionWorkspaceId, pickerStatus, selectedTerminal, storyWorkspaces]);
 
   const sessionPaneBoard = useMemo<PaneBoardViewModel>(() => ({
     isOpen: mapOpen,
@@ -274,6 +342,26 @@ export const SessionPicker: Story = {
 export const NewSession: Story = {
   name: "Setup / new session",
   render: () => <MobileExperience initialNewSession initialTerminalId="macbook-air" />,
+};
+
+export const WorkspaceDirectoryLoading: Story = {
+  name: "Setup / workspace directories loading",
+  render: () => <MobileExperience initialNewSession initialTerminalId="macbook-air" initialWorkspaceState="loading" />,
+};
+
+export const WorkspaceDirectoryError: Story = {
+  name: "Setup / workspace directory error",
+  render: () => <MobileExperience initialNewSession initialTerminalId="macbook-air" initialWorkspaceState="error" />,
+};
+
+export const EmptyAllowedWorkspaceDirectories: Story = {
+  name: "Setup / no registered workspaces",
+  render: () => <MobileExperience initialNewSession initialTerminalId="macbook-air" initialWorkspaceState="empty" />,
+};
+
+export const WorkspaceWorktreePicker: Story = {
+  name: "Session / workspace worktree picker",
+  render: () => <MobileExperience initialStage="new-pane" initialTerminalId="macbook-air" initialSelectionMode="worktree" />,
 };
 
 export const Attaching: Story = {

@@ -8,14 +8,12 @@ import type {
   AgentSessionRepository,
   PaneFilter,
   PaneRepository,
-  ProjectRepository,
   RunRepository,
   WorkspaceRepository,
 } from "@mobile-agent/application";
 import type {
   AgentSessionRecord,
   PaneRecord,
-  ProjectRecord,
   RunRecord,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
@@ -23,17 +21,15 @@ import {
   agentSessions,
   auditEvents,
   panes,
-  projects,
   runs,
   workspaces,
   type AgentSessionRow,
   type PaneRow,
-  type ProjectRow,
   type RunRow,
   type WorkspaceRow,
 } from "./schema.js";
 
-export { agentSessions, auditEvents, panes, projects, runs, workspaces } from "./schema.js";
+export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
 
 export type BetterSqliteDatabase = ReturnType<typeof Database>;
 export type AgentDatabase = {
@@ -146,6 +142,10 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
     return row ? toWorkspaceRecord(row) : undefined;
   }
 
+  public async list(): Promise<WorkspaceRecord[]> {
+    return this.database.select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspaceRecord);
+  }
+
   public async upsert(record: WorkspaceRecord): Promise<void> {
     const now = new Date().toISOString();
     this.database
@@ -157,41 +157,16 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
           rootPath: record.rootPath,
           name: record.name,
           isGit: record.isGit,
+          setupScriptPath: record.setupScriptPath,
+          cleanupScriptPath: record.cleanupScriptPath,
           updatedAt: now,
         },
       })
       .run();
   }
-}
 
-export class DrizzleProjectRepository implements ProjectRepository {
-  public constructor(private readonly database: AgentDatabase["db"]) {}
-
-  public async findByName(name: string): Promise<ProjectRecord | undefined> {
-    const row = this.database.select().from(projects).where(eq(projects.name, name)).get();
-    return row ? toProjectRecord(row) : undefined;
-  }
-
-  public async list(): Promise<ProjectRecord[]> {
-    return this.database.select().from(projects).orderBy(asc(projects.name)).all().map(toProjectRecord);
-  }
-
-  public async upsert(record: ProjectRecord): Promise<void> {
-    const now = new Date().toISOString();
-    this.database
-      .insert(projects)
-      .values(toProjectRow(record, now))
-      .onConflictDoUpdate({
-        target: projects.name,
-        set: {
-          name: record.name,
-          directory: record.directory,
-          setupHook: record.setupHook,
-          cleanupHook: record.cleanupHook,
-          updatedAt: now,
-        },
-      })
-      .run();
+  public async delete(id: string): Promise<void> {
+    this.database.delete(workspaces).where(eq(workspaces.id, id)).run();
   }
 }
 
@@ -240,9 +215,6 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
         branch: record.branch,
         baseCommit: record.baseCommit,
         useWorktree: record.useWorktree,
-        projectId: record.projectId,
-        projectName: record.projectName,
-        projectDirectory: record.projectDirectory,
         setupHook: record.setupHook,
         cleanupHook: record.cleanupHook,
         setupOutputFile: record.setupOutputFile,
@@ -291,7 +263,6 @@ function ensureSchema(sqlite: BetterSqliteDatabase): void {
       kind TEXT NOT NULL,
       name TEXT NOT NULL,
       cwd TEXT NOT NULL,
-      project_id TEXT,
       workspace_id TEXT,
       agent_id TEXT,
       run_id TEXT,
@@ -325,19 +296,11 @@ function ensureSchema(sqlite: BetterSqliteDatabase): void {
       root_path TEXT NOT NULL,
       name TEXT NOT NULL,
       is_git INTEGER NOT NULL,
+      setup_script_path TEXT,
+      cleanup_script_path TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY NOT NULL,
-      name TEXT NOT NULL,
-      directory TEXT NOT NULL,
-      setup_hook TEXT,
-      cleanup_hook TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS projects_name_index ON projects (name);
     CREATE TABLE IF NOT EXISTS agent_sessions (
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
@@ -351,9 +314,6 @@ function ensureSchema(sqlite: BetterSqliteDatabase): void {
       branch TEXT,
       base_commit TEXT,
       use_worktree INTEGER NOT NULL,
-      project_id TEXT,
-      project_name TEXT,
-      project_directory TEXT,
       setup_hook TEXT,
       cleanup_hook TEXT,
       setup_output_file TEXT,
@@ -372,6 +332,13 @@ function ensureSchema(sqlite: BetterSqliteDatabase): void {
     CREATE UNIQUE INDEX IF NOT EXISTS agent_sessions_workspace_name_index ON agent_sessions (workspace_id, name);
     CREATE INDEX IF NOT EXISTS agent_sessions_workspace_index ON agent_sessions (workspace_id);
   `);
+  ensureColumn(sqlite, "workspaces", "setup_script_path", "TEXT");
+  ensureColumn(sqlite, "workspaces", "cleanup_script_path", "TEXT");
+}
+
+function ensureColumn(sqlite: BetterSqliteDatabase, table: string, column: string, definition: string): void {
+  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((entry) => entry.name === column)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function joinHomeStatePath(env: NodeJS.ProcessEnv): string {
@@ -388,7 +355,6 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
     kind: record.kind,
     name: record.name,
     cwd: record.cwd,
-    projectId: record.projectId,
     workspaceId: record.workspaceId,
     agentId: record.agentId,
     runId: record.runId,
@@ -409,7 +375,6 @@ function toPaneRecord(row: PaneRow): PaneRecord {
     kind: row.kind,
     name: row.name,
     cwd: row.cwd,
-    projectId: row.projectId,
     workspaceId: row.workspaceId,
     agentId: row.agentId,
     runId: row.runId,
@@ -437,6 +402,8 @@ function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces
     rootPath: record.rootPath,
     name: record.name,
     isGit: record.isGit,
+    setupScriptPath: record.setupScriptPath,
+    cleanupScriptPath: record.cleanupScriptPath,
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -448,30 +415,8 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     rootPath: row.rootPath,
     name: row.name,
     isGit: row.isGit,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
-}
-
-function toProjectRow(record: ProjectRecord, now: string): typeof projects.$inferInsert {
-  return {
-    id: record.id,
-    name: record.name,
-    directory: record.directory,
-    setupHook: record.setupHook,
-    cleanupHook: record.cleanupHook,
-    createdAt: record.createdAt || now,
-    updatedAt: now,
-  };
-}
-
-function toProjectRecord(row: ProjectRow): ProjectRecord {
-  return {
-    id: row.id,
-    name: row.name,
-    directory: row.directory,
-    setupHook: row.setupHook,
-    cleanupHook: row.cleanupHook,
+    setupScriptPath: row.setupScriptPath,
+    cleanupScriptPath: row.cleanupScriptPath,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -491,9 +436,6 @@ function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agen
     branch: record.branch,
     baseCommit: record.baseCommit,
     useWorktree: record.useWorktree,
-    projectId: record.projectId,
-    projectName: record.projectName,
-    projectDirectory: record.projectDirectory,
     setupHook: record.setupHook,
     cleanupHook: record.cleanupHook,
     setupOutputFile: record.setupOutputFile,
@@ -525,9 +467,6 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     branch: row.branch,
     baseCommit: row.baseCommit,
     useWorktree: row.useWorktree,
-    projectId: row.projectId,
-    projectName: row.projectName,
-    projectDirectory: row.projectDirectory,
     setupHook: row.setupHook,
     cleanupHook: row.cleanupHook,
     setupOutputFile: row.setupOutputFile,

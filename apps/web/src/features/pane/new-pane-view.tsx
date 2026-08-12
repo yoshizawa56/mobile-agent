@@ -1,9 +1,10 @@
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./new-pane-viewmodel";
+import { WorkspacePickerView } from "../workspace/workspace-picker-view";
+import { workspacePickerState } from "../workspace/workspace-picker-viewmodel";
 
 export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
   const canCreate = viewModel.name.trim().length > 0
-    && viewModel.cwd.trim().length > 0
-    && (!viewModel.useWorktree || viewModel.projectName.trim().length > 0)
+    && workspacePickerState(viewModel.workspacePicker).canContinue
     && (viewModel.placement === "window" || Boolean(viewModel.targetPaneId));
 
   return (
@@ -77,22 +78,10 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                   <option value="claude">Claude</option>
                 </select>
               </label>
-              <label className="new-pane-toggle">
-                <input type="checkbox" checked={viewModel.useWorktree} onChange={(event) => viewModel.onUseWorktreeChange(event.target.checked)} />
-                <span><strong>Use a worktree</strong><small>Let the agent command create an isolated branch workspace.</small></span>
-              </label>
-              {viewModel.useWorktree ? <label className="new-session-field">
-                <span>PROJECT NAME</span>
-                <input value={viewModel.projectName} onChange={(event) => viewModel.onProjectNameChange(event.target.value)} placeholder="mobile-agent" autoComplete="off" />
-                <small>Used by the host-side agent project configuration.</small>
-              </label> : null}
             </>
           ) : null}
 
-          <label className="new-session-field">
-            <span>WORKING DIRECTORY</span>
-            <input value={viewModel.cwd} onChange={(event) => viewModel.onCwdChange(event.target.value)} placeholder="~/work/project" autoComplete="off" />
-          </label>
+          <WorkspacePickerView viewModel={viewModel.workspacePicker} showMode={viewModel.kind === "agent"} />
           {viewModel.errorMessage ? <p className="new-session-error" role="alert">{viewModel.errorMessage}</p> : null}
           <button className="connection-flow-primary" type="submit" disabled={!canCreate || viewModel.isCreating}>{viewModel.isCreating ? "Opening pane…" : "Open pane"}<span>{viewModel.isCreating ? "…" : "→"}</span></button>
         </form>

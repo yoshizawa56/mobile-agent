@@ -10,7 +10,6 @@ const pane: PaneRecord = {
   kind: "shell",
   name: "shell",
   cwd: "/tmp",
-  projectId: null,
   workspaceId: null,
   agentId: null,
   runId: null,

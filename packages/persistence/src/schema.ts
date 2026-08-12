@@ -15,7 +15,6 @@ export const panes = sqliteTable(
     kind: text("kind", { enum: ["agent", "shell", "unknown"] }).notNull(),
     name: text("name").notNull(),
     cwd: text("cwd").notNull(),
-    projectId: text("project_id"),
     workspaceId: text("workspace_id"),
     agentId: text("agent_id"),
     runId: text("run_id"),
@@ -57,23 +56,10 @@ export const workspaces = sqliteTable("workspaces", {
   rootPath: text("root_path").notNull(),
   name: text("name").notNull(),
   isGit: integer("is_git", { mode: "boolean" }).notNull(),
+  setupScriptPath: text("setup_script_path"),
+  cleanupScriptPath: text("cleanup_script_path"),
   ...timestamps,
 });
-
-export const projects = sqliteTable(
-  "projects",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    directory: text("directory").notNull(),
-    setupHook: text("setup_hook"),
-    cleanupHook: text("cleanup_hook"),
-    ...timestamps,
-  },
-  (table) => ({
-    nameIndex: uniqueIndex("projects_name_index").on(table.name),
-  }),
-);
 
 export const agentSessions = sqliteTable(
   "agent_sessions",
@@ -92,9 +78,6 @@ export const agentSessions = sqliteTable(
     branch: text("branch"),
     baseCommit: text("base_commit"),
     useWorktree: integer("use_worktree", { mode: "boolean" }).notNull(),
-    projectId: text("project_id"),
-    projectName: text("project_name"),
-    projectDirectory: text("project_directory"),
     setupHook: text("setup_hook"),
     cleanupHook: text("cleanup_hook"),
     setupOutputFile: text("setup_output_file"),
@@ -118,5 +101,4 @@ export const agentSessions = sqliteTable(
 export type PaneRow = typeof panes.$inferSelect;
 export type RunRow = typeof runs.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
-export type ProjectRow = typeof projects.$inferSelect;
 export type AgentSessionRow = typeof agentSessions.$inferSelect;

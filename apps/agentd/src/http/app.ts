@@ -1,7 +1,8 @@
 import { cors } from "hono/cors";
 import { Hono } from "hono";
-import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { agentdCapabilitiesSchema, agentdHealthSchema, createPaneRequestSchema, createSessionRequestSchema, paneResponseSchema } from "@mobile-agent/protocol";
+import type { WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
+import type { CreatePaneRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
+import { agentdCapabilitiesSchema, agentdHealthSchema, createPaneRequestSchema, createSessionRequestSchema, paneResponseSchema, registerWorkspaceRequestSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, workspaceResponseSchema } from "@mobile-agent/protocol";
 
 export type AgentdHookEvent =
   | "client-attached"
@@ -14,10 +15,15 @@ export type AgentdHttpDependencies = {
   corsOrigin: string;
   hookToken: string;
   getTerminal: () => Promise<TerminalEndpoint>;
+  listWorkspaceDirectories: () => Promise<WorkspaceDirectory[]>;
+  browseWorkspaceDirectories: (parentPath?: string) => Promise<WorkspaceDirectory[]>;
+  registerWorkspace: (input: RegisterWorkspaceRequest) => Promise<WorkspaceDirectory>;
+  resolveWorkspaceDirectory: (workspaceId: string) => Promise<WorkspaceRecord>;
+  resolveWorkspaceSelection: (selection: WorkspaceSelection) => Promise<WorkspaceRecord>;
   listSessions: () => Promise<TmuxSession[]>;
-  createSession: (input: { name: string; cwd: string }) => Promise<TmuxSession>;
+  createSession: (input: { name: string; cwd: string; workspaceId?: string }) => Promise<TmuxSession>;
   listPanes: (sessionName?: string) => Promise<PaneSummary[]>;
-  createPane: (input: CreatePaneRequest) => Promise<PaneSummary>;
+  createPane: (input: CreatePaneRequest, workspace?: WorkspaceRecord) => Promise<PaneSummary>;
   handleTmuxHook: (event: AgentdHookEvent, client: string) => void;
 };
 
@@ -26,6 +32,7 @@ export class AgentdHttpError extends Error {
     public readonly status: 400 | 404 | 409 | 503,
     public readonly code: string,
     message: string,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "AgentdHttpError";
@@ -67,6 +74,41 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       };
       return c.json(agentdCapabilitiesSchema.parse(response));
     })
+    .get("/api/workspaces", async (c) => {
+      try {
+        return c.json(workspaceListResponseSchema.parse({ workspaces: await deps.listWorkspaceDirectories() }));
+      } catch (error) {
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
+    .get("/api/workspace-directories", async (c) => {
+      try {
+        const parentPath = c.req.query("path") || undefined;
+        return c.json(workspaceBrowseResponseSchema.parse({ directories: await deps.browseWorkspaceDirectories(parentPath) }));
+      } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
+    .post("/api/workspaces", async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "invalid_request", message: "Request body must be valid JSON" }, 400);
+      }
+
+      const parsed = registerWorkspaceRequestSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: "invalid_request", message: parsed.error.message }, 400);
+      try {
+        return c.json(workspaceResponseSchema.parse({ workspace: await deps.registerWorkspace(parsed.data) }), 201);
+      } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
     .get("/api/terminals", async (c) => {
       try {
         return c.json({ terminals: [await deps.getTerminal()] });
@@ -95,11 +137,17 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       }
 
       try {
-        return c.json({ session: await deps.createSession(parsed.data) }, 201);
+        const input = parsed.data.workspaceId
+          ? await deps.resolveWorkspaceDirectory(parsed.data.workspaceId).then((workspace) => ({
+              name: parsed.data.name,
+              workspaceId: parsed.data.workspaceId!,
+              cwd: workspace.rootPath,
+            }))
+          : { name: parsed.data.name, cwd: parsed.data.cwd! };
+        return c.json({ session: await deps.createSession(input) }, 201);
       } catch (error) {
-        if (error instanceof AgentdHttpError) {
-          return c.json({ error: error.code, message: error.message }, error.status);
-        }
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
         return c.json(toUnavailableError(error), 503);
       }
     })
@@ -125,11 +173,17 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       }
 
       try {
-        return c.json(paneResponseSchema.parse({ pane: await deps.createPane(parsed.data) }), 201);
+        const workspace = parsed.data.workspaceId
+          ? await deps.resolveWorkspaceSelection({
+              workspaceId: parsed.data.workspaceId,
+              mode: parsed.data.useWorktree ? "worktree" : "workspace",
+            })
+          : undefined;
+        const input = workspace ? { ...parsed.data, cwd: workspace.rootPath } : parsed.data;
+        return c.json(paneResponseSchema.parse({ pane: await deps.createPane(input, workspace) }), 201);
       } catch (error) {
-        if (error instanceof AgentdHttpError) {
-          return c.json({ error: error.code, message: error.message }, error.status);
-        }
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
         return c.json(toUnavailableError(error), 503);
       }
     })
@@ -165,5 +219,28 @@ function toUnavailableError(error: unknown): { error: "agentd_unavailable"; mess
   return {
     error: "agentd_unavailable",
     message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function toHttpError(error: unknown): AgentdHttpError | undefined {
+  if (error instanceof AgentdHttpError) return error;
+  if (error && typeof error === "object" && "code" in error && "message" in error) {
+    const code = error.code;
+    const message = error.message;
+    if (typeof code === "string" && typeof message === "string") {
+      const details = "details" in error && error.details && typeof error.details === "object"
+        ? error.details as Record<string, unknown>
+        : undefined;
+      return new AgentdHttpError(400, code, message, details);
+    }
+  }
+  return undefined;
+}
+
+function errorResponse(error: AgentdHttpError): { error: string; message: string; details?: Record<string, unknown> } {
+  return {
+    error: error.code,
+    message: error.message,
+    ...(error.details ? { details: error.details } : {}),
   };
 }

@@ -1,40 +1,169 @@
+import { randomBytes } from "node:crypto";
 import type { RawData } from "ws";
 import { WebSocket } from "ws";
 import { spawnPty, type PtyProcess } from "./pty.js";
 import {
   clientControlMessageSchema,
+  terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
 } from "@mobile-agent/protocol";
-import { TmuxViewportManager, type ViewportLease } from "./viewport-manager.js";
+import { TmuxViewportManager, type PreparedViewport, type ViewportLease } from "./viewport-manager.js";
 
-type TerminalSessionOptions = {
-  cwd: string;
-  defaultTarget: string;
-  viewportManager: TmuxViewportManager;
+type TerminalViewportManager = {
+  prepare: (target: string, cwd: string, cols?: number, rows?: number) => PreparedViewport;
+  tmux: TmuxViewportManager["tmux"];
 };
 
-export class TerminalSession {
-  private pty: PtyProcess | undefined;
-  private lease: ViewportLease | undefined;
-  private disposed = false;
-  private attachGeneration = 0;
+export type TerminalSessionOptions = {
+  cwd: string;
+  defaultTarget: string;
+  viewportManager: TerminalViewportManager;
+  /** How long a transport can be absent before the PTY and lease are released. */
+  resumeGraceMs?: number;
+  /** Injectable for lifecycle tests; production uses the Bun-native PTY adapter. */
+  spawnPty?: typeof spawnPty;
+  sessions?: TerminalSessionRegistry;
+};
 
-  public constructor(
-    private readonly socket: WebSocket,
-    private readonly options: TerminalSessionOptions,
-  ) {
-    socket.on("message", (data, isBinary) => {
-      void this.handleMessage(data, isBinary);
-    });
-    socket.on("close", () => this.dispose());
-    socket.on("error", () => this.dispose());
+/**
+ * Keeps resumable terminal runtimes separate from their replaceable sockets.
+ * A token is deliberately required in addition to the public session id so a
+ * reconnect cannot attach to another browser's PTY by guessing an id.
+ */
+export class TerminalSessionRegistry {
+  private readonly sessions = new Map<string, TerminalSession>();
+
+  public register(session: TerminalSession): void {
+    const current = this.sessions.get(session.sessionId);
+    if (current && current !== session) {
+      throw new Error(`Terminal session id is already registered: ${session.sessionId}`);
+    }
+    this.sessions.set(session.sessionId, session);
   }
 
-  private async handleMessage(data: RawData, isBinary: boolean) {
+  public find(sessionId: string, resumeToken: string): TerminalSession | undefined {
+    const session = this.sessions.get(sessionId);
+    return session?.matchesResumeToken(resumeToken) ? session : undefined;
+  }
+
+  public unregister(session: TerminalSession): void {
+    if (this.sessions.get(session.sessionId) === session) this.sessions.delete(session.sessionId);
+  }
+
+  public closeAll(): void {
+    for (const session of [...this.sessions.values()]) session.dispose();
+    this.sessions.clear();
+  }
+
+  public get size(): number {
+    return this.sessions.size;
+  }
+}
+
+type TerminalSessionState = "awaiting_attach" | "attaching" | "attached" | "parked" | "closed";
+
+type SocketBinding = {
+  socket: WebSocket;
+  onMessage: (data: RawData, isBinary: boolean) => void;
+  onClose: () => void;
+  onError: (error: Error) => void;
+  generation: number;
+};
+
+type AttachMessage = Extract<ClientControlMessage, { type: "attach" }>;
+
+export class TerminalSession {
+  public readonly sessionId = opaqueId();
+
+  private readonly resumeToken = opaqueToken();
+  private readonly registry: TerminalSessionRegistry;
+  private readonly resumeGraceMs: number;
+  private socket: WebSocket | undefined;
+  private socketBinding: SocketBinding | undefined;
+  private pty: PtyProcess | undefined;
+  private lease: ViewportLease | undefined;
+  private state: TerminalSessionState = "awaiting_attach";
+  private disposed = false;
+  private registered = false;
+  private attachGeneration = 0;
+  private transportGeneration = 0;
+  private resumeTimer: NodeJS.Timeout | undefined;
+  private target: string | undefined;
+  private cols = 80;
+  private rows = 24;
+
+  public constructor(
+    socket: WebSocket,
+    private readonly options: TerminalSessionOptions,
+  ) {
+    this.registry = options.sessions ?? new TerminalSessionRegistry();
+    this.resumeGraceMs = Math.max(0, options.resumeGraceMs ?? 30_000);
+    this.bindSocket(socket);
+  }
+
+  public matchesResumeToken(resumeToken: string): boolean {
+    return !this.disposed && this.resumeToken === resumeToken;
+  }
+
+  public dispose(): void {
+    if (this.disposed) return;
+
+    if (this.socket && this.state !== "awaiting_attach") {
+      this.sendClosed("server_shutdown", null, null);
+    }
+    this.finalizeTransport(1001, "agentd stopped");
+  }
+
+  private bindSocket(socket: WebSocket): void {
+    const generation = ++this.transportGeneration;
+    const onMessage = (data: RawData, isBinary: boolean) => {
+      if (this.socket !== socket || this.socketBinding?.generation !== generation || this.disposed) return;
+      void this.handleMessage(data, isBinary);
+    };
+    const onClose = () => {
+      if (this.socket !== socket || this.socketBinding?.generation !== generation) return;
+      this.handleTransportClosed();
+    };
+    const onError = (error: Error) => {
+      // ws normally follows an error with close. If a test double or adapter
+      // reports CLOSED without that follow-up, apply the same network-loss
+      // transition here. An open socket is left alone so transient errors do
+      // not release a healthy PTY.
+      if (socket.readyState === WebSocket.CLOSED) this.handleTransportClosed();
+      void error;
+    };
+
+    socket.on("message", onMessage);
+    socket.on("close", onClose);
+    socket.on("error", onError);
+    this.socket = socket;
+    this.socketBinding = { socket, onMessage, onClose, onError, generation };
+  }
+
+  private detachSocketListeners(): void {
+    const binding = this.socketBinding;
+    if (!binding) {
+      this.socket = undefined;
+      return;
+    }
+
+    binding.socket.removeListener("message", binding.onMessage);
+    binding.socket.removeListener("close", binding.onClose);
+    binding.socket.removeListener("error", binding.onError);
+    if (this.socket === binding.socket) this.socket = undefined;
+    this.socketBinding = undefined;
+  }
+
+  private async handleMessage(data: RawData, isBinary: boolean): Promise<void> {
     if (this.disposed) return;
 
     if (isBinary) {
+      if (!this.isAttached()) {
+        this.sendError("not_attached", "Attach before sending terminal input");
+        return;
+      }
+
       try {
         this.lease?.claimMobile();
         this.pty?.write(rawDataToBuffer(data).toString("utf8"));
@@ -48,25 +177,34 @@ export class TerminalSession {
     try {
       input = JSON.parse(rawDataToBuffer(data).toString("utf8"));
     } catch {
-      this.send({ type: "error", code: "invalid_json", message: "Invalid JSON control frame" });
+      this.sendError("invalid_json", "Invalid JSON control frame");
+      return;
+    }
+
+    if (isRecord(input) && "version" in input && input.version !== terminalProtocolVersion) {
+      this.sendError("unsupported_version", `Unsupported terminal protocol version: ${String(input.version)}`);
       return;
     }
 
     const parsed = clientControlMessageSchema.safeParse(input);
     if (!parsed.success) {
-      this.send({ type: "error", code: "invalid_message", message: parsed.error.message });
+      this.sendError("invalid_message", parsed.error.message);
       return;
     }
 
     await this.handleControlMessage(parsed.data);
   }
 
-  private async handleControlMessage(message: ClientControlMessage) {
+  private async handleControlMessage(message: ClientControlMessage): Promise<void> {
     switch (message.type) {
       case "attach":
-        await this.attach(message.target || this.options.defaultTarget, message.cols, message.rows);
+        await this.handleAttach(message);
         return;
       case "claim":
+        if (!this.isAttached()) {
+          this.sendError("not_attached", "Attach before claiming the viewport");
+          return;
+        }
         try {
           this.lease?.claimMobile();
         } catch (error) {
@@ -74,35 +212,112 @@ export class TerminalSession {
         }
         return;
       case "resize":
+        if (!this.isAttached()) {
+          this.sendError("not_attached", "Attach before resizing the terminal");
+          return;
+        }
         try {
           this.lease?.claimMobile(message.cols, message.rows);
           this.pty?.resize(message.cols, message.rows);
+          this.cols = message.cols;
+          this.rows = message.rows;
         } catch (error) {
           this.sendError("resize_failed", error);
         }
         return;
       case "detach":
-        this.dispose();
-        this.socket.close(1000, "detached");
+        this.detachIntentionally();
         return;
     }
   }
 
-  private async attach(target: string, cols: number, rows: number) {
-    const generation = ++this.attachGeneration;
-    this.stopPty();
+  private async handleAttach(message: AttachMessage): Promise<void> {
+    if (this.state !== "awaiting_attach") {
+      this.sendError("already_attached", "This WebSocket already has a terminal session");
+      return;
+    }
 
-    let prepared: ReturnType<TmuxViewportManager["prepare"]> | undefined;
-    let pty: PtyProcess | undefined;
+    if (message.sessionId && message.resumeToken) {
+      const existing = this.registry.find(message.sessionId, message.resumeToken);
+      if (!existing) {
+        this.sendError("resume_not_found", "The terminal session is no longer resumable", true);
+        return;
+      }
+      if (!existing.canResumeTarget(message.target)) {
+        this.sendError("resume_target_mismatch", "The resume target does not match the terminal session");
+        return;
+      }
+
+      const socket = this.socket;
+      if (!socket) return;
+      // The new connection's temporary TerminalSession is currently handling
+      // this message. Bind the replacement listener after that EventEmitter
+      // dispatch completes, otherwise the same attach frame can be observed
+      // twice by the resumed session.
+      await Promise.resolve();
+      if (!existing.resumeSocket(socket, message)) {
+        this.sendError("resume_unavailable", "The terminal session is no longer available", true);
+        return;
+      }
+      this.detachSocketListeners();
+      this.disposed = true;
+      this.state = "closed";
+      return;
+    }
+
+    await this.attachFresh(message);
+  }
+
+  private canResumeTarget(target: string): boolean {
+    return this.target === target && this.isAttachedOrParked();
+  }
+
+  private resumeSocket(socket: WebSocket, message: AttachMessage): boolean {
+    if (this.disposed || !this.isAttachedOrParked() || !this.canResumeTarget(message.target)) return false;
+
+    const previousSocket = this.socket;
+    this.detachSocketListeners();
+    if (previousSocket && previousSocket !== socket) closeSocket(previousSocket, 1000, "replaced");
+
+    this.clearResumeTimer();
+    this.bindSocket(socket);
+    this.state = "attached";
+    this.cols = message.cols;
+    this.rows = message.rows;
+
     try {
-      prepared = this.options.viewportManager.prepare(target, this.options.cwd, cols, rows);
-      pty = spawnPty(
+      this.lease?.claimMobile(message.cols, message.rows);
+      this.pty?.resize(message.cols, message.rows);
+    } catch (error) {
+      this.sendError("resume_failed", error, true);
+      return true;
+    }
+
+    this.sendReady(true);
+    return true;
+  }
+
+  private async attachFresh(message: AttachMessage): Promise<void> {
+    const generation = ++this.attachGeneration;
+    const target = message.target || this.options.defaultTarget;
+    this.state = "attaching";
+    this.cols = message.cols;
+    this.rows = message.rows;
+
+    let prepared: ReturnType<TerminalSessionOptions["viewportManager"]["prepare"]> | undefined;
+    let pty: PtyProcess | undefined;
+    let lease: ViewportLease | undefined;
+
+    try {
+      prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
+      const spawn = this.options.spawnPty ?? spawnPty;
+      pty = spawn(
         "tmux",
         this.options.viewportManager.tmux.attachArgs(prepared.pane.paneId),
         {
           name: "xterm-256color",
-          cols,
-          rows,
+          cols: message.cols,
+          rows: message.rows,
           cwd: this.options.cwd,
           env: {
             ...stringEnvironment(process.env),
@@ -118,20 +333,19 @@ export class TerminalSession {
         this.pty = undefined;
         this.lease?.release();
         this.lease = undefined;
-        if (!this.disposed) {
-          this.send({
-            type: "closed",
-            code: exitCode,
-            signal: signal ? String(signal) : null,
-          });
-        }
+        this.unregister();
+        this.clearResumeTimer();
+
+        if (this.disposed) return;
+        if (this.socket) this.sendClosed("terminal_exit", exitCode, signal ? String(signal) : null);
+        this.finalizeTransport(1000, "terminal_exit");
       });
 
-      const lease = await prepared.attach({
+      lease = await prepared.attach({
         ptyPid: pty.pid,
-        cols,
-        rows,
-        onEvent: (event) => this.send({ type: "viewport", ...event }),
+        cols: message.cols,
+        rows: message.rows,
+        onEvent: (event) => this.send({ type: "viewport", version: terminalProtocolVersion, ...event }),
       });
 
       if (generation !== this.attachGeneration || this.disposed) {
@@ -140,54 +354,190 @@ export class TerminalSession {
       }
 
       this.lease = lease;
-      this.send({
-        type: "ready",
-        target,
-        paneId: lease.paneId,
-        windowId: lease.windowId,
-        cols,
-        rows,
-      });
+      this.target = target;
+      this.state = this.socket ? "attached" : "parked";
+      this.registry.register(this);
+      this.registered = true;
+
+      if (this.socket) {
+        this.sendReady(false);
+      } else {
+        this.scheduleResumeExpiry();
+      }
     } catch (error) {
       if (this.pty === pty) this.pty = undefined;
-      if (pty) pty.kill();
-      this.lease?.release();
+      if (pty) {
+        try {
+          pty.kill();
+        } catch {
+          // The PTY may have exited while attach was failing.
+        }
+      }
+      if (lease) lease.release();
+      else prepared?.release();
       this.lease = undefined;
-      prepared?.release();
-      this.sendError("attach_failed", error);
+      this.unregister();
+
+      if (this.disposed || !this.socket) {
+        this.state = "closed";
+        this.disposed = true;
+        return;
+      }
+
+      this.state = "awaiting_attach";
+      this.sendError("attach_failed", error, true);
     }
   }
 
-  private stopPty() {
+  private sendReady(resumed: boolean): void {
+    if (!this.target || !this.lease) return;
+    this.send({
+      type: "ready",
+      version: terminalProtocolVersion,
+      sessionId: this.sessionId,
+      resumeToken: this.resumeToken,
+      resumed,
+      target: this.target,
+      paneId: this.lease.paneId,
+      windowId: this.lease.windowId,
+      cols: this.cols,
+      rows: this.rows,
+    });
+  }
+
+  private send(message: ServerControlMessage): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify(message));
+  }
+
+  private sendBinary(data: Buffer): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(data);
+  }
+
+  private sendClosed(reason: "detached" | "terminal_exit" | "network_timeout" | "server_shutdown", code: number | null, signal: string | null): void {
+    this.send({
+      type: "closed",
+      version: terminalProtocolVersion,
+      sessionId: this.sessionId,
+      reason,
+      code,
+      signal,
+    });
+  }
+
+  private sendError(code: string, error: unknown, retryable = false): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.send({
+      type: "error",
+      version: terminalProtocolVersion,
+      ...(this.registered ? { sessionId: this.sessionId } : {}),
+      code,
+      message,
+      retryable,
+    });
+  }
+
+  private detachIntentionally(): void {
+    if (this.disposed) return;
+    if (this.state !== "awaiting_attach") this.sendClosed("detached", null, null);
+    this.finalizeTransport(1000, "detached");
+  }
+
+  private handleTransportClosed(): void {
+    if (this.disposed) return;
+    this.detachSocketListeners();
+
+    if (this.state === "awaiting_attach") {
+      this.finalizeTransport();
+      return;
+    }
+
+    this.state = "parked";
+    this.scheduleResumeExpiry();
+  }
+
+  private scheduleResumeExpiry(): void {
+    this.clearResumeTimer();
+    if (this.resumeGraceMs === 0) {
+      this.finalizeTransport();
+      return;
+    }
+
+    this.resumeTimer = setTimeout(() => {
+      this.resumeTimer = undefined;
+      if (!this.disposed && (this.state === "parked" || this.state === "attaching")) this.finalizeTransport();
+    }, this.resumeGraceMs);
+    this.resumeTimer.unref?.();
+  }
+
+  private clearResumeTimer(): void {
+    if (!this.resumeTimer) return;
+    clearTimeout(this.resumeTimer);
+    this.resumeTimer = undefined;
+  }
+
+  private finalizeTransport(closeCode?: number, closeReason?: string): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.state = "closed";
+    this.attachGeneration += 1;
+    this.clearResumeTimer();
+
+    const socket = this.socket;
+    this.stopRuntime();
+    this.unregister();
+    this.detachSocketListeners();
+    if (socket && closeCode !== undefined) closeSocket(socket, closeCode, closeReason ?? "closed");
+  }
+
+  private stopRuntime(): void {
     const pty = this.pty;
     this.pty = undefined;
-    if (pty) pty.kill();
+    if (pty) {
+      try {
+        pty.kill();
+      } catch {
+        // The PTY may already have exited.
+      }
+    }
 
     const lease = this.lease;
     this.lease = undefined;
     lease?.release();
   }
 
-  private send(message: ServerControlMessage) {
-    if (this.socket.readyState !== WebSocket.OPEN) return;
-    this.socket.send(JSON.stringify(message));
+  private unregister(): void {
+    if (!this.registered) return;
+    this.registry.unregister(this);
+    this.registered = false;
   }
 
-  private sendBinary(data: Buffer) {
-    if (this.socket.readyState !== WebSocket.OPEN) return;
-    this.socket.send(data);
+  private isAttached(): boolean {
+    return this.state === "attached" && Boolean(this.pty && this.lease);
   }
 
-  private sendError(code: string, error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    this.send({ type: "error", code, message });
+  private isAttachedOrParked(): boolean {
+    return (this.state === "attached" || this.state === "parked") && Boolean(this.pty && this.lease);
   }
+}
 
-  private dispose() {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.stopPty();
+function closeSocket(socket: WebSocket, code: number, reason: string): void {
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+    try {
+      socket.close(code, reason);
+    } catch {
+      // The transport may have completed its close handshake already.
+    }
   }
+}
+
+function opaqueId(): string {
+  return `terminal-${randomBytes(12).toString("hex")}`;
+}
+
+function opaqueToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
 function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
@@ -201,4 +551,8 @@ function rawDataToBuffer(data: RawData): Buffer {
   if (Array.isArray(data)) return Buffer.concat(data);
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   return Buffer.from(data);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

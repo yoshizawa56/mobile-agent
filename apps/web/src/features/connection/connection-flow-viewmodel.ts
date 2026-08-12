@@ -12,7 +12,7 @@ export type TerminalEndpoint = {
 
 export type TmuxSession = {
   name: string;
-  project: string;
+  workspace: string;
   cwd: string;
   paneCount: number;
   waitingCount: number;

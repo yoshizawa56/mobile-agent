@@ -14,7 +14,6 @@ export type RunState = (typeof runStates)[number];
 
 export type PaneId = string;
 export type RunId = string;
-export type ProjectId = string;
 export type WorkspaceId = string;
 
 export const agentBackends = ["codex", "claude"] as const;
@@ -37,19 +36,67 @@ export type WorkspaceRecord = {
   rootPath: string;
   name: string;
   isGit: boolean;
+  setupScriptPath: string | null;
+  cleanupScriptPath: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type ProjectRecord = {
-  id: ProjectId;
-  name: string;
-  directory: string;
-  setupHook: string | null;
-  cleanupHook: string | null;
-  createdAt: string;
-  updatedAt: string;
+export const workspaceSelectionModes = ["workspace", "worktree"] as const;
+export type WorkspaceSelectionMode = (typeof workspaceSelectionModes)[number];
+
+/**
+ * The host-side directory choices exposed to the mobile client. The path is
+ * resolved by agentd from an allowed-root policy; clients send the stable id
+ * back instead of choosing an arbitrary cwd.
+ */
+export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit" | "setupScriptPath" | "cleanupScriptPath">;
+
+export type WorkspaceSelection = {
+  workspaceId: WorkspaceId;
+  mode: WorkspaceSelectionMode;
 };
+
+export type WorkspaceSelectionErrorCode =
+  | "workspace_not_found"
+  | "worktree_not_supported";
+
+export class WorkspaceSelectionError extends Error {
+  public constructor(
+    public readonly code: WorkspaceSelectionErrorCode,
+    message: string,
+    public readonly details: { workspaceId: WorkspaceId },
+  ) {
+    super(message);
+    this.name = "WorkspaceSelectionError";
+  }
+}
+
+/**
+ * Applies the domain rules shared by the HTTP adapter and future CLI/native
+ * adapters. Filesystem existence and allowed-root checks stay in the host
+ * adapter; this function only validates the selected domain records.
+ */
+export function validateWorkspaceSelection(
+  selection: WorkspaceSelection,
+  workspace: WorkspaceDirectoryOption | undefined,
+): WorkspaceSelection {
+  if (!workspace) {
+    throw new WorkspaceSelectionError(
+      "workspace_not_found",
+      `Workspace directory not found: ${selection.workspaceId}`,
+      { workspaceId: selection.workspaceId },
+    );
+  }
+  if (selection.mode === "worktree" && !workspace.isGit) {
+    throw new WorkspaceSelectionError(
+      "worktree_not_supported",
+      `Workspace does not support worktrees: ${workspace.rootPath}`,
+      { workspaceId: selection.workspaceId },
+    );
+  }
+  return selection;
+}
 
 export type AgentSessionRecord = {
   id: string;
@@ -64,9 +111,6 @@ export type AgentSessionRecord = {
   branch: string | null;
   baseCommit: string | null;
   useWorktree: boolean;
-  projectId: ProjectId | null;
-  projectName: string | null;
-  projectDirectory: string | null;
   setupHook: string | null;
   cleanupHook: string | null;
   setupOutputFile: string | null;
@@ -91,7 +135,6 @@ export type PaneRecord = {
   kind: PaneKind;
   name: string;
   cwd: string;
-  projectId: ProjectId | null;
   workspaceId: WorkspaceId | null;
   agentId: string | null;
   runId: RunId | null;

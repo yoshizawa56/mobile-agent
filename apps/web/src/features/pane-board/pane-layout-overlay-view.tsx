@@ -176,9 +176,9 @@ function groupByWindow(panes: PaneSummary[]): Array<{
   return [...windows.values()];
 }
 
-function hasPaneGeometry(pane: PaneSummary): boolean {
-  return [pane.left, pane.top, pane.width, pane.height, pane.windowWidth, pane.windowHeight]
-    .every((value) => typeof value === "number" && value > 0);
+export function hasPaneGeometry(pane: Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">): boolean {
+  return [pane.left, pane.top].every((value) => typeof value === "number" && value >= 0)
+    && [pane.width, pane.height, pane.windowWidth, pane.windowHeight].every((value) => typeof value === "number" && value > 0);
 }
 
 function paneGeometryStyle(

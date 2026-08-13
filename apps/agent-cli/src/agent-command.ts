@@ -866,6 +866,8 @@ export class AgentCommand {
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
   agent daemon <start|status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
+  agent serve tailscale [--port PORT] [--agentd-port PORT]
+  agent dev [serve tailscale]
 
 Run options:
   -n, --name NAME          Logical session name; does not create a worktree.

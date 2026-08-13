@@ -66,14 +66,23 @@ VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
 
 The web dev server uses strict port binding. If `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 bun run --filter @mobile-agent/web dev`.
 
-Tailscale Serve is opt-in. Start the local stack first, then in a second terminal expose the web port through an already installed and configured Tailscale CLI:
+Tailscale Serve is opt-in. The CLI treats Serve as a persistent Tailscale configuration: it starts or verifies the local target, upserts the fixed external port, prints the URL, and exits its Serve setup step. It does not own, monitor, or remove the Serve route afterward.
 
 ```sh
-bun run dev
-mise run dev-serve
+agent dev serve tailscale
 ```
 
-`dev-serve` maps the local web server to HTTPS port `8449` by default and never installs or configures Tailscale. Override the ports when needed with `TAILSCALE_DEV_PORT` and `VITE_DEV_PORT`. After exposing the host-side service, register its full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
+`agent dev serve tailscale` starts the current worktree's agentd and Web, then maps the Web server to HTTPS port `443` by default. The Web server proxies `/api`, `/terminal`, and `/events` to that worktree's agentd. The next worktree that runs the command retargets the same fixed Serve endpoint. Override the external and local ports with `AGENT_DEV_SERVE_PORT`, `AGENTD_PORT`, and `VITE_DEV_PORT`.
+
+For a release or staging agentd that does not need an external Web server, use the agentd-only command:
+
+```sh
+agent serve tailscale
+```
+
+This uses `AGENT_SERVE_PORT` (default `8444`) for the external HTTPS port and `AGENTD_PORT` for the local agentd port. A staging main checkout can set `AGENT_SERVE_PORT=8443`; a release binary can use `AGENT_SERVE_PORT=8444`, or `443` when it runs on a separate Tailscale node. Neither command restores an earlier worktree or removes the route when the local process exits. To inspect the provider's current configuration, use `tailscale serve status`.
+
+After exposing the host-side service, register the full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
 
 To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.
 
@@ -128,7 +137,7 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch and runs the registered workspace setup and cleanup scripts when present. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-`build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. For source-based local development, start the stack with `bun dev` in the linked worktree.
+`build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 
 ### Running multiple agentd instances
 
@@ -159,7 +168,7 @@ Pushing a semantic version tag such as `v0.0.1-beta.1` starts the release workfl
 
 GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
 
-The unqualified `agent` command is reserved for the production standalone binary. It never builds the current checkout or silently selects another source tree. For source-based local development, use `bun dev` and run the CLI through the linked checkout.
+The unqualified `agent` command is reserved for the production standalone binary. It never builds the current checkout or silently selects another source tree. `agent dev` only delegates to a source checkout when one is available; the standalone binary itself does not bundle Web or Vite.
 
 Install the latest stable release and expose the production command through PATH:
 

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { describe, it } from "bun:test";
 import {
   checkWebHealth,
+  configureDevServe,
   createDevSupervisor,
   DevRuntimeError,
   formatPortOwners,
@@ -142,6 +143,45 @@ describe("dev orchestration diagnostics", () => {
       { pid: "456", command: "vite" },
     ]);
     assert.equal(formatPortOwners(owners), "PID 123 (node), PID 456 (vite)");
+  });
+
+  it("upserts the fixed local Tailscale Serve port after Web is ready", async () => {
+    const calls = [];
+    const result = await configureDevServe({
+      serveProvider: "tailscale",
+      servePort: 443,
+      webPort: 15_227,
+      baseEnvironment: {
+        TAILSCALE_BIN: "tailscale-test",
+        AGENT_TAILSCALE_HOSTNAME: "local-host.tailnet.ts.net",
+      },
+    }, async (command, args) => {
+      calls.push({ command, args });
+      return { stdout: "", stderr: "" };
+    });
+
+    assert.deepEqual(calls, [{
+      command: "tailscale-test",
+      args: ["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:15227"],
+    }]);
+    assert.equal(result.url, "https://local-host.tailnet.ts.net/");
+    assert.equal(result.localPort, 15_227);
+  });
+
+  it("allows the Tailscale hostname in the Vite dev server", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "mobile-agent-dev-test-"));
+    try {
+      const config = resolveDevConfig({
+        AGENT_DEV_STATE_ROOT: stateRoot,
+        AGENT_DEV_SERVE_PROVIDER: "tailscale",
+        AGENT_TAILSCALE_HOSTNAME: "local-host.tailnet.ts.net.",
+      }, process.cwd());
+
+      assert.equal(config.baseEnvironment.AGENT_TAILSCALE_HOSTNAME, "local-host.tailnet.ts.net");
+      assert.equal(config.baseEnvironment.VITE_ALLOWED_HOSTS, "local-host.tailnet.ts.net");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("verifies HTML, API proxy, and both WebSocket routes", async () => {

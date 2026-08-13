@@ -21,7 +21,7 @@ bun run test
 bun run build
 ```
 
-`bun run dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks the HTTP/API/WebSocket routes before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `mise run dev-serve` only after the Tailscale CLI is already installed and configured, with `bun run dev` running in another terminal.
+`bun run dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks the HTTP/API/WebSocket routes before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `agent dev serve tailscale` (or `mise run dev-serve`) when the Tailscale CLI is already installed and configured. The command starts the local stack, upserts the fixed Serve route, and leaves that route configured when the local processes stop.
 
 The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and agentd; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. The browser mock mode can be used without a running `agentd`:
 

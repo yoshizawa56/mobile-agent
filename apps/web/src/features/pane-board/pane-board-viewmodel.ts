@@ -12,6 +12,8 @@ export type PaneBoardViewModel = {
   panes: PaneSummary[];
   status: "loading" | "ready" | "error";
   errorMessage: string | null;
+  open: () => void;
+  close: () => void;
   toggle: () => void;
   select: (pane: PaneSummary) => void;
   refresh: () => void;
@@ -31,6 +33,8 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     refetchInterval: isOpen ? 3_000 : false,
   });
 
+  const open = useCallback(() => setIsOpen(true), []);
+  const close = useCallback(() => setIsOpen(false), []);
   const toggle = useCallback(() => setIsOpen((current) => !current), []);
   const select = useCallback(
     (pane: PaneSummary) => {
@@ -49,6 +53,8 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     panes: query.data ?? [],
     status: query.isPending ? "loading" : query.isError ? "error" : "ready",
     errorMessage: query.error instanceof Error ? query.error.message : query.isError ? "ペイン一覧を取得できません" : null,
+    open,
+    close,
     toggle,
     select,
     refresh,

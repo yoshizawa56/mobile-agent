@@ -1,9 +1,31 @@
 #!/usr/bin/env bun
+import { PairDevice } from "@mobile-agent/application";
+import {
+  AgentdPairingControlAdapter,
+  PairCommand,
+  PairCommandError,
+  TerminalPairingPresenter,
+  type PairCommandIo,
+  type PairDeviceRuntime,
+  type ParsedPairCommandOptions,
+} from "@mobile-agent/cli-adapters";
 import { AgentCommand, AgentCommandError } from "./agent-command.js";
-import { PairCommand, PairCommandError } from "./pair-command.js";
-import { createPairDeviceRuntime } from "./pair-composition.js";
 
 const args = process.argv.slice(2);
+
+async function createPairDeviceRuntime(
+  options: ParsedPairCommandOptions,
+  io: PairCommandIo,
+): Promise<PairDeviceRuntime> {
+  const control = await AgentdPairingControlAdapter.connect(options.controlSocket);
+  return {
+    useCase: new PairDevice(
+      control,
+      new TerminalPairingPresenter({ out: io.out, input: io.input }),
+    ),
+    close: () => control.close(),
+  };
+}
 
 if (args[0] === "daemon") {
   try {

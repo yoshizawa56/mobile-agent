@@ -26,6 +26,7 @@ bun run audit:public
 - `apps/agent-cli`: the `agent` CLI, with agent lifecycle state managed by SQLite
 - `apps/web`: renders one pane with xterm.js and sends terminal size changes to agentd
 - `packages/agentd-client`: the TypeScript client for Hono RPC, Zod validation, and the agentd terminal WebSocket
+- `packages/cli-adapters`: CLI-side infrastructure adapters and composition factories
 - `packages/domain`: Pane/Run state and agent waiting-state rules
 - `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
 - `packages/persistence`: Drizzle + SQLite persistence for panes, runs, audits, registered workspaces, and agent sessions

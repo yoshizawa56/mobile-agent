@@ -90,7 +90,7 @@ Configuration that overrides an existing plugin command, environment, detection 
 
 ### Workspace
 
-A host directory explicitly registered with agentd. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths; a generated git worktree is an execution directory derived from that workspace.
+A host directory explicitly registered with agentd. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths plus relative patterns for copying unmanaged files into generated worktrees; a generated git worktree is an execution directory derived from that workspace.
 
 ### Separating Pane and Run
 
@@ -587,7 +587,7 @@ GET  /api/capabilities
 GET  /api/terminals
 GET  /api/workspaces
 GET  /api/workspace-directories?path=<host-directory>
-POST /api/workspaces              # register a directory and optional hook paths
+POST /api/workspaces              # register a directory, hooks, and worktree copy patterns
 GET  /api/sessions
 POST /api/sessions              # create a tmux session
 GET  /api/panes?session=<name>
@@ -611,7 +611,7 @@ POST /api/sessions and POST /api/panes resolve registered workspace IDs on the h
 
 ### Workspace directory picker
 
-Rather than auto-selecting every directory below a host root, the UI first browses directories allowed by agentd and explicitly registers the selected directory. `GET /api/workspaces` returns only registered workspaces; `GET /api/workspace-directories` exposes browse candidates. Registration also stores optional executable setup and cleanup script paths on the workspace. Hook paths are resolved on the host and may live outside the repository, while the hook process runs with the generated worktree as cwd. The API returns stable workspace IDs; agentd resolves the path with realpath and verifies that it remains below an allowed root. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
+Rather than auto-selecting every directory below a host root, the UI first browses directories allowed by agentd and explicitly registers the selected directory. `GET /api/workspaces` returns only registered workspaces; `GET /api/workspace-directories` exposes browse candidates. Registration also stores optional executable setup and cleanup script paths plus one relative worktree copy pattern per line. Patterns support `*` for one path segment and `**` for nested segments; matching unmanaged files, including ignored files, are copied to the same relative path in a new worktree. Copying happens after `git worktree add` and before the setup hook. Hook paths are resolved on the host and may live outside the repository, while the hook process runs with the generated worktree as cwd. The API returns stable workspace IDs; agentd resolves the path with realpath and verifies that it remains below an allowed root. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
 
 ## 10. Persistence
 
@@ -634,7 +634,7 @@ audit_events
 
 ### Storage policy
 
-- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; registered workspace directories and their personal hook paths belong to workspaces.
+- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; registered workspace directories, their personal hook paths, and worktree copy patterns belong to workspaces.
 - Persist important state transitions as an event history.
 - Do not store every terminal output byte by default.
 - Store only the latest capture or a short ring buffer when needed.
@@ -855,7 +855,7 @@ agent cleanup [--global] [--force] NAME
 agent doctor [--verbose]
 ~~~
 
-run associates the worktree, workspace hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --no-worktree, stored workspace hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
+run associates the worktree, workspace copy patterns, workspace hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --worktree, unmanaged files are copied first, then the setup hook runs; cleanup hooks run before the worktree is removed. With --no-worktree, stored workspace copy patterns and hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
 
 The following commands are planned as agentd and TUI extensions:
 

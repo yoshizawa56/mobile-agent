@@ -3929,6 +3929,31 @@ kbd {
   box-shadow: 0 0 0 3px rgb(57 214 91 / 12%);
 }
 
+.new-session-field textarea {
+  width: 100%;
+  min-height: 45px;
+  padding: 11px 13px;
+  border: 1px solid #24552e;
+  border-radius: 9px;
+  resize: vertical;
+  outline: 0;
+  color: #d8ffdc;
+  background: rgb(6 20 9 / 82%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  line-height: 1.45;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.new-session-field textarea::placeholder {
+  color: #416a49;
+}
+
+.new-session-field textarea:focus {
+  border-color: var(--lime-deep);
+  box-shadow: 0 0 0 3px rgb(57 214 91 / 12%);
+}
+
 .new-session-agent-note {
   display: flex;
   align-items: flex-start;

@@ -86,6 +86,18 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
           </label>
           <small className="workspace-picker-hook-help">Hook paths are host-side executable files and are not expected inside the worktree. They run with the created worktree as the current directory.</small>
 
+          <label className="new-session-field">
+            <span>WORKTREE COPY PATTERNS <small>(OPTIONAL · ONE PER LINE)</small></span>
+            <textarea
+              value={viewModel.worktreeCopyPatterns}
+              onChange={(event) => viewModel.onWorktreeCopyPatternsChange(event.target.value)}
+              placeholder={".env\n.env.local\nconfig/*.local.json"}
+              rows={4}
+              spellCheck={false}
+            />
+          </label>
+          <small className="workspace-picker-hook-help">Relative patterns such as <code>.env</code> or <code>config/**/*.local.json</code> copy unmanaged files before the setup hook runs.</small>
+
           {viewModel.registrationError ? <p className="new-session-error" role="alert">{viewModel.registrationError}</p> : null}
           <button
             className="connection-flow-primary workspace-picker-submit"

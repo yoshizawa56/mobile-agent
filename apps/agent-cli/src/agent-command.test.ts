@@ -42,6 +42,7 @@ describe("agent command migration", () => {
       isGit: true,
       setupScriptPath: fixture.setupHook,
       cleanupScriptPath: fixture.cleanupHook,
+      worktreeCopyPatterns: [".env", "config/**/*.local.json"],
       createdAt: "2026-08-10T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
     });
@@ -55,6 +56,7 @@ describe("agent command migration", () => {
     }
 
     expect(readFileSync(fixture.log, "utf8")).toContain(`setup cwd=${realWorktree}/session`);
+    expect(readFileSync(fixture.log, "utf8")).toContain("setup env=secret-from-workspace nested=local-config");
     expect(readFileSync(fixture.log, "utf8")).toContain(`backend cwd=${realWorktree}/session`);
     expect(readFileSync(fixture.log, "utf8")).toContain("cleanup cwd=");
     expect(execFileSync("git", ["-C", fixture.workspace, "worktree", "list", "--porcelain"], { encoding: "utf8" })).not.toContain(`${fixture.worktree}/session`);
@@ -130,13 +132,17 @@ function createFixture(extraEnv: Record<string, string> = {}) {
   writeExecutable(fakeClaude, `#!/bin/sh\nprintf 'backend cwd=%s\\n' "$PWD" >>"$TEST_AGENT_LOG"\nexit "\${TEST_AGENT_EXIT_STATUS:-0}"\n`);
   const setupHook = join(hooks, "setup");
   const cleanupHook = join(hooks, "cleanup");
-  writeExecutable(setupHook, `#!/bin/sh\nprintf 'setup cwd=%s worktree=%s workspace=%s\\n' "$PWD" "$AGENT_WORKTREE" "$AGENT_WORKSPACE" >>"$TEST_AGENT_LOG"\nprintf 'resource-id=test-resource\\n'\n`);
+  writeExecutable(setupHook, `#!/bin/sh\nprintf 'setup cwd=%s worktree=%s workspace=%s\\n' "$PWD" "$AGENT_WORKTREE" "$AGENT_WORKSPACE" >>"$TEST_AGENT_LOG"\nprintf 'setup env=%s nested=%s\\n' "$(cat .env 2>/dev/null || printf missing)" "$(cat config/local.local.json 2>/dev/null || printf missing)" >>"$TEST_AGENT_LOG"\nprintf 'resource-id=test-resource\\n'\n`);
   writeExecutable(cleanupHook, `#!/bin/sh\nprintf 'cleanup cwd=%s setup-output=%s\\n' "$PWD" "$AGENT_SETUP_OUTPUT_FILE" >>"$TEST_AGENT_LOG"\n`);
   writeFileSync(join(workspace, "README"), "fixture\n");
+  writeFileSync(join(workspace, ".gitignore"), ".env\nconfig/*.local.json\n");
+  writeFileSync(join(workspace, ".env"), "secret-from-workspace\n");
+  mkdirSync(join(workspace, "config"), { recursive: true });
+  writeFileSync(join(workspace, "config", "local.local.json"), "local-config\n");
   execFileSync("git", ["init", "-q", workspace]);
   execFileSync("git", ["-C", workspace, "config", "user.email", "agent@example.invalid"]);
   execFileSync("git", ["-C", workspace, "config", "user.name", "Agent Test"]);
-  execFileSync("git", ["-C", workspace, "add", "README"]);
+  execFileSync("git", ["-C", workspace, "add", "README", ".gitignore"]);
   execFileSync("git", ["-C", workspace, "commit", "-q", "-m", "fixture"]);
   return {
     root,

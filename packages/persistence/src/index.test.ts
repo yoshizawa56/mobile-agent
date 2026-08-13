@@ -46,6 +46,7 @@ const workspace: WorkspaceRecord = {
   isGit: true,
   setupScriptPath: "/config/hooks/setup",
   cleanupScriptPath: "/config/hooks/cleanup",
+  worktreeCopyPatterns: [".env", "config/*.local.json"],
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
 };
@@ -108,6 +109,7 @@ describe("sqlite persistence", () => {
         isGit: workspace.isGit,
         setupScriptPath: workspace.setupScriptPath,
         cleanupScriptPath: workspace.cleanupScriptPath,
+        worktreeCopyPatterns: workspace.worktreeCopyPatterns,
       });
       await expect(sessions.findByName(workspace.id, session.name)).resolves.toMatchObject({
         id: session.id,
@@ -120,7 +122,7 @@ describe("sqlite persistence", () => {
         codexSessionBaseline: session.codexSessionBaseline,
       });
       expect(database.db.select().from(databaseTable(database)).all()).toHaveLength(1);
-      expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(1);
+      expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
     } finally {
       database.close();
     }
@@ -132,7 +134,7 @@ describe("sqlite persistence", () => {
     const initial = createAgentDatabase(file);
     try {
       await new DrizzlePaneRepository(initial.db).upsert(pane);
-      initial.sqlite.exec('DROP TABLE "__drizzle_migrations"');
+      initial.sqlite.exec('ALTER TABLE workspaces DROP COLUMN worktree_copy_patterns; DROP TABLE "__drizzle_migrations"');
     } finally {
       initial.close();
     }
@@ -141,7 +143,7 @@ describe("sqlite persistence", () => {
       const migrated = createAgentDatabase(file);
       try {
         await expect(new DrizzlePaneRepository(migrated.db).findById(pane.id)).resolves.toEqual(pane);
-        expect(migrated.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(1);
+        expect(migrated.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
       } finally {
         migrated.close();
       }
@@ -176,7 +178,7 @@ describe("sqlite persistence", () => {
           .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe'")
           .all() as Array<{ name: string }>;
         expect(probe).toEqual([{ name: "migration_probe" }]);
-        expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
+        expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(3);
       } finally {
         database.close();
       }

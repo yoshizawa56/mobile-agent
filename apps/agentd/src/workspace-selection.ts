@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
 import type { WorkspaceDirectoryOption, WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
-import { validateWorkspaceSelection } from "@mobile-agent/domain";
+import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, validateWorkspaceSelection, worktreeCopyPatternLimits } from "@mobile-agent/domain";
 import type { RegisterWorkspaceRequest, WorkspaceDirectory } from "@mobile-agent/protocol";
 
 export type InvalidDirectoryReason = "not_found" | "not_directory" | "outside_allowed_root" | "unknown_workspace";
@@ -37,6 +37,19 @@ export class InvalidWorkspaceHookError extends Error {
 
   public get details(): Record<string, unknown> {
     return { path: this.path, reason: this.reason };
+  }
+}
+
+export class InvalidWorkspaceCopyPatternError extends Error {
+  public readonly code = "invalid_copy_pattern" as const;
+
+  public constructor(public readonly pattern: string) {
+    super(`Invalid worktree copy pattern: ${pattern}`);
+    this.name = "InvalidWorkspaceCopyPatternError";
+  }
+
+  public get details(): Record<string, unknown> {
+    return { pattern: this.pattern };
   }
 }
 
@@ -98,6 +111,7 @@ export class WorkspaceSelectionCatalog {
       isGit: isGitWorkspace(rootPath),
       setupScriptPath: validateHookPath(input.setupScriptPath ?? null),
       cleanupScriptPath: validateHookPath(input.cleanupScriptPath ?? null),
+      worktreeCopyPatterns: validateWorktreeCopyPatterns(input.worktreeCopyPatterns),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -111,6 +125,7 @@ export class WorkspaceSelectionCatalog {
       isGit: record.isGit,
       setupScriptPath: record.setupScriptPath ? displayPath(record.setupScriptPath) : null,
       cleanupScriptPath: record.cleanupScriptPath ? displayPath(record.cleanupScriptPath) : null,
+      worktreeCopyPatterns: record.worktreeCopyPatterns,
     };
   }
 
@@ -139,6 +154,7 @@ export class WorkspaceSelectionCatalog {
       isGit: workspace.isGit,
       setupScriptPath: workspace.setupScriptPath,
       cleanupScriptPath: workspace.cleanupScriptPath,
+      worktreeCopyPatterns: workspace.worktreeCopyPatterns,
     };
     validateWorkspaceSelection(selection, option);
     return workspace;
@@ -152,6 +168,7 @@ export class WorkspaceSelectionCatalog {
       isGit: isGitWorkspace(rootPath),
       setupScriptPath: validateHookPath(workspace.setupScriptPath),
       cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath),
+      worktreeCopyPatterns: validateWorktreeCopyPatterns(workspace.worktreeCopyPatterns),
     };
   }
 
@@ -163,6 +180,7 @@ export class WorkspaceSelectionCatalog {
       isGit: isGitWorkspace(directory),
       setupScriptPath: null,
       cleanupScriptPath: null,
+      worktreeCopyPatterns: [],
     };
   }
 }
@@ -183,6 +201,17 @@ function validateHookPath(path: string | null): string | null {
     throw new InvalidWorkspaceHookError(path, "not_executable");
   }
   return realpathSync(expanded);
+}
+
+function validateWorktreeCopyPatterns(values: readonly string[] | undefined): string[] {
+  const normalized = normalizeWorktreeCopyPatterns(values ?? []);
+  if (normalized.length > worktreeCopyPatternLimits.maxPatterns) {
+    throw new InvalidWorkspaceCopyPatternError(`too many patterns (maximum ${worktreeCopyPatternLimits.maxPatterns})`);
+  }
+  for (const pattern of normalized) {
+    if (!isValidWorktreeCopyPattern(pattern)) throw new InvalidWorkspaceCopyPatternError(pattern);
+  }
+  return normalized;
 }
 
 function workspaceId(path: string): string {

@@ -73,6 +73,7 @@ const workspace: WorkspaceDirectoryOption = {
   isGit: true,
   setupScriptPath: "/Users/me/.config/agent/setup",
   cleanupScriptPath: "/Users/me/.config/agent/cleanup",
+  worktreeCopyPatterns: [".env", "config/**/*.local.json"],
 };
 
 describe("workspace selection domain rules", () => {

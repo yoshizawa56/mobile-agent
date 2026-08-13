@@ -15,6 +15,7 @@ export type WorkspacePickerInput = {
   registrationDirectory: string;
   setupScriptPath: string;
   cleanupScriptPath: string;
+  worktreeCopyPatterns: string;
   isRegisteringWorkspace: boolean;
   registrationError: string | null;
   errorMessage: string | null;
@@ -36,6 +37,7 @@ export type WorkspacePickerViewModel = WorkspacePickerInput & {
   onRegistrationDirectoryChange: (directory: string) => void;
   onSetupScriptPathChange: (path: string) => void;
   onCleanupScriptPathChange: (path: string) => void;
+  onWorktreeCopyPatternsChange: (patterns: string) => void;
   onRegisterWorkspace: () => void;
 };
 

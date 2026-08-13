@@ -220,6 +220,7 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
           isGit: record.isGit,
           setupScriptPath: record.setupScriptPath,
           cleanupScriptPath: record.cleanupScriptPath,
+          worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
           updatedAt: now,
         },
       })
@@ -413,6 +414,7 @@ function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces
     isGit: record.isGit,
     setupScriptPath: record.setupScriptPath,
     cleanupScriptPath: record.cleanupScriptPath,
+    worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -426,9 +428,19 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     isGit: row.isGit,
     setupScriptPath: row.setupScriptPath,
     cleanupScriptPath: row.cleanupScriptPath,
+    worktreeCopyPatterns: parseWorktreeCopyPatterns(row.worktreeCopyPatterns),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function parseWorktreeCopyPatterns(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string") ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agentSessions.$inferInsert {

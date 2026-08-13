@@ -56,6 +56,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     isGit: true,
     setupScriptPath: "~/.config/agent/setup",
     cleanupScriptPath: "~/.config/agent/cleanup",
+    worktreeCopyPatterns: [".env", ".env.local"],
   }, {
     id: "workspace-scratch",
     name: "scratch",
@@ -63,6 +64,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     isGit: false,
     setupScriptPath: null,
     cleanupScriptPath: null,
+    worktreeCopyPatterns: [],
   }];
   const pickerStatus: WorkspacePickerStatus = initialWorkspaceState === "loading" ? "loading" : initialWorkspaceState === "error" ? "error" : "ready";
 
@@ -169,6 +171,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       registrationDirectory: "",
       setupScriptPath: "",
       cleanupScriptPath: "",
+      worktreeCopyPatterns: "",
       isRegisteringWorkspace: false,
       registrationError: null,
       errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
@@ -183,6 +186,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       onRegistrationDirectoryChange: () => undefined,
       onSetupScriptPathChange: () => undefined,
       onCleanupScriptPathChange: () => undefined,
+      onWorktreeCopyPatternsChange: () => undefined,
       onRegisterWorkspace: () => undefined,
     },
     kind: newPaneKind,
@@ -219,6 +223,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       registrationDirectory: "",
       setupScriptPath: "",
       cleanupScriptPath: "",
+      worktreeCopyPatterns: "",
       isRegisteringWorkspace: false,
       registrationError: null,
       errorMessage: initialWorkspaceState === "error" ? "Workspace directory service is unavailable" : null,
@@ -231,6 +236,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       onRegistrationDirectoryChange: () => undefined,
       onSetupScriptPathChange: () => undefined,
       onCleanupScriptPathChange: () => undefined,
+      onWorktreeCopyPatternsChange: () => undefined,
       onRegisterWorkspace: () => undefined,
     },
     onNameChange: setNewSessionName,

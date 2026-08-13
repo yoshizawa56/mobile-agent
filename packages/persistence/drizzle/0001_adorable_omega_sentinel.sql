@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `worktree_copy_patterns` text DEFAULT '[]' NOT NULL;

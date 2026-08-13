@@ -39,6 +39,7 @@ export const workspaceDirectorySchema = z.object({
   isGit: z.boolean(),
   setupScriptPath: z.string().min(1).nullable(),
   cleanupScriptPath: z.string().min(1).nullable(),
+  worktreeCopyPatterns: z.array(z.string().min(1).max(4_096)).max(100).default([]),
 });
 export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
 
@@ -51,6 +52,7 @@ export const registerWorkspaceRequestSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   setupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
   cleanupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
+  worktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
 });
 export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
 

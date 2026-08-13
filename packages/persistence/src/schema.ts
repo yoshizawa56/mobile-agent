@@ -58,6 +58,7 @@ export const workspaces = sqliteTable("workspaces", {
   isGit: integer("is_git", { mode: "boolean" }).notNull(),
   setupScriptPath: text("setup_script_path"),
   cleanupScriptPath: text("cleanup_script_path"),
+  worktreeCopyPatterns: text("worktree_copy_patterns").notNull().default("[]"),
   ...timestamps,
 });
 

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, constants, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { accessSync, chmodSync, constants, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type {
@@ -11,6 +11,7 @@ import type {
   AgentSessionRecord,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
+import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
 import {
   defaultAgentDatabaseFile,
   createAgentDatabase,
@@ -361,6 +362,11 @@ export class AgentCommand {
 
     let current = updateSession(session, { status: "setup" });
     await this.sessions.update(current);
+    if (!(await this.copyWorktreeFiles(current, workspace.worktreeCopyPatterns))) {
+      current = updateSession(current, { status: "setup_failed" });
+      await this.sessions.update(current);
+      throw new AgentCommandError(`worktree file copy failed; mapping retained as '${name}'`);
+    }
     if (!(await this.runHook(current, "setup"))) {
       current = updateSession(current, { status: "setup_failed" });
       await this.sessions.update(current);
@@ -489,6 +495,7 @@ export class AgentCommand {
       isGit: Boolean(gitRoot),
       setupScriptPath: existing?.setupScriptPath ?? null,
       cleanupScriptPath: existing?.cleanupScriptPath ?? null,
+      worktreeCopyPatterns: existing?.worktreeCopyPatterns ?? [],
       createdAt: timestamp(),
       updatedAt: timestamp(),
     };
@@ -540,6 +547,56 @@ export class AgentCommand {
   private worktreeBranch(name: string): string {
     const worktreeId = this.env.AGENT_WORKTREE_ID;
     return worktreeId ? `agent/${worktreeId}/${name}` : `agent/${name}`;
+  }
+
+  private async copyWorktreeFiles(session: AgentSessionRecord, configuredPatterns: readonly string[]): Promise<boolean> {
+    if (!session.useWorktree || !session.worktreePath || !configuredPatterns.length) return true;
+
+    const patterns = normalizeWorktreeCopyPatterns(configuredPatterns);
+    if (patterns.some((pattern) => !isValidWorktreeCopyPattern(pattern))) {
+      this.warn("workspace contains an invalid worktree copy pattern");
+      return false;
+    }
+
+    const sourceFiles = listUnmanagedFiles(session.workspaceRoot);
+    const matchedFiles = new Set<string>();
+    for (const pattern of patterns) {
+      const matches = sourceFiles.filter((file) => matchesWorktreeCopyPattern(pattern, file));
+      if (!matches.length) this.warn(`worktree copy pattern matched no unmanaged files: ${pattern}`);
+      for (const file of matches) matchedFiles.add(file);
+    }
+
+    for (const relativePath of [...matchedFiles].sort()) {
+      const sourcePath = resolve(session.workspaceRoot, relativePath);
+      const targetPath = resolve(session.worktreePath, relativePath);
+      if (!isPathWithin(session.workspaceRoot, sourcePath) || !isPathWithin(session.worktreePath, targetPath)) {
+        this.warn(`refusing to copy a path outside the worktree: ${relativePath}`);
+        return false;
+      }
+      try {
+        const sourceStat = lstatSync(sourcePath);
+        if (!sourceStat.isFile()) {
+          this.warn(`refusing to copy a non-regular file: ${relativePath}`);
+          return false;
+        }
+        if (!isPathWithin(session.workspaceRoot, realpathSafe(sourcePath))) {
+          this.warn(`refusing to copy a source path outside the workspace: ${relativePath}`);
+          return false;
+        }
+        mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
+        if (!isPathWithin(session.worktreePath, realpathSafe(dirname(targetPath)))) {
+          this.warn(`refusing to copy through a worktree symlink: ${relativePath}`);
+          return false;
+        }
+        copyFileSync(sourcePath, targetPath);
+        chmodSync(targetPath, sourceStat.mode & 0o777);
+        this.info(`copied unmanaged file '${relativePath}' into worktree`);
+      } catch (error) {
+        this.warn(`could not copy unmanaged file '${relativePath}': ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      }
+    }
+    return true;
   }
 
   private async runHook(session: AgentSessionRecord, kind: "setup" | "cleanup"): Promise<boolean> {
@@ -1008,6 +1065,60 @@ function gitOutputRaw(cwd: string, args: string[]): string {
   } catch {
     return "";
   }
+}
+
+function listUnmanagedFiles(cwd: string): string[] {
+  const files = new Set<string>();
+  for (const args of [
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+  ]) {
+    for (const file of gitOutputRaw(cwd, args).split("\u0000")) {
+      if (file) files.add(file);
+    }
+  }
+  return [...files];
+}
+
+function matchesWorktreeCopyPattern(pattern: string, path: string): boolean {
+  const patternSegments = pattern.split("/");
+  const pathSegments = path.split("/");
+  const memo = new Map<string, boolean>();
+
+  const match = (patternIndex: number, pathIndex: number): boolean => {
+    const key = `${patternIndex}:${pathIndex}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+    let result: boolean;
+    if (patternIndex === patternSegments.length) {
+      result = pathIndex === pathSegments.length;
+    } else if (patternSegments[patternIndex] === "**") {
+      result = match(patternIndex + 1, pathIndex)
+        || (pathIndex < pathSegments.length && match(patternIndex, pathIndex + 1));
+    } else {
+      result = pathIndex < pathSegments.length
+        && matchSegmentPattern(patternSegments[patternIndex]!, pathSegments[pathIndex]!)
+        && match(patternIndex + 1, pathIndex + 1);
+    }
+    memo.set(key, result);
+    return result;
+  };
+
+  return match(0, 0);
+}
+
+function matchSegmentPattern(pattern: string, value: string): boolean {
+  let expression = "^";
+  for (const character of pattern) {
+    if (character === "*") expression += ".*";
+    else expression += /[.\\+^$()|[\]{}]/.test(character) ? `\\${character}` : character;
+  }
+  return new RegExp(`${expression}$`).test(value);
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const remainder = relative(root, candidate);
+  return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
 }
 
 function gitOutputOrEmpty(cwd: string, args: string[]): string {

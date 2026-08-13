@@ -52,6 +52,7 @@ const workspace = {
   isGit: true,
   setupScriptPath: null,
   cleanupScriptPath: null,
+  worktreeCopyPatterns: [],
 };
 
 const cases: TableCase[] = [
@@ -123,12 +124,12 @@ const cases: TableCase[] = [
     name: "registers a workspace with host-side hook paths",
     given: (ctx) => {
       ctx.app = createTestApp(ctx.events, {
-        registerWorkspace: async (input) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null }),
+        registerWorkspace: async (input) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? [] }),
       });
       ctx.request = new Request("http://agentd.local/api/workspaces", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ directory: "/work/mobile-agent", setupScriptPath: "/Users/me/.config/agent/setup", cleanupScriptPath: null }),
+        body: JSON.stringify({ directory: "/work/mobile-agent", setupScriptPath: "/Users/me/.config/agent/setup", cleanupScriptPath: null, worktreeCopyPatterns: [".env", "config/*.local.json"] }),
       });
     },
     when: async (ctx) => {
@@ -136,7 +137,7 @@ const cases: TableCase[] = [
       ctx.body = await ctx.response.json();
     },
     check: [(ctx) => expect(ctx.response?.status).toBe(201)],
-    assert: [(ctx) => expect(ctx.body).toMatchObject({ workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/agent/setup" } })],
+    assert: [(ctx) => expect(ctx.body).toMatchObject({ workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/agent/setup", worktreeCopyPatterns: [".env", "config/*.local.json"] } })],
   },
   {
     name: "filters panes with the session query",
@@ -302,7 +303,7 @@ function createTestApp(
     listWorkspaceDirectories: async () => [workspace],
     browseWorkspaceDirectories: async () => [workspace],
     registerWorkspace: async () => workspace,
-    resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
+    resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
     resolveWorkspaceSelection: async (selection) => ({
       id: selection.workspaceId,
       rootPath: workspace.directory,
@@ -310,6 +311,7 @@ function createTestApp(
       isGit: workspace.isGit,
       setupScriptPath: workspace.setupScriptPath,
       cleanupScriptPath: workspace.cleanupScriptPath,
+      worktreeCopyPatterns: workspace.worktreeCopyPatterns,
       createdAt: "2026-08-10T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
     }),

@@ -8,7 +8,7 @@ import {
   type ServerControlMessage,
 } from "@mobile-agent/protocol";
 import type { AgentdConnection } from "@mobile-agent/agentd-client";
-import { getAgentdWebSocketEndpoint } from "../api/agentd-api";
+import { getAgentdWebSocketEndpoint, openAgentdTerminal } from "../api/agentd-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
 import { installTerminalFlickInput } from "./terminal-flick";
 import { installTerminalSelectionGesture } from "./terminal-selection";
@@ -247,7 +247,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       socket.send(JSON.stringify(message));
     };
 
-    const connect = () => {
+    const connect = async () => {
       if (disposed || terminalClosedRef.current) return;
 
       const previousSocket = socketRef.current;
@@ -256,7 +256,21 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
         closeNetworkSocket(previousSocket);
       }
 
-      const socket = new WebSocket(endpoint);
+      let socket: WebSocket;
+      try {
+        socket = await openAgentdTerminal(connection);
+      } catch {
+        if (!disposed && !terminalClosedRef.current) {
+          setStatus("error");
+          setErrorMessage("agentd authentication failed");
+          scheduleReconnect();
+        }
+        return;
+      }
+      if (disposed || terminalClosedRef.current) {
+        closeNetworkSocket(socket);
+        return;
+      }
       const generation = ++socketGeneration;
       const isCurrentSocket = () => !disposed && socketRef.current === socket && generation === socketGeneration;
       const resumeAttempt = Boolean(resumeRef.current?.target === target);
@@ -334,7 +348,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       });
     };
 
-    connectRef.current = connect;
+    connectRef.current = () => { void connect(); };
     detachRef.current = () => {
       const socket = socketRef.current;
       resumeRef.current = null;
@@ -408,7 +422,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     document.addEventListener("visibilitychange", claimWhenVisible);
     window.addEventListener("focus", claimWhenVisible);
     sendResize();
-    connect();
+    void connect();
 
     return () => {
       disposed = true;

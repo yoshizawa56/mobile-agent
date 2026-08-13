@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { AgentCommand, AgentCommandError } from "./agent-command.js";
+import { PairCommand, PairCommandError } from "./pair-command.js";
 
 const args = process.argv.slice(2);
 
@@ -11,6 +12,15 @@ if (args[0] === "daemon") {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`agent daemon: ${message}\n`);
     process.exitCode = 2;
+  }
+} else if (args[0] === "pair") {
+  const command = new PairCommand();
+  try {
+    process.exitCode = await command.execute(args.slice(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${error instanceof PairCommandError ? "agent pair" : "agent pair: unexpected error"}: ${message}\n`);
+    process.exitCode = error instanceof PairCommandError ? 2 : 1;
   }
 } else {
   const command = new AgentCommand();

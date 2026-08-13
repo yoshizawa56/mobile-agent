@@ -5,6 +5,7 @@ import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from
 import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, getAgentdConnection, registerWorkspace } from "../api/agentd-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
+import { pairBrowserFromQr } from "../connection/browser-auth";
 import type { ProductStage } from "../../app/workspace-routes";
 import {
   clearBrowserConnectionProfile,
@@ -82,6 +83,9 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [serveUrl, setServeUrl] = useState(() => readBrowserConnectionProfile()?.serveUrl ?? "");
   const [connectionSettingsError, setConnectionSettingsError] = useState<string | null>(null);
   const [isSavingConnection, setIsSavingConnection] = useState(false);
+  const [isScanningQr, setIsScanningQr] = useState(false);
+  const [isPairingQr, setIsPairingQr] = useState(false);
+  const [pairingMessage, setPairingMessage] = useState<string | null>(null);
 
   const navigateTo = useCallback((path: string) => {
     void navigate({ to: path });
@@ -411,6 +415,9 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     hasSavedProfile: Boolean(connectionProfile),
     isSaving: isSavingConnection,
     errorMessage: connectionSettingsError,
+    isScanningQr,
+    isPairingQr,
+    pairingMessage,
     onNameChange: setConnectionName,
     onServeUrlChange: (value) => {
       setServeUrl(value);
@@ -439,8 +446,47 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setServeUrl("");
       navigateTo(terminalsPath());
     },
+    onOpenQrScanner: () => {
+      setConnectionSettingsError(null);
+      setPairingMessage(null);
+      setIsScanningQr(true);
+    },
+    onCloseQrScanner: () => setIsScanningQr(false),
+    onQrValue: (value) => {
+      if (isPairingQr) return;
+      setIsScanningQr(false);
+      setIsPairingQr(true);
+      setPairingMessage("QRを確認しています…");
+      setConnectionSettingsError(null);
+      void pairBrowserFromQr(value, {
+        deviceName: connectionName,
+        onProgress: (progress) => {
+          if (progress.phase === "claiming") setPairingMessage("端末を登録する準備をしています…");
+          else if (progress.phase === "awaiting_approval") setPairingMessage("agentd側の承認を待っています…");
+          else setPairingMessage("登録しました。接続しています…");
+        },
+      })
+        .then((result) => {
+          const profile = saveBrowserConnectionProfile({
+            name: connectionName || result.deviceName,
+            serveUrl: result.payload.agentdBaseUrl,
+            serverId: result.serverId,
+          });
+          setConnectionProfile(profile);
+          setConnectionName(profile.name);
+          setServeUrl(profile.serveUrl);
+          navigateTo(terminalsPath());
+        })
+        .catch((error: unknown) => {
+          setConnectionSettingsError(errorMessage(error) ?? "QR pairing failed");
+        })
+        .finally(() => {
+          setIsPairingQr(false);
+          setPairingMessage(null);
+        });
+    },
     onBack: () => navigateTo(terminalsPath()),
-  }), [connectionName, connectionProfile, connectionSettingsError, isSavingConnection, navigate, serveUrl]);
+  }), [connectionName, connectionProfile, connectionSettingsError, isPairingQr, isSavingConnection, isScanningQr, navigate, pairingMessage, serveUrl]);
 
   return {
     stage,

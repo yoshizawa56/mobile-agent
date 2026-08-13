@@ -1,6 +1,15 @@
+import { useEffect } from "react";
 import type { ConnectionSettingsViewModel } from "./connection-settings-viewmodel";
+import { QrPairingScanner } from "./qr-pairing-scanner";
 
 export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSettingsViewModel }) {
+  useEffect(() => {
+    if (!window.location.hash.startsWith("#ma1=") || !viewModel.onQrValue) return;
+    const pairingUrl = window.location.href;
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+    viewModel.onQrValue(pairingUrl);
+  }, [viewModel.onQrValue]);
+
   return (
     <main className="connection-settings-view">
       <header className="connection-settings-toolbar">
@@ -12,8 +21,19 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
         <div className="connection-flow-intro">
           <span className="connection-flow-step"><span className="connection-flow-step-line" /> CONNECTION SETTINGS</span>
           <h1>Where is agentd?</h1>
-          <p>Use the HTTPS address exposed by Tailscale Serve. The browser stores only this address — never an SSH key or password.</p>
+          <p>最初の接続はagent pairのQRで行います。ブラウザ側の秘密鍵はOSのIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
         </div>
+
+        {viewModel.isPairingQr ? <div className="connection-qr-status" role="status">{viewModel.pairingMessage ?? "ペアリング中…"}</div> : null}
+        {viewModel.isScanningQr && viewModel.onQrValue && viewModel.onCloseQrScanner ? (
+          <QrPairingScanner onScan={viewModel.onQrValue} onClose={viewModel.onCloseQrScanner} />
+        ) : null}
+
+        {!viewModel.isScanningQr && !viewModel.isPairingQr && viewModel.onOpenQrScanner ? (
+          <button className="connection-flow-primary connection-qr-open" type="button" onClick={viewModel.onOpenQrScanner}>
+            QRコードを読み取ってペアリング<span>⌁</span>
+          </button>
+        ) : null}
 
         <form className="connection-settings-form" onSubmit={(event) => { event.preventDefault(); viewModel.onSave(); }}>
           <label className="new-session-field">
@@ -29,7 +49,7 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
 
           <div className="connection-settings-note">
             <span className="connection-settings-note-icon">⌁</span>
-            <span><strong>Serve only</strong><small>Network access is controlled by your tailnet ACL. SSH forwarding is a future native-only route.</small></span>
+            <span><strong>Serve + device key</strong><small>Network access is controlled by your tailnet ACL. SSH forwarding and other routes can reuse the same pairing/auth layer.</small></span>
           </div>
           {viewModel.errorMessage ? <p className="new-session-error" role="alert">{viewModel.errorMessage}</p> : null}
 

@@ -1,13 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
 import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { paneKindForCommand, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
+import { AuthStore, createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
+import { AgentdControlServer } from "./auth/control.js";
+import { AuthService, type AuthContext } from "./auth/service.js";
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
@@ -22,6 +24,9 @@ export type AgentdOptions = {
   databaseFile?: string;
   corsOrigin?: string;
   allowedRoots?: string[];
+  controlSocket?: string;
+  webOrigin?: string;
+  agentdBaseUrl?: string;
 };
 
 export type { AgentdApp } from "./http/app.js";
@@ -30,14 +35,23 @@ export { AgentdHttpError, createAgentdApp } from "./http/app.js";
 export function createAgentdServer(options: AgentdOptions) {
   const tmux = new TmuxAdapter();
   const viewportManager = new TmuxViewportManager(tmux);
-  const database = createAgentDatabase(options.databaseFile ?? defaultDatabaseFile());
+  const databaseFile = options.databaseFile ?? defaultDatabaseFile();
+  const database = createAgentDatabase(databaseFile);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
   const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
-  const corsOrigin = options.corsOrigin ?? process.env.AGENTD_CORS_ORIGIN ?? "*";
+  const webOrigin = options.webOrigin ?? process.env.AGENTD_WEB_ORIGIN ?? "http://localhost:5173";
+  const corsOrigin = options.corsOrigin ?? process.env.AGENTD_CORS_ORIGIN ?? webOrigin;
+  const auth = new AuthService({
+    store: new AuthStore(database.sqlite),
+    webOrigin,
+    agentdBaseUrl: options.agentdBaseUrl ?? process.env.AGENTD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
+  });
+  const controlSocket = options.controlSocket ?? process.env.AGENTD_CONTROL_SOCKET ?? `${databaseFile === ":memory:" ? `${homedir()}/.local/state/mobile-agent/agentd` : databaseFile}.control.sock`;
+  const controlServer = new AgentdControlServer({ socketPath: controlSocket, auth });
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanes(),
@@ -56,6 +70,7 @@ export function createAgentdServer(options: AgentdOptions) {
   });
 
   const app = createAgentdApp({
+    auth,
     corsOrigin,
     hookToken,
     getTerminal: getLocalTerminal,
@@ -82,24 +97,37 @@ export function createAgentdServer(options: AgentdOptions) {
   const eventWebSocketServer = new WebSocketServer({ noServer: true });
   const terminalSessions = new TerminalSessionRegistry();
 
-  webSocketServer.on("connection", (socket) => {
+  webSocketServer.on("connection", (socket: WebSocket, _request: IncomingMessage, context: AuthContext) => {
+    auth.trackSocket(context, socket);
     new TerminalSession(socket, {
       cwd: process.cwd(),
       defaultTarget,
       viewportManager,
       sessions: terminalSessions,
+      authDeviceId: context.deviceId,
     });
   });
 
-  eventWebSocketServer.on("connection", (socket) => {
+  eventWebSocketServer.on("connection", (socket: WebSocket, _request: IncomingMessage, context: AuthContext) => {
+    auth.trackSocket(context, socket);
     eventHub.add(socket);
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
-    const pathname = new URL(request.url ?? "/", "http://agentd.local").pathname;
+    const requestUrl = new URL(request.url ?? "/", "http://agentd.local");
+    const pathname = requestUrl.pathname;
+    if (!auth.allowsWebOrigin(request.headers.origin)) {
+      rejectUpgrade(socket);
+      return;
+    }
     if (pathname === "/events") {
+      const context = auth.consumeWebSocketTicket(requestUrl.searchParams.get("ticket") ?? undefined, "events");
+      if (!context) {
+        rejectUpgrade(socket);
+        return;
+      }
       eventWebSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
-        eventWebSocketServer.emit("connection", webSocket, request);
+        eventWebSocketServer.emit("connection", webSocket, request, context);
       });
       return;
     }
@@ -108,8 +136,13 @@ export function createAgentdServer(options: AgentdOptions) {
       return;
     }
 
+    const context = auth.consumeWebSocketTicket(requestUrl.searchParams.get("ticket") ?? undefined, "terminal");
+    if (!context) {
+      rejectUpgrade(socket);
+      return;
+    }
     webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
-      webSocketServer.emit("connection", webSocket, request);
+      webSocketServer.emit("connection", webSocket, request, context);
     });
   });
 
@@ -125,6 +158,7 @@ export function createAgentdServer(options: AgentdOptions) {
       httpServer.listen(options.port, options.host, () => {
         tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
+        controlServer.start();
         console.log(`agentd listening on http://${options.host}:${options.port}`);
       });
     },
@@ -135,6 +169,7 @@ export function createAgentdServer(options: AgentdOptions) {
       webSocketServer.close();
       eventWebSocketServer.close();
       eventHub.close();
+      controlServer.stop();
       httpServer.close();
       database.close();
     },
@@ -376,6 +411,11 @@ function displayCwd(cwd: string): string {
 
 function displayHostName(host: string): string {
   return host.split(".")[0] || host;
+}
+
+function rejectUpgrade(socket: NodeJS.WritableStream & { destroy: () => void; write: (chunk: string) => boolean }): void {
+  socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+  socket.destroy();
 }
 
 function shellQuote(value: string): string {

@@ -854,6 +854,7 @@ export class AgentCommand {
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
+  agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
   agent daemon start [--host HOST] [--port PORT]
 
 Run options:

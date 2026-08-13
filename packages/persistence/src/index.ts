@@ -30,6 +30,19 @@ import {
 } from "./schema.js";
 
 export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
+export { AuthStore, AuthStoreError } from "./auth.js";
+export type {
+  AuthDeviceRecord,
+  AuthDeviceStatus,
+  AuthDeviceType,
+  AuthPairingRecord,
+  AuthPairingStatus,
+  AuthSessionRecord,
+  ClaimPairingInput,
+  ClaimPairingResult,
+  CreatePairingInput,
+  CreatePairingResult,
+} from "./auth.js";
 
 export type AgentDatabase = {
   db: ReturnType<typeof drizzle>;
@@ -329,6 +342,61 @@ function ensureSchema(sqlite: Database): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS agent_sessions_workspace_name_index ON agent_sessions (workspace_id, name);
     CREATE INDEX IF NOT EXISTS agent_sessions_workspace_index ON agent_sessions (workspace_id);
+    CREATE TABLE IF NOT EXISTS auth_metadata (
+      id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+      server_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_devices (
+      device_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      public_key_jwk TEXT NOT NULL,
+      key_fingerprint TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      device_type TEXT NOT NULL,
+      platform TEXT,
+      client_version TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      approved_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_devices_status_index ON auth_devices (status);
+    CREATE TABLE IF NOT EXISTS auth_pairings (
+      pairing_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      web_origin TEXT NOT NULL,
+      agentd_base_url TEXT NOT NULL,
+      secret_hash TEXT NOT NULL UNIQUE,
+      claim_token_hash TEXT UNIQUE,
+      status TEXT NOT NULL,
+      offered_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      claim_expires_at TEXT,
+      claimed_at TEXT,
+      approved_at TEXT,
+      pending_public_key_jwk TEXT,
+      pending_fingerprint TEXT,
+      pending_display_name TEXT,
+      pending_device_type TEXT,
+      pending_platform TEXT,
+      pending_client_version TEXT,
+      device_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_pairings_status_index ON auth_pairings (status);
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      session_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_sessions_device_index ON auth_sessions (device_id);
+    CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index ON auth_sessions (expires_at);
   `);
   ensureColumn(sqlite, "workspaces", "setup_script_path", "TEXT");
   ensureColumn(sqlite, "workspaces", "cleanup_script_path", "TEXT");

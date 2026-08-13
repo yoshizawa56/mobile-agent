@@ -27,8 +27,12 @@ export function getAgentdWebSocketEndpoint(connection?: AgentdConnection): strin
   return (connection ?? getAgentdConnection()).websocketUrl;
 }
 
-export function openAgentdEvents(connection?: AgentdConnection): WebSocket {
+export function openAgentdEvents(connection?: AgentdConnection): Promise<WebSocket> {
   return agentdClient(connection).openEvents();
+}
+
+export function openAgentdTerminal(connection?: AgentdConnection): Promise<WebSocket> {
+  return agentdClient(connection).openTerminal();
 }
 
 function agentdClient(connection?: AgentdConnection) {

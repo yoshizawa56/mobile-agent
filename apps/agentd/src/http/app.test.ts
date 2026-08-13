@@ -288,6 +288,7 @@ function createTestApp(
   overrides: Partial<Parameters<typeof createAgentdApp>[0]> = {},
 ): AgentdApp {
   const app = createAgentdApp({
+    allowUnauthenticated: true,
     corsOrigin: "*",
     hookToken: "test-token",
     getTerminal: async () => ({

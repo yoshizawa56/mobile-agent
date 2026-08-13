@@ -27,12 +27,12 @@ esac
 if [ "${MOBILE_AGENT_COPY_DB:-1}" = "1" ]; then
   if [ -f "$base_database_file" ]; then
     if [ "${MOBILE_AGENT_DB_COPY_FORCE:-0}" = "1" ]; then
-      "$generic_directory/copy-sqlite.mjs" \
+      "$generic_directory/copy-sqlite.sh" \
         --source "$base_database_file" \
         --target "$database_file" \
         --force
     else
-      "$generic_directory/copy-sqlite.mjs" \
+      "$generic_directory/copy-sqlite.sh" \
         --source "$base_database_file" \
         --target "$database_file"
     fi
@@ -51,7 +51,7 @@ if [ -z "${AGENT_WORKSPACE:-}" ] || [ -z "${AGENT_NAME:-}" ]; then
   agent_hook_die "AGENT_WORKSPACE and AGENT_NAME are required for deterministic port allocation"
 fi
 
-"$generic_directory/allocate-ports.mjs" allocate \
+"$generic_directory/allocate-ports.sh" allocate \
   --key "$AGENT_WORKSPACE:$AGENT_NAME" \
   --env-path "$env_file" \
   --stride "$port_stride" \

@@ -5,13 +5,13 @@
 ## 構成
 
 - `generic/`: リポジトリに依存しない小さな部品
-  - `copy-sqlite.mjs`: SQLiteのWALを含む状態を `VACUUM INTO` でスナップショットコピー
-  - `allocate-ports.mjs`: workspaceとnameのハッシュからworktreeごとのポートを決定
+  - `copy-sqlite.sh`: 停止済みSQLiteの単一ファイルコピー
+  - `allocate-ports.sh`: workspaceとnameのチェックサムからworktreeごとのポートを決定
   - `run-sqlite-migration.sh`: 設定したmigrationコマンドにworktreeのDBパスを渡す
   - `hook.sh`: setup / cleanup hook共通の補助関数
 - `mobile-agent/`: 上記をmobile-agentの開発手順に合わせて組み合わせた例
 
-`copy-sqlite.mjs` はBunの組み込みSQLiteを使います。このリポジトリと同じくBunを使うプロジェクトなら追加依存なしで利用でき、リポジトリ固有のテーブル名やmigration方式には依存しません。
+`copy-sqlite.sh` はPOSIX shellと標準コマンドだけで動き、Node.jsやBunを必要としません。コピー元は書き込みを停止し、WALまたはrollback journalをcheckpoint済みにしてください。非空のjournalが残っている場合は、データを欠落させないためコピーを中止します。
 
 setup hookは次の順に処理します。
 
@@ -27,7 +27,7 @@ cleanup hookはポート解放を行いません。ポートは入力から機�
 hookはworktreeの中にコピーして使うものではなく、ホスト側に存在する実行可能ファイルとして登録します。まず実行権限を付けます。
 
 ```sh
-chmod +x examples/hooks/generic/*.sh examples/hooks/generic/*.mjs
+chmod +x examples/hooks/generic/*.sh
 chmod +x examples/hooks/mobile-agent/*.sh
 ```
 
@@ -86,7 +86,7 @@ allocatorはポートregistryを作らず、外部プロセスへのbind確認�
 SQLiteのコピー:
 
 ```sh
-examples/hooks/generic/copy-sqlite.mjs \
+examples/hooks/generic/copy-sqlite.sh \
   --source /path/to/base.sqlite \
   --target "$AGENT_WORKTREE/.local/app.sqlite"
 ```
@@ -94,7 +94,7 @@ examples/hooks/generic/copy-sqlite.mjs \
 ポート割当とenv更新:
 
 ```sh
-examples/hooks/generic/allocate-ports.mjs allocate \
+examples/hooks/generic/allocate-ports.sh allocate \
   --key "$AGENT_WORKSPACE:$AGENT_NAME" \
   --env-path "$AGENT_WORKTREE/.env" \
   --stride 3 \

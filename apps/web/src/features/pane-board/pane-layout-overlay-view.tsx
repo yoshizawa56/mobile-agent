@@ -26,6 +26,9 @@ export function PaneLayoutOverlay({
   const overlayRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeWindow = windows.find((window) => window.id === activeWindowId) ?? windows[0];
+  const useCompactPaneList = activeWindow
+    ? activeWindow.hasGeometry && paneLayoutNeedsCompactTargets(activeWindow.panes, activeWindow.windowWidth, activeWindow.windowHeight)
+    : false;
 
   useEffect(() => {
     if (selectedPane && selectedPane.windowId !== activeWindowId) setActiveWindowId(selectedPane.windowId);
@@ -101,15 +104,15 @@ export function PaneLayoutOverlay({
             <span>window {windowNumber(activeWindow.id)}</span>
             <span>{activeWindow.panes.length} panes</span>
           </div>
-        <div className={`tmux-window-panes${activeWindow.hasGeometry ? " tmux-window-panes-real" : ` tmux-window-panes-${Math.min(activeWindow.panes.length, 3)}`}`}>
+        <div className={`tmux-window-panes${useCompactPaneList ? " tmux-window-panes-compact" : activeWindow.hasGeometry ? " tmux-window-panes-real" : ` tmux-window-panes-${Math.min(activeWindow.panes.length, 3)}`}`}>
             {activeWindow.panes.map((pane) => (
               <button
-                className={`tmux-layout-pane${activeWindow.hasGeometry ? " tmux-layout-pane-real" : ""}${pane.tmuxPaneId === selectedTarget ? " tmux-layout-pane-selected" : ""}`}
+                className={`tmux-layout-pane${activeWindow.hasGeometry && !useCompactPaneList ? " tmux-layout-pane-real" : ""}${pane.tmuxPaneId === selectedTarget ? " tmux-layout-pane-selected" : ""}`}
                 key={pane.id}
                 type="button"
                 onClick={() => onSelect(pane)}
                 aria-label={`Select ${pane.name}`}
-                style={activeWindow.hasGeometry ? paneGeometryStyle(pane, activeWindow) : undefined}
+                style={activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined}
               >
                 <span className="tmux-layout-pane-id">{pane.tmuxPaneId}</span>
                 <strong>{pane.name}</strong>
@@ -179,6 +182,22 @@ function groupByWindow(panes: PaneSummary[]): Array<{
 export function hasPaneGeometry(pane: Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">): boolean {
   return [pane.left, pane.top].every((value) => typeof value === "number" && value >= 0)
     && [pane.width, pane.height, pane.windowWidth, pane.windowHeight].every((value) => typeof value === "number" && value > 0);
+}
+
+export const MIN_TOUCH_PANE_WIDTH_RATIO = 0.16;
+export const MIN_TOUCH_PANE_HEIGHT_RATIO = 0.25;
+
+export function paneLayoutNeedsCompactTargets(
+  panes: Array<Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">>,
+  windowWidth?: number,
+  windowHeight?: number,
+): boolean {
+  if (!windowWidth || !windowHeight || windowWidth <= 0 || windowHeight <= 0) return false;
+  return panes.some((pane) => {
+    if (!hasPaneGeometry(pane)) return false;
+    return pane.width! / windowWidth < MIN_TOUCH_PANE_WIDTH_RATIO
+      || pane.height! / windowHeight < MIN_TOUCH_PANE_HEIGHT_RATIO;
+  });
 }
 
 function paneGeometryStyle(

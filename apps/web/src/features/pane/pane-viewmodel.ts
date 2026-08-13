@@ -10,6 +10,7 @@ import {
 import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import { getAgentdWebSocketEndpoint, openAgentdTerminal } from "../api/agentd-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
+import { mobileAgentBridge } from "../../platform/mobile-bridge";
 import { installTerminalFlickInput } from "./terminal-flick";
 import { installTerminalSelectionGesture } from "./terminal-selection";
 
@@ -158,6 +159,10 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       return false;
     }
   }, [showSelectionNotice]);
+
+  useEffect(() => mobileAgentBridge.onAppStateChange((state) => {
+    if (state === "active" && !terminalClosedRef.current) reconnect();
+  }), [reconnect]);
 
   useEffect(() => {
     // The terminal surface is mounted by the control-room route. The hook lives
@@ -364,6 +369,26 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       setStatus("closed");
     };
 
+    let scrollRemainder = 0;
+    const scrollTerminal = (deltaY: number) => {
+      const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
+      const rect = screen.getBoundingClientRect();
+      const cellHeight = terminal.rows > 0 && rect.height > 0 ? rect.height / terminal.rows : 0;
+      if (!cellHeight) return;
+
+      scrollRemainder += -deltaY / cellHeight;
+      const lineDelta = scrollRemainder > 0 ? Math.floor(scrollRemainder) : Math.ceil(scrollRemainder);
+      if (!lineDelta) return;
+      scrollRemainder -= lineDelta;
+      terminal.scrollLines(lineDelta);
+    };
+    const flickOptions = {
+      onGestureStart: () => {
+        scrollRemainder = 0;
+      },
+      onScroll: scrollTerminal,
+    };
+
     if (isMockMode()) {
       setStatus("connected");
       setViewportReason("attached");
@@ -375,7 +400,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       sendResize();
       const flickCleanup = installTerminalFlickInput(container, () => {
         // The mock is intentionally read-only. Real input is wired to agentd below.
-      });
+      }, flickOptions);
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
       });
@@ -408,10 +433,14 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
     });
-    const flickCleanup = installTerminalFlickInput(container, (data) => {
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
-    });
+    const flickCleanup = installTerminalFlickInput(
+      container,
+      (data) => {
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+      },
+      flickOptions,
+    );
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
     });

@@ -1,0 +1,5 @@
+// Copy this file to local.xcconfig and set the fixed Tailscale Serve URL for
+// the Local scheme. The copied file is ignored by Git.
+MOBILE_AGENT_WEB_SCHEME = https
+MOBILE_AGENT_WEB_HOST = your-machine.tailnet.ts.net
+MOBILE_AGENT_WEB_PORT = 8449

@@ -11,6 +11,8 @@ Thank you for helping build a safer, more useful way to operate terminal agents 
 
 The project is currently pre-alpha. Interfaces may change without a compatibility promise while the core architecture is being stabilized.
 
+Reusable worktree setup and cleanup hook examples live in [`examples/hooks`](examples/hooks/README.md). Keep hooks idempotent, avoid committing local databases or credentials, and remember that registered hook paths are host-side executable paths.
+
 ## Development setup
 
 ```sh

@@ -111,6 +111,10 @@ bun run --filter @mobile-agent/web preview --host 0.0.0.0 --port 4173
 TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 4173
 ```
 
+## Worktree hook examples
+
+Reusable setup / cleanup hook examples are available in [`examples/hooks`](examples/hooks/README.md). The generic pieces cover SQLite snapshots, deterministic per-worktree development port allocation, env-file updates, and optional SQLite migration commands. The `mobile-agent` example combines them for isolated worktree development.
+
 ## Agent CLI
 
 The lifecycle previously implemented by `bin/agent` in dotfiles has been migrated to TypeScript in this repository. SQLite is the canonical state source; the legacy `.state` format is intentionally not read.

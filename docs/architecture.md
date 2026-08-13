@@ -170,6 +170,7 @@ apps/
 
 packages/
   agentd-client/          # Hono RPC, HTTP DTO validation, WebSocket client
+  cli-adapters/           # CLI infrastructure adapters and composition factories
   domain/                 # entities, value objects, and state machines
   application/            # use cases and ports
   protocol/               # WebSocket DTOs, events, and schemas
@@ -255,6 +256,7 @@ Application use cases
   CreateWorkspace
   ConfigureAgent
   AcknowledgeWaiting
+  PairDevice
                          |
                          v
 Domain
@@ -271,6 +273,8 @@ Ports
   EventPublisher
   NotificationGateway
   SecretStore
+  PairingControlPort
+  PairingPresenterPort
 ~~~
 
 ### Application use-case principles

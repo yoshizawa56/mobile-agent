@@ -9,6 +9,9 @@ export type AgentdCliOptions = {
   host: string;
   port: number;
   pidFile: string;
+  controlSocket?: string;
+  webOrigin?: string;
+  agentdBaseUrl?: string;
 };
 
 type AgentdCommand = "start" | "status" | "stop" | "restart" | "ensure";
@@ -100,6 +103,9 @@ function parseAgentdOptions(args: string[]): AgentdCliOptions {
   let host = process.env.AGENTD_HOST ?? "127.0.0.1";
   let port = Number(process.env.AGENTD_PORT ?? 4317);
   let pidFile = defaultAgentdPidFile(process.env);
+  let controlSocket = process.env.AGENTD_CONTROL_SOCKET;
+  let webOrigin = process.env.AGENTD_WEB_ORIGIN;
+  let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -109,10 +115,16 @@ function parseAgentdOptions(args: string[]): AgentdCliOptions {
     else if (argument.startsWith("--port=")) port = parsePort("--port", argument.slice("--port=".length));
     else if (argument === "--pid-file") pidFile = resolve(requireValue(argument, args[++index]));
     else if (argument.startsWith("--pid-file=")) pidFile = resolve(argument.slice("--pid-file=".length));
+    else if (argument === "--control-socket") controlSocket = requireValue(argument, args[++index]);
+    else if (argument.startsWith("--control-socket=")) controlSocket = argument.slice("--control-socket=".length);
+    else if (argument === "--web-origin") webOrigin = requireValue(argument, args[++index]);
+    else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
+    else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
+    else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
     else throw new Error(`unknown agent daemon option: ${argument}`);
   }
 
-  return { host, port, pidFile };
+  return { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl };
 }
 
 function defaultAgentdPidFile(environment: NodeJS.ProcessEnv): string {
@@ -224,6 +236,9 @@ function spawnCurrentDaemon(options: AgentdCliOptions) {
   const sourceEntry = entry && /\.(?:[cm]?js|ts)$/.test(entry) && existsSync(entry);
   const args = sourceEntry ? [entry, "daemon", "start"] : ["daemon", "start"];
   args.push("--host", options.host, "--port", String(options.port), "--pid-file", options.pidFile);
+  if (options.controlSocket) args.push("--control-socket", options.controlSocket);
+  if (options.webOrigin) args.push("--web-origin", options.webOrigin);
+  if (options.agentdBaseUrl) args.push("--agentd-base-url", options.agentdBaseUrl);
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
     detached: true,
@@ -311,7 +326,7 @@ function displayHost(host: string): string {
 
 function printUsage(command: AgentdCommand): void {
   const usage = command === "start"
-    ? "Usage: agent daemon start [--host HOST] [--port PORT] [--pid-file PATH]"
+    ? "Usage: agent daemon start [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL]"
     : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH]`;
   process.stdout.write(`${usage}\n\nCommands: start, status, stop, restart, ensure\n`);
 }

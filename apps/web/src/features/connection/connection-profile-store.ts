@@ -1,9 +1,11 @@
 import { createServeConnection, type AgentdConnection } from "@mobile-agent/agentd-client";
+import { createBrowserAgentdAuth } from "./browser-auth";
 
 export type BrowserConnectionProfile = {
   id: string;
   name: string;
   serveUrl: string;
+  serverId?: string;
   updatedAt: string;
 };
 
@@ -22,13 +24,14 @@ export function readBrowserConnectionProfile(storage: Storage | undefined = getS
 }
 
 export function saveBrowserConnectionProfile(
-  input: Pick<BrowserConnectionProfile, "name" | "serveUrl">,
+  input: Pick<BrowserConnectionProfile, "name" | "serveUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
   const profile: BrowserConnectionProfile = {
     id: "default",
     name: input.name.trim() || new URL(input.serveUrl).hostname,
     serveUrl: normalizeServeUrl(input.serveUrl),
+    ...(input.serverId ? { serverId: input.serverId } : {}),
     updatedAt: new Date().toISOString(),
   };
   parseProfile(profile);
@@ -41,7 +44,10 @@ export function clearBrowserConnectionProfile(storage: Storage | undefined = get
 }
 
 export function connectionForProfile(profile: BrowserConnectionProfile | null): AgentdConnection | undefined {
-  return profile ? createServeConnection(profile.serveUrl) : undefined;
+  if (!profile) return undefined;
+  const connection = createServeConnection(profile.serveUrl);
+  connection.auth = createBrowserAgentdAuth(connection);
+  return connection;
 }
 
 export function normalizeServeUrl(value: string): string {
@@ -65,6 +71,7 @@ function parseProfile(value: unknown): BrowserConnectionProfile {
     id: candidate.id,
     name: candidate.name,
     serveUrl: normalizeServeUrl(candidate.serveUrl),
+    ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };
 }

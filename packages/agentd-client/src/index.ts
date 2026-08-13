@@ -33,7 +33,13 @@ export type AgentdConnection = {
   websocketUrl: string;
   eventsWebsocketUrl?: string;
   route?: AgentdRouteKind;
+  auth?: AgentdAuthProvider;
   close?: () => Promise<void>;
+};
+
+export type AgentdAuthProvider = {
+  getAccessToken: () => Promise<string>;
+  getWebSocketTicket: (endpoint: "terminal" | "events") => Promise<string>;
 };
 
 export type AgentdRouteProvider = {
@@ -69,7 +75,11 @@ export function createSameOriginConnection(origin: string): AgentdConnection {
 }
 
 export function createAgentdClient(connection: AgentdConnection) {
-  const http = hc<AgentdApp>(ensureTrailingSlash(connection.httpBaseUrl));
+  const http = hc<AgentdApp>(ensureTrailingSlash(connection.httpBaseUrl), {
+    headers: connection.auth
+      ? async () => ({ authorization: `Bearer ${await connection.auth!.getAccessToken()}` })
+      : undefined,
+  });
 
   return {
     health: async (): Promise<AgentdHealth> => parseResponse(await http.health.$get(), agentdHealthSchema),
@@ -96,10 +106,18 @@ export function createAgentdClient(connection: AgentdConnection) {
       const validated = createPaneRequestSchema.parse(input);
       return parseResponse(await http.api.panes.$post({ json: validated }), paneResponseSchema).then((data) => data.pane);
     },
-    openTerminal: (): WebSocket => new WebSocket(connection.websocketUrl),
-    openEvents: (): WebSocket => new WebSocket(connection.eventsWebsocketUrl ?? eventWebSocketUrl(connection.websocketUrl)),
+    openTerminal: async (): Promise<WebSocket> => new WebSocket(await websocketEndpoint(connection, "terminal")),
+    openEvents: async (): Promise<WebSocket> => new WebSocket(await websocketEndpoint(connection, "events")),
     connection,
   };
+}
+
+async function websocketEndpoint(connection: AgentdConnection, endpoint: "terminal" | "events"): Promise<string> {
+  const base = endpoint === "terminal" ? connection.websocketUrl : connection.eventsWebsocketUrl ?? eventWebSocketUrl(connection.websocketUrl);
+  if (!connection.auth) return base;
+  const url = new URL(base);
+  url.searchParams.set("ticket", await connection.auth.getWebSocketTicket(endpoint));
+  return url.toString();
 }
 
 function createUrlConnection(baseUrl: string, route: AgentdRouteKind): AgentdConnection {

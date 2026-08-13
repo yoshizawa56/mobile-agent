@@ -922,6 +922,7 @@ export class AgentCommand {
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
+  agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
   agent daemon <start|status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
   agent serve tailscale [--port PORT] [--agentd-port PORT]
   agent dev [serve tailscale]

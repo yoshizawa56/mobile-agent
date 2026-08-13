@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, createSessionRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion, workspaceSelectionSchema } from "./index.js";
+import { agentdControlRequestSchema, agentdControlResponseSchema, agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, createSessionRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion, workspaceSelectionSchema } from "./index.js";
 
 type TableCase = {
   name: string;
@@ -122,6 +122,30 @@ describe("agentd event protocol", () => {
     },
   ])("$name", ({ input, valid }) => {
     expect(agentdEventSchema.safeParse(input).success).toBe(valid);
+  });
+});
+
+describe("agentd pairing control protocol", () => {
+  it("accepts a pairing request and response", () => {
+    expect(agentdControlRequestSchema.safeParse({
+      type: "create_pairing",
+      webOrigin: "https://web.example",
+      agentdBaseUrl: "https://agentd.example",
+    }).success).toBe(true);
+    expect(agentdControlResponseSchema.safeParse({
+      type: "pairing_result",
+      pairingId: "pairing-1234567890123456",
+      status: "approved",
+      deviceId: "device-1",
+    }).success).toBe(true);
+  });
+
+  it("rejects a pairing request with missing endpoint settings", () => {
+    expect(agentdControlRequestSchema.safeParse({ type: "create_pairing" }).success).toBe(false);
+  });
+
+  it("rejects an unrecognized control response", () => {
+    expect(agentdControlResponseSchema.safeParse({ type: "unexpected" }).success).toBe(false);
   });
 });
 

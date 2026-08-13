@@ -28,7 +28,7 @@ export function useAgentdEvents(connection: AgentdConnection, connectionKey: str
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (isMockMode()) return;
+    if (isMockMode() || !connection.auth) return;
 
     let disposed = false;
     let socket: WebSocket | undefined;
@@ -50,12 +50,17 @@ export function useAgentdEvents(connection: AgentdConnection, connectionKey: str
       }, delay);
     };
 
-    const connect = () => {
+    const connect = async () => {
       if (disposed) return;
       try {
-        socket = openAgentdEvents(connection);
+        socket = await openAgentdEvents(connection);
       } catch {
         scheduleReconnect();
+        return;
+      }
+      if (disposed) {
+        socket.close();
+        socket = undefined;
         return;
       }
 
@@ -84,7 +89,7 @@ export function useAgentdEvents(connection: AgentdConnection, connectionKey: str
       });
     };
 
-    connect();
+    void connect();
 
     return () => {
       disposed = true;

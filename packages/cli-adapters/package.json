@@ -1,25 +1,24 @@
 {
-  "name": "@mobile-agent/agent-cli",
+  "name": "@mobile-agent/cli-adapters",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "bin": {
-    "agent": "dist/index.js"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "bunx --bun tsc -p tsconfig.build.json",
-    "dev": "bun src/index.ts",
     "test": "bun test src",
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mobile-agent/agentd": "workspace:*",
     "@mobile-agent/application": "workspace:*",
-    "@mobile-agent/cli-adapters": "workspace:*",
-    "@mobile-agent/domain": "workspace:*",
-    "@mobile-agent/persistence": "workspace:*",
-    "@mobile-agent/tailscale": "workspace:*"
+    "@mobile-agent/protocol": "workspace:*",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

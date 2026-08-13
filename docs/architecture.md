@@ -255,6 +255,7 @@ Application use cases
   CreateWorkspace
   ConfigureAgent
   AcknowledgeWaiting
+  PairDevice
                          |
                          v
 Domain
@@ -271,6 +272,8 @@ Ports
   EventPublisher
   NotificationGateway
   SecretStore
+  PairingControlPort
+  PairingPresenterPort
 ~~~
 
 ### Application use-case principles

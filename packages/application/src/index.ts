@@ -7,6 +7,18 @@ import type {
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 
+export {
+  PairDevice,
+  type ApprovedDevice,
+  type PairDeviceInput,
+  type PairDeviceResult,
+  type PairingClaim,
+  type PairingControlPort,
+  type PairingDeviceType,
+  type PairingOffer,
+  type PairingPresenterPort,
+} from "./pair-device.js";
+
 export type PaneFilter = {
   state?: RunState;
   kind?: PaneRecord["kind"];

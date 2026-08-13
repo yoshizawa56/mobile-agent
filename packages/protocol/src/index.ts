@@ -46,6 +46,60 @@ export const pairingQrPayloadSchema = z.object({
 }).strict();
 export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
 
+const pairingClaimNotificationSchema = z.object({
+  pairingId: z.string().min(16).max(256),
+  serverId: z.string().min(16).max(256),
+  deviceName: displayValueSchema,
+  deviceType: authDeviceTypeSchema,
+  platform: z.string().nullable(),
+  clientVersion: z.string().nullable(),
+  keyFingerprint: z.string().min(1).max(256),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
+
+export const agentdControlRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("create_pairing"),
+    webOrigin: z.string().url(),
+    agentdBaseUrl: z.string().url(),
+  }).strict(),
+  z.object({
+    type: z.literal("approve_pairing"),
+    pairingId: z.string().min(16).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("reject_pairing"),
+    pairingId: z.string().min(16).max(256),
+  }).strict(),
+]);
+export type AgentdControlRequest = z.infer<typeof agentdControlRequestSchema>;
+
+export const agentdControlResponseSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("pairing_created"),
+    pairingId: z.string().min(16).max(256),
+    pairingUrl: z.string().url(),
+    payload: pairingQrPayloadSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("pairing_claimed"),
+    ...pairingClaimNotificationSchema.shape,
+  }).strict(),
+  z.object({
+    type: z.literal("pairing_result"),
+    pairingId: z.string().min(16).max(256),
+    status: z.enum(["approved", "rejected"]),
+    deviceId: z.string().min(1).max(256).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("error"),
+    code: z.string().min(1).max(120),
+    message: z.string().min(1).max(4_096),
+  }).strict(),
+]);
+export type AgentdControlResponse = z.infer<typeof agentdControlResponseSchema>;
+
 export const authInfoSchema = z.object({
   protocolVersion: z.literal(protocolVersion),
   serverId: z.string().min(16).max(256),

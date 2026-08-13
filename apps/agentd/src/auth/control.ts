@@ -1,18 +1,13 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { AuthService, pairingPayloadUrl, type PairingClaimNotification } from "./service.js";
-
-type ControlRequest =
-  | { type: "create_pairing"; webOrigin?: string; agentdBaseUrl?: string }
-  | { type: "approve_pairing"; pairingId: string }
-  | { type: "reject_pairing"; pairingId: string };
-
-type ControlResponse =
-  | { type: "pairing_created"; pairingId: string; qrUrl: string; payload: ReturnType<AuthService["createPairing"]> }
-  | ({ type: "pairing_claimed" } & PairingClaimNotification)
-  | { type: "pairing_result"; pairingId: string; status: "approved" | "rejected"; deviceId?: string }
-  | { type: "error"; code: string; message: string };
+import {
+  agentdControlRequestSchema,
+  agentdControlResponseSchema,
+  type AgentdControlResponse,
+  type PairingClaimNotification,
+} from "@mobile-agent/protocol";
+import { AuthService, pairingPayloadUrl } from "./service.js";
 
 export type AgentdControlServerOptions = {
   socketPath: string;
@@ -78,19 +73,25 @@ export class AgentdControlServer {
   }
 
   private handleRequest(socket: Socket, line: string): void {
-    let request: ControlRequest;
+    let rawRequest: unknown;
     try {
-      request = JSON.parse(line) as ControlRequest;
+      rawRequest = JSON.parse(line) as unknown;
     } catch {
       this.send(socket, { type: "error", code: "invalid_request", message: "control request must be valid JSON" });
       return;
     }
+    const parsedRequest = agentdControlRequestSchema.safeParse(rawRequest);
+    if (!parsedRequest.success) {
+      this.send(socket, { type: "error", code: "invalid_request", message: "control request has an invalid shape" });
+      return;
+    }
+    const request = parsedRequest.data;
 
     try {
       if (request.type === "create_pairing") {
         const payload = this.options.auth.createPairing({ webOrigin: request.webOrigin, agentdBaseUrl: request.agentdBaseUrl });
         this.pairingOwners.set(payload.pairingId, socket);
-        this.send(socket, { type: "pairing_created", pairingId: payload.pairingId, qrUrl: pairingPayloadUrl(payload), payload });
+        this.send(socket, { type: "pairing_created", pairingId: payload.pairingId, pairingUrl: pairingPayloadUrl(payload), payload });
         return;
       }
       if (request.type === "approve_pairing") {
@@ -114,8 +115,8 @@ export class AgentdControlServer {
     if (owner && !owner.destroyed) this.send(owner, { type: "pairing_claimed", ...notification });
   }
 
-  private send(socket: Socket, response: ControlResponse): void {
-    if (!socket.destroyed) socket.write(`${JSON.stringify(response)}\n`);
+  private send(socket: Socket, response: AgentdControlResponse): void {
+    if (!socket.destroyed) socket.write(`${JSON.stringify(agentdControlResponseSchema.parse(response))}\n`);
   }
 }
 

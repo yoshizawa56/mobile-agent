@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { AgentCommand, AgentCommandError } from "./agent-command.js";
 import { PairCommand, PairCommandError } from "./pair-command.js";
+import { createPairDeviceRuntime } from "./pair-composition.js";
 
 const args = process.argv.slice(2);
 
@@ -14,7 +15,11 @@ if (args[0] === "daemon") {
     process.exitCode = 2;
   }
 } else if (args[0] === "pair") {
-  const command = new PairCommand();
+  const command = new PairCommand({
+    env: process.env,
+    io: { out: process.stdout, input: process.stdin },
+    createRuntime: createPairDeviceRuntime,
+  });
   try {
     process.exitCode = await command.execute(args.slice(1));
   } catch (error) {

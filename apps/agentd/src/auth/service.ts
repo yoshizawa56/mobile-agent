@@ -6,8 +6,8 @@ import {
   pairingClaimMessage,
   sessionMessage,
   type AuthChallengeResponse,
-  type AuthDeviceType,
   type AuthSessionResponse,
+  type PairingClaimNotification,
   type PairingClaimRequest,
   type PairingClaimResponse,
   type PairingQrPayload,
@@ -34,16 +34,7 @@ export type AuthServiceOptions = {
   agentdBaseUrl: string;
 };
 
-export type PairingClaimNotification = {
-  pairingId: string;
-  serverId: string;
-  deviceName: string;
-  deviceType: AuthDeviceType;
-  platform: string | null;
-  clientVersion: string | null;
-  keyFingerprint: string;
-  expiresAt: string;
-};
+export type { PairingClaimNotification } from "@mobile-agent/protocol";
 
 export type AuthContext = AuthSessionRecord & {
   device: AuthDeviceRecord;

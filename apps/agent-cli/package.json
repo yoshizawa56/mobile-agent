@@ -15,8 +15,10 @@
   },
   "dependencies": {
     "@mobile-agent/agentd": "workspace:*",
+    "@mobile-agent/application": "workspace:*",
     "@mobile-agent/domain": "workspace:*",
     "@mobile-agent/persistence": "workspace:*",
+    "@mobile-agent/protocol": "workspace:*",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

@@ -1,34 +1,34 @@
 # Worktree hook examples
 
-このディレクトリには、`agent run ... --worktree` の setup / cleanup hook として使えるサンプルを置いています。
+This directory contains setup and cleanup hook examples for `agent run ... --worktree`.
 
-## 構成
+## Structure
 
-- `generic/`: リポジトリに依存しない小さな部品
-  - `allocate-ports.sh`: workspaceとnameのチェックサムからworktreeごとのポートを決定
-- `mobile-agent/`: ポート割当を上記部品と組み合わせた、リポジトリ固有の例
+- `generic/`: repository-independent helpers
+  - `allocate-ports.sh`: deterministically assigns per-worktree ports from a workspace/name checksum
+- `mobile-agent/`: a repository-specific example that combines the allocator with the mobile-agent workflow
 
-SQLiteのseedコピーとmigrationは、mobile-agentのDBパスや運用に依存するため`mobile-agent/setup.sh`に直接記述しています。ベースDBは同時に更新しないseedとして扱い、必要な場合は単一ファイルを`cp`でコピーします。
+SQLite seed copying and migration are kept directly in `mobile-agent/setup.sh` because they depend on mobile-agent's database paths and workflow. The base database is treated as a seed that is not updated concurrently and is copied as a single file with `cp` when present.
 
-setup hookは次の順に処理します。
+The setup hook performs these steps:
 
-1. 任意のベースSQLiteをworktreeの `.local/agentd.sqlite` にコピーする
-2. `AGENT_WORKSPACE` と `AGENT_NAME` から `AGENTD_PORT` と `VITE_DEV_PORT` を決定し、worktreeの `.env` に保存する
-3. `MOBILE_AGENT_INSTALL_DEPENDENCIES=1` の場合は `bun install --frozen-lockfile` を実行する
-4. `MOBILE_AGENT_MIGRATION_COMMAND` が設定されている場合だけSQLite migrationを実行する
+1. Copy an optional base SQLite database to `.local/agentd.sqlite` in the worktree.
+2. Derive `AGENTD_PORT` and `VITE_DEV_PORT` from `AGENT_WORKSPACE` and `AGENT_NAME`, then save them to the worktree's `.env`.
+3. Run `bun install --frozen-lockfile` when `MOBILE_AGENT_INSTALL_DEPENDENCIES=1`.
+4. Run a SQLite migration only when `MOBILE_AGENT_MIGRATION_COMMAND` is set.
 
-cleanup hookはポート解放を行いません。ポートは入力から機械的に決まるため、managed worktreeの削除時にregistryを掃除する必要がありません。DBと `.env` はworktree内に残しますが、managed worktreeの削除時に一緒に削除されます。
+The cleanup hook does not release ports. Because ports are derived mechanically from the inputs, no registry cleanup is required when a managed worktree is removed. The database and `.env` remain inside the worktree and are removed with it.
 
-## mobile-agentで使う
+## Using the hooks with mobile-agent
 
-hookはworktreeの中にコピーして使うものではなく、ホスト側に存在する実行可能ファイルとして登録します。まず実行権限を付けます。
+Hooks are registered as executable files that live on the host; they are not copied into the worktree. Grant them execute permission first:
 
 ```sh
 chmod +x examples/hooks/generic/allocate-ports.sh
 chmod +x examples/hooks/mobile-agent/*.sh
 ```
 
-CLIから直接使う場合:
+To use them directly from the CLI:
 
 ```sh
 agent run codex --worktree review \
@@ -36,14 +36,14 @@ agent run codex --worktree review \
   --cleanup-hook "$PWD/examples/hooks/mobile-agent/cleanup.sh"
 ```
 
-Web UIからworktreeを作る場合は、workspace登録時の `SETUP SCRIPT PATH` と `CLEANUP SCRIPT PATH` に、それぞれ次のようなホスト側の絶対パスを指定します。
+When creating a worktree from the Web UI, set `SETUP SCRIPT PATH` and `CLEANUP SCRIPT PATH` during workspace registration to host-side absolute paths such as:
 
 ```text
 /path/to/mobile-agent/examples/hooks/mobile-agent/setup.sh
 /path/to/mobile-agent/examples/hooks/mobile-agent/cleanup.sh
 ```
 
-このリポジトリのデフォルトSQLiteをseedとして使う例:
+To use this repository's default SQLite database as the seed:
 
 ```sh
 MOBILE_AGENT_BASE_DB_FILE="$HOME/.local/state/mobile-agent/agentd.sqlite" \
@@ -51,36 +51,36 @@ MOBILE_AGENT_INSTALL_DEPENDENCIES=1 \
 agent run codex --worktree review
 ```
 
-ベースDBがない場合はコピーをスキップし、agentdがworktree側のDBを新規作成します。コピー元を必須にする場合は `MOBILE_AGENT_REQUIRE_BASE_DB=1` を追加してください。既存のworktree DBを明示的に上書きする場合だけ `MOBILE_AGENT_DB_COPY_FORCE=1` を使います。
+If the base database does not exist, copying is skipped and agentd creates a new database in the worktree. Add `MOBILE_AGENT_REQUIRE_BASE_DB=1` to require the source database. Use `MOBILE_AGENT_DB_COPY_FORCE=1` only when an existing worktree database should be explicitly overwritten.
 
-ポートは `AGENT_WORKSPACE` と `AGENT_NAME` の組み合わせから決まります。同じworkspaceで同じnameはCLI上でも重複できないため、通常のworktree同士は異なるslotになります。nameを省略して自動生成名を使う場合は、作成し直すと別のポートになる可能性があります。
+Ports are derived from the combination of `AGENT_WORKSPACE` and `AGENT_NAME`. The CLI does not allow duplicate names within the same workspace, so ordinary worktrees receive different slots. If the name is generated automatically, recreating a worktree may result in a different port assignment.
 
-現在のmobile-agentは起動時の `ensureSchema` でDBスキーマを準備しており、リポジトリに適用済みmigrationの実行コマンドはまだ固定していません。migrationを導入した環境では、次のようにコマンドを指定できます。
+The current mobile-agent startup path prepares the database schema with `ensureSchema`, and this repository does not yet define a fixed migration command. Once migrations are introduced, configure one as follows:
 
 ```sh
 MOBILE_AGENT_MIGRATION_COMMAND='bun run db:migrate' \
 agent run codex --worktree review
 ```
 
-`MOBILE_AGENT_MIGRATION_COMMAND` はローカルの信頼できる設定値として `sh -c` で実行され、`AGENTD_DB_FILE` と `AGENT_SQLITE_FILE` にworktree側のDBパスが設定されます。
+`MOBILE_AGENT_MIGRATION_COMMAND` is executed with `sh -c` as a trusted local setting. The worktree database path is provided through `AGENTD_DB_FILE` and `AGENT_SQLITE_FILE`.
 
-## 主な設定値
+## Configuration
 
-| 設定 | 既定値 | 用途 |
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| `MOBILE_AGENT_BASE_DB_FILE` | `AGENTD_DB_FILE` または `~/.local/state/mobile-agent/agentd.sqlite` | コピー元SQLite |
-| `MOBILE_AGENT_DB_PATH` | `.local/agentd.sqlite` | worktree内のSQLiteパス |
-| `MOBILE_AGENT_ENV_FILE` | `.env` | ポートとDBパスを書き込むenvファイル |
-| `MOBILE_AGENT_PORT_STRIDE` | `3` | ハッシュslotごとのポート増分 |
-| `MOBILE_AGENT_PORT_SLOT_COUNT` | `20000` | ハッシュslotの数 |
-| `MOBILE_AGENT_INSTALL_DEPENDENCIES` | `0` | `1`でlocked dependenciesをインストール |
-| `MOBILE_AGENT_MIGRATION_COMMAND` | 未設定 | 設定時だけmigrationを実行 |
+| `MOBILE_AGENT_BASE_DB_FILE` | `AGENTD_DB_FILE` or `~/.local/state/mobile-agent/agentd.sqlite` | Source SQLite database |
+| `MOBILE_AGENT_DB_PATH` | `.local/agentd.sqlite` | SQLite path inside the worktree |
+| `MOBILE_AGENT_ENV_FILE` | `.env` | Environment file for ports and the database path |
+| `MOBILE_AGENT_PORT_STRIDE` | `3` | Port increment per checksum slot |
+| `MOBILE_AGENT_PORT_SLOT_COUNT` | `20000` | Number of checksum slots |
+| `MOBILE_AGENT_INSTALL_DEPENDENCIES` | `0` | Install locked dependencies when set to `1` |
+| `MOBILE_AGENT_MIGRATION_COMMAND` | Not set | Run this migration command when configured |
 
-allocatorはポートregistryを作らず、外部プロセスへのbind確認も行いません。外部プロセスによる使用や、ハッシュslotの衝突は完全には防げないため、`bun run dev` のstrict portエラーが出た場合は `.env` の `AGENTD_PORT` / `VITE_DEV_PORT` を手動で変更してください。既存のポート値はsetupを再実行しても上書きされません。
+The allocator does not maintain a port registry or check whether another process has already bound a port. External processes and checksum-slot collisions cannot be prevented completely. If `bun run dev` reports a strict-port error, change `AGENTD_PORT` or `VITE_DEV_PORT` manually in `.env`. Existing port values are preserved when setup runs again.
 
-## 他のリポジトリで使う
+## Reusing the allocator in other repositories
 
-ポート割当とenv更新だけは、他のworktree対応リポジトリでも利用できます。
+Only the port allocator is intended as a reusable component for other worktree-enabled repositories:
 
 ```sh
 examples/hooks/generic/allocate-ports.sh allocate \
@@ -92,4 +92,4 @@ examples/hooks/generic/allocate-ports.sh allocate \
   --port WEB_PORT=5227
 ```
 
-複数のサービスを割り当てる場合、`--port NAME=BASE` のbase値は、同じ `--stride` に対して異なる余りのlaneを使ってください。例えば `4317` と `5227` は `--stride 3` では異なるlaneです。部品を組み合わせるときは、setupを冪等にし、秘密情報をリポジトリ内のhookや生成ログに書き出さず、hookのパスは対象ホストの設定として管理します。
+When allocating multiple services, the `NAME=BASE` values passed to `--port` must use different lanes modulo `--stride`. For example, `4317` and `5227` use different lanes with `--stride 3`. Keep composed setup hooks idempotent, never write secrets to repository hooks or generated logs, and manage hook paths as host-side configuration.

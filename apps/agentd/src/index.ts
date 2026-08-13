@@ -1,4 +1,4 @@
 #!/usr/bin/env bun
-import { startAgentd } from "./daemon.js";
+import { runAgentdCommand } from "./daemon.js";
 
-startAgentd(process.argv.slice(2));
+await runAgentdCommand(process.argv.slice(2));

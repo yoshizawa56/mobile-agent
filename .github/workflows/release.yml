@@ -87,19 +87,14 @@ jobs:
 
       - name: Build standalone agent executable
         env:
-          TARGET: ${{ matrix.target }}
-          OUTPUT: dist/agent-${{ matrix.name }}
+          AGENT_BUILD_TARGET: ${{ matrix.target }}
+          AGENT_BUILD_OUTPUT: dist/agent-${{ matrix.name }}
         run: |
           mkdir -p dist
-          bun build \
-            --compile \
-            --minify \
-            --target="$TARGET" \
-            apps/agent-cli/src/index.ts \
-            --outfile="$OUTPUT"
-          chmod +x "$OUTPUT"
-          test -s "$OUTPUT"
-          file "$OUTPUT"
+          bun run build:agent
+          chmod +x "$AGENT_BUILD_OUTPUT"
+          test -s "$AGENT_BUILD_OUTPUT"
+          file "$AGENT_BUILD_OUTPUT"
 
       - name: Upload standalone agent executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

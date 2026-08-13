@@ -29,6 +29,7 @@ export type TmuxPane = TmuxPaneRef & {
   agentdKind?: string;
   agentdAgentId?: string;
   agentdRunId?: string;
+  agentdWorkspaceId?: string;
 };
 
 export type TmuxWindowSnapshot = TmuxPaneRef & {
@@ -73,12 +74,15 @@ export class TmuxError extends Error {
 
 export class TmuxAdapter {
   private readonly commandPrefix: string[];
+  private readonly metadataPrefix: string;
 
   public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET, configFile?: string) {
     this.commandPrefix = [
       ...(configFile ? ["-f", configFile] : []),
       ...(socketPath ? ["-S", socketPath] : []),
     ];
+    const namespace = process.env.AGENT_WORKTREE_ID?.trim();
+    this.metadataPrefix = namespace ? `@agentd.${sanitizeMetadataNamespace(namespace)}.` : "@agentd.";
   }
 
   public command(args: string[]): CommandResult {
@@ -178,6 +182,10 @@ export class TmuxAdapter {
     this.require(["set-option", "-p", "-t", paneId, name, value]);
   }
 
+  public setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id", value: string): void {
+    this.setPaneOption(paneId, this.metadataKey(field), value);
+  }
+
   public capturePane(paneId: string, lines = 48): string {
     return this.require(["capture-pane", "-p", "-e", "-S", String(-Math.abs(lines)), "-t", paneId]);
   }
@@ -219,11 +227,12 @@ export class TmuxAdapter {
         "#{pane_height}",
         "#{window_width}",
         "#{window_height}",
-        "#{@agentd.pane_id}",
-        "#{@agentd.pane_name}",
-        "#{@agentd.kind}",
-        "#{@agentd.agent_id}",
-        "#{@agentd.run_id}",
+        this.metadataFormat("pane_id"),
+        this.metadataFormat("pane_name"),
+        this.metadataFormat("kind"),
+        this.metadataFormat("agent_id"),
+        this.metadataFormat("run_id"),
+        this.metadataFormat("workspace_id"),
       ].join(separator),
     ];
     const result = this.command(args);
@@ -245,7 +254,7 @@ export class TmuxAdapter {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId] = line.split(separator);
+        const [paneId, windowId, sessionName, windowName, windowIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId] = line.split(separator);
         if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
@@ -270,6 +279,7 @@ export class TmuxAdapter {
           agentdKind: nonEmpty(agentdKind),
           agentdAgentId: nonEmpty(agentdAgentId),
           agentdRunId: nonEmpty(agentdRunId),
+          agentdWorkspaceId: nonEmpty(agentdWorkspaceId),
         } satisfies TmuxPane;
       });
   }
@@ -464,6 +474,14 @@ export class TmuxAdapter {
     this.require(["set-hook", "-gu", `${name}[${index}]`]);
   }
 
+  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id"): string {
+    return `${this.metadataPrefix}${field}`;
+  }
+
+  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id"): string {
+    return `#{${this.metadataKey(field)}}`;
+  }
+
   private findActivePane(windowId: string): string {
     const output = this.require(["list-panes", "-t", windowId, "-F", "#{pane_id}\t#{pane_active}"]);
     const active = output
@@ -473,6 +491,10 @@ export class TmuxAdapter {
     if (!active?.[0]) throw new Error(`Could not resolve active tmux pane: ${windowId}`);
     return active[0];
   }
+}
+
+function sanitizeMetadataNamespace(value: string): string {
+  return value.replaceAll(/[^A-Za-z0-9_-]/g, "_");
 }
 
 function parseDimension(value: string | undefined, name: string): number {

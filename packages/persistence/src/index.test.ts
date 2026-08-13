@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  defaultAgentMigrationsFolder,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
   DrizzleRunRepository,
@@ -8,6 +9,9 @@ import {
   recordAuditEvent,
 } from "./index.js";
 import type { AgentSessionRecord, PaneRecord, RunRecord, WorkspaceRecord } from "@mobile-agent/domain";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const pane: PaneRecord = {
   id: "pane-1",
@@ -116,8 +120,68 @@ describe("sqlite persistence", () => {
         codexSessionBaseline: session.codexSessionBaseline,
       });
       expect(database.db.select().from(databaseTable(database)).all()).toHaveLength(1);
+      expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(1);
     } finally {
       database.close();
+    }
+  });
+
+  it("baselines an existing legacy database without dropping its data", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-legacy-"));
+    const file = join(root, "agentd.sqlite");
+    const initial = createAgentDatabase(file);
+    try {
+      await new DrizzlePaneRepository(initial.db).upsert(pane);
+      initial.sqlite.exec('DROP TABLE "__drizzle_migrations"');
+    } finally {
+      initial.close();
+    }
+
+    try {
+      const migrated = createAgentDatabase(file);
+      try {
+        await expect(new DrizzlePaneRepository(migrated.db).findById(pane.id)).resolves.toEqual(pane);
+        expect(migrated.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(1);
+      } finally {
+        migrated.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies a pending generated migration at database startup", () => {
+    const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-migrations-"));
+    const migrationsFolder = join(root, "drizzle");
+    cpSync(defaultAgentMigrationsFolder(), migrationsFolder, { recursive: true });
+    const journalPath = join(migrationsFolder, "meta", "_journal.json");
+    const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+      entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    };
+    const lastEntry = journal.entries.at(-1)!;
+    journal.entries.push({
+      idx: lastEntry.idx + 1,
+      version: lastEntry.version,
+      when: lastEntry.when + 1,
+      tag: "0001_migration_probe",
+      breakpoints: false,
+    });
+    writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+    writeFileSync(join(migrationsFolder, "0001_migration_probe.sql"), "CREATE TABLE migration_probe (id integer PRIMARY KEY);\n");
+
+    try {
+      const database = createAgentDatabase(":memory:", { migrationsFolder });
+      try {
+        const probe = database.sqlite
+          .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe'")
+          .all() as Array<{ name: string }>;
+        expect(probe).toEqual([{ name: "migration_probe" }]);
+        expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
+      } finally {
+        database.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

@@ -5,11 +5,29 @@ const args = process.argv.slice(2);
 
 if (args[0] === "daemon") {
   try {
-    const { startAgentd } = await import("@mobile-agent/agentd/daemon");
-    startAgentd(args.slice(1));
+    const { runAgentdCommand } = await import("@mobile-agent/agentd/daemon");
+    await runAgentdCommand(args.slice(1));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`agent daemon: ${message}\n`);
+    process.exitCode = 2;
+  }
+} else if (args[0] === "serve") {
+  try {
+    const { runServeCommand } = await import("./serve-command.js");
+    process.exitCode = await runServeCommand(args.slice(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`agent serve: ${message}\n`);
+    process.exitCode = 2;
+  }
+} else if (args[0] === "dev") {
+  try {
+    const { runDevCommand } = await import("./dev-command.js");
+    process.exitCode = await runDevCommand(args.slice(1));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`agent dev: ${message}\n`);
     process.exitCode = 2;
   }
 } else {

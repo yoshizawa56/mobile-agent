@@ -472,7 +472,7 @@ export class AgentCommand {
     if (options.verbose) {
       this.write(`database: ${this.databaseFile}\n`);
       this.write(`codex remote: ${this.defaultCodexRemote || "native local mode"}\n`);
-      this.write("worktree root pattern: <workspace-parent>/<workspace-name>.worktrees/<session-name>\n");
+      this.write(`worktree root pattern: <workspace-parent>/<workspace-name>.worktrees${this.env.AGENT_WORKTREE_ID ? `/${this.env.AGENT_WORKTREE_ID}` : ""}/<session-name>\n`);
     }
     return status;
   }
@@ -521,16 +521,25 @@ export class AgentCommand {
 
   private createWorktree(workspace: WorkspaceContext, name: string, override?: string): Pick<AgentSessionRecord, "worktreeRoot" | "worktreePath" | "branch" | "baseCommit"> {
     if (!workspace.isGit) throw new AgentCommandError("a managed worktree requires a git workspace; use --no-worktree here");
-    const configuredRoot = override ?? this.env.AGENT_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
+    const defaultRoot = this.env.AGENT_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
+    const configuredRoot = override ?? (this.env.AGENT_WORKTREE_ID ? join(defaultRoot, this.env.AGENT_WORKTREE_ID) : defaultRoot);
     const worktreeRoot = realpathAfterMkdir(resolveFromRoot(configuredRoot, workspace.rootPath));
     const worktreePath = join(worktreeRoot, name);
-    const branch = `agent/${name}`;
+    let branch = this.worktreeBranch(name);
     const baseCommit = gitRequired(workspace.rootPath, ["rev-parse", "HEAD"], "cannot determine the workspace HEAD");
+    if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) {
+      branch = `agent/${this.env.AGENT_WORKTREE_ID ?? workspace.id}/${name}`;
+    }
     if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) throw new AgentCommandError(`agent branch already exists; choose another name or remove it manually: ${branch}`);
     if (existsSync(worktreePath)) throw new AgentCommandError(`worktree path already exists: ${worktreePath}`);
     this.info(`creating worktree '${worktreePath}'`);
     gitRequired(workspace.rootPath, ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit], "git worktree creation failed");
     return { worktreeRoot, worktreePath, branch, baseCommit };
+  }
+
+  private worktreeBranch(name: string): string {
+    const worktreeId = this.env.AGENT_WORKTREE_ID;
+    return worktreeId ? `agent/${worktreeId}/${name}` : `agent/${name}`;
   }
 
   private async runHook(session: AgentSessionRecord, kind: "setup" | "cleanup"): Promise<boolean> {
@@ -842,7 +851,9 @@ export class AgentCommand {
 
   private ensureDatabase(): void {
     if (this.database) return;
-    this.database = createAgentDatabase(this.databaseFile);
+    this.database = createAgentDatabase(this.databaseFile, {
+      migrationsFolder: this.env.AGENTD_MIGRATIONS_DIR ?? this.env.AGENT_MIGRATIONS_DIR,
+    });
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
   }
@@ -854,11 +865,13 @@ export class AgentCommand {
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
-  agent daemon start [--host HOST] [--port PORT]
+  agent daemon <start|status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
+  agent serve tailscale [--port PORT] [--agentd-port PORT]
+  agent dev [serve tailscale]
 
 Run options:
   -n, --name NAME          Logical session name; does not create a worktree.
-  -w, --worktree [NAME]    Create a managed worktree and agent/<name> branch.
+  -w, --worktree [NAME]    Create a managed worktree and agent/<name> branch (dev uses agent/<worktree-id>/<name>).
       --no-worktree        Explicitly run in the current workspace.
       --worktree-root PATH Override the managed worktree parent directory.
       --setup-hook PATH     Override the workspace setup hook.

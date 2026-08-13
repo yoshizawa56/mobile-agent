@@ -739,7 +739,7 @@ agentd: 127.0.0.1:4317
 - Treat SSH as a future adapter for bootstrap, starting Serve, recovery, or bastion routing. It is not part of the MVP.
 - Even in a native SSH implementation, keep private keys in Keychain and out of the API client and web bundle.
 - Verify in an early spike that Tailscale Serve supports HTTP upgrades and long-lived WebSocket connections in the target environment.
-- The current setup can use tailscale serve --bg 4317. If Serve startup is integrated into a CLI, business logic still belongs in agentd.
+- `agent serve tailscale` configures a persistent agentd-only Serve route; `agent dev serve tailscale` starts the source Web/agentd stack and retargets the fixed local development route. Serve setup remains an external transport concern rather than agentd business logic.
 - Verify Serve identity headers such as Tailscale-User-Login at the localhost agentd boundary and combine them with pairing and authorization.
 - If Serve has an operational limitation, first consider SSH port forwarding to the same agentd API.
 

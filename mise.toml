@@ -12,14 +12,8 @@ description = "Start the local agentd and web development stack with child-proce
 run = "bun dev"
 
 [tasks.dev-serve]
-description = "Expose an already-running web dev server through an existing Tailscale CLI"
-run = """
-if ! command -v tailscale >/dev/null 2>&1; then
-  echo "tailscale CLI not found; install and configure Tailscale separately, then rerun 'mise run dev-serve'." >&2
-  exit 1
-fi
-tailscale serve --bg --https="${TAILSCALE_DEV_PORT:-8449}" "${VITE_DEV_PORT:-5227}"
-"""
+description = "Start the source development stack and upsert its Tailscale Serve route"
+run = "bun run --filter @mobile-agent/agent-cli dev -- dev serve tailscale"
 
 [tasks.check]
 description = "Run the public-repository audit and project checks"

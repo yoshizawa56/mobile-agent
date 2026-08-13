@@ -1,9 +1,13 @@
 import { Database } from "bun:sqlite";
 import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   AgentSessionRepository,
   PaneFilter,
@@ -28,6 +32,7 @@ import {
   type RunRow,
   type WorkspaceRow,
 } from "./schema.js";
+import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
 export { AuthStore, AuthStoreError } from "./auth.js";
@@ -50,22 +55,81 @@ export type AgentDatabase = {
   close: () => void;
 };
 
+export type AgentDatabaseOptions = {
+  migrationsFolder?: string;
+};
+
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
   return env.AGENTD_DB_FILE ?? env.AGENT_DATABASE_FILE ?? joinHomeStatePath(env);
 }
 
-export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memory:"): AgentDatabase {
+export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memory:", options: AgentDatabaseOptions = {}): AgentDatabase {
   if (file !== ":memory:") mkdirSync(dirname(resolve(file)), { recursive: true, mode: 0o700 });
   const sqlite = new Database(file);
   sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-  ensureSchema(sqlite);
+  const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
+  baselineLegacyDatabase(sqlite, migrationsFolder);
   const db = drizzle({ client: sqlite });
+  try {
+    migrate(db, { migrationsFolder });
+  } catch (error) {
+    sqlite.close();
+    throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+  ensureAuthSchema(sqlite);
 
   return {
     db,
     sqlite,
     close: () => sqlite.close(),
   };
+}
+
+export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
+  const folder = findAgentMigrationsFolder(env);
+  if (!folder) {
+    const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+    const executableDirectory = dirname(process.execPath);
+    throw new Error(`database migration files not found; set AGENTD_MIGRATIONS_DIR (searched: ${[
+      env.AGENTD_MIGRATIONS_DIR ? resolve(process.cwd(), env.AGENTD_MIGRATIONS_DIR) : undefined,
+      env.AGENT_MIGRATIONS_DIR ? resolve(process.cwd(), env.AGENT_MIGRATIONS_DIR) : undefined,
+      join(moduleDirectory, "../drizzle"),
+      join(executableDirectory, "migrations"),
+      join(process.cwd(), "packages/persistence/drizzle"),
+      join(process.cwd(), "drizzle"),
+    ].filter((candidate): candidate is string => Boolean(candidate)).join(", ")})`);
+  }
+  return folder;
+}
+
+function findAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const configured = env.AGENTD_MIGRATIONS_DIR ?? env.AGENT_MIGRATIONS_DIR;
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const executableDirectory = dirname(process.execPath);
+  const candidates = [
+    configured ? resolve(process.cwd(), configured) : undefined,
+    join(moduleDirectory, "../drizzle"),
+    join(executableDirectory, "migrations"),
+    join(process.cwd(), "packages/persistence/drizzle"),
+    join(process.cwd(), "drizzle"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => existsSync(join(candidate, "meta", "_journal.json")));
+}
+
+function materializeEmbeddedMigrations(): string {
+  const digest = createHash("sha256")
+    .update(embeddedMigrationFiles.map((file) => `${file.path}\0${file.contents}`).join("\0"))
+    .digest("hex")
+    .slice(0, 16);
+  const migrationsFolder = join(tmpdir(), "mobile-agent", "migrations", digest);
+  for (const file of embeddedMigrationFiles) {
+    const target = join(migrationsFolder, file.path);
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    if (!existsSync(target) || readFileSync(target, "utf8") !== file.contents) {
+      writeFileSync(target, file.contents, { mode: 0o600 });
+    }
+  }
+  return migrationsFolder;
 }
 
 export class DrizzlePaneRepository implements PaneRepository {
@@ -170,6 +234,7 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
           isGit: record.isGit,
           setupScriptPath: record.setupScriptPath,
           cleanupScriptPath: record.cleanupScriptPath,
+          worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
           updatedAt: now,
         },
       })
@@ -264,84 +329,39 @@ export function recordAuditEvent(
     .run();
 }
 
-function ensureSchema(sqlite: Database): void {
+const legacyTableNames = ["panes", "runs", "audit_events", "workspaces", "agent_sessions"] as const;
+
+function baselineLegacyDatabase(sqlite: Database, migrationsFolder: string): void {
+  const migrations = readMigrationFiles({ migrationsFolder });
+  const initialMigration = migrations[0];
+  if (!initialMigration) throw new Error(`no migrations found in ${migrationsFolder}`);
+
+  const rows = sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
+  const existingTables = new Set(rows.map((row) => row.name));
+  if (existingTables.has("__drizzle_migrations")) return;
+
+  const legacyTables = legacyTableNames.filter((tableName) => existingTables.has(tableName));
+  if (legacyTables.length === 0) return;
+  if (legacyTables.length !== legacyTableNames.length) {
+    throw new Error(`database has a partial legacy schema; refusing to baseline (${legacyTables.join(", ")})`);
+  }
+
+  ensureColumn(sqlite, "workspaces", "setup_script_path", "TEXT");
+  ensureColumn(sqlite, "workspaces", "cleanup_script_path", "TEXT");
   sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS panes (
-      id TEXT PRIMARY KEY NOT NULL,
-      tmux_pane_id TEXT NOT NULL,
-      session_name TEXT NOT NULL,
-      window_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      name TEXT NOT NULL,
-      cwd TEXT NOT NULL,
-      workspace_id TEXT,
-      agent_id TEXT,
-      run_id TEXT,
-      state TEXT NOT NULL,
-      title TEXT,
-      last_seen_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS panes_tmux_pane_id_index ON panes (tmux_pane_id);
-    CREATE TABLE IF NOT EXISTS runs (
-      id TEXT PRIMARY KEY NOT NULL,
-      pane_id TEXT NOT NULL,
-      agent_id TEXT,
-      profile_id TEXT,
-      state TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      ended_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS audit_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-      event_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      occurred_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS workspaces (
-      id TEXT PRIMARY KEY NOT NULL,
-      root_path TEXT NOT NULL,
-      name TEXT NOT NULL,
-      is_git INTEGER NOT NULL,
-      setup_script_path TEXT,
-      cleanup_script_path TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS agent_sessions (
-      id TEXT PRIMARY KEY NOT NULL,
-      name TEXT NOT NULL,
-      backend TEXT NOT NULL,
-      status TEXT NOT NULL,
-      workspace_id TEXT NOT NULL,
-      workspace_root TEXT NOT NULL,
-      workspace_name TEXT NOT NULL,
-      worktree_root TEXT,
-      worktree_path TEXT,
-      branch TEXT,
-      base_commit TEXT,
-      use_worktree INTEGER NOT NULL,
-      setup_hook TEXT,
-      cleanup_hook TEXT,
-      setup_output_file TEXT,
-      cleanup_output_file TEXT,
-      backend_session_id TEXT,
-      codex_profile TEXT,
-      codex_remote TEXT,
-      setup_ran INTEGER NOT NULL,
-      resuming INTEGER NOT NULL,
-      baseline_status TEXT,
-      codex_session_baseline TEXT,
-      last_exit_status INTEGER,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS agent_sessions_workspace_name_index ON agent_sessions (workspace_id, name);
-    CREATE INDEX IF NOT EXISTS agent_sessions_workspace_index ON agent_sessions (workspace_id);
+    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at numeric
+    )
+  `);
+  sqlite
+    .prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)')
+    .run(initialMigration.hash, initialMigration.folderMillis);
+}
+
+function ensureAuthSchema(sqlite: Database): void {
+  sqlite.exec(`
     CREATE TABLE IF NOT EXISTS auth_metadata (
       id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
       server_id TEXT NOT NULL UNIQUE,
@@ -398,8 +418,6 @@ function ensureSchema(sqlite: Database): void {
     CREATE INDEX IF NOT EXISTS auth_sessions_device_index ON auth_sessions (device_id);
     CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index ON auth_sessions (expires_at);
   `);
-  ensureColumn(sqlite, "workspaces", "setup_script_path", "TEXT");
-  ensureColumn(sqlite, "workspaces", "cleanup_script_path", "TEXT");
 }
 
 function ensureColumn(sqlite: Database, table: string, column: string, definition: string): void {
@@ -470,6 +488,7 @@ function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces
     isGit: record.isGit,
     setupScriptPath: record.setupScriptPath,
     cleanupScriptPath: record.cleanupScriptPath,
+    worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -483,9 +502,19 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     isGit: row.isGit,
     setupScriptPath: row.setupScriptPath,
     cleanupScriptPath: row.cleanupScriptPath,
+    worktreeCopyPatterns: parseWorktreeCopyPatterns(row.worktreeCopyPatterns),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function parseWorktreeCopyPatterns(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string") ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agentSessions.$inferInsert {

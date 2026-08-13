@@ -76,6 +76,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [workspaceRegistrationDirectory, setWorkspaceRegistrationDirectory] = useState("");
   const [workspaceSetupScriptPath, setWorkspaceSetupScriptPath] = useState("");
   const [workspaceCleanupScriptPath, setWorkspaceCleanupScriptPath] = useState("");
+  const [workspaceWorktreeCopyPatterns, setWorkspaceWorktreeCopyPatterns] = useState("");
   const [isRegisteringWorkspace, setIsRegisteringWorkspace] = useState(false);
   const [workspaceRegistrationError, setWorkspaceRegistrationError] = useState<string | null>(null);
   const [connectionProfile, setConnectionProfile] = useState<BrowserConnectionProfile | null>(() => readBrowserConnectionProfile());
@@ -148,6 +149,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       directory,
       setupScriptPath: workspaceSetupScriptPath.trim() || null,
       cleanupScriptPath: workspaceCleanupScriptPath.trim() || null,
+      worktreeCopyPatterns: parseWorktreeCopyPatterns(workspaceWorktreeCopyPatterns),
     }, agentdConnection)
       .then((workspace) => {
         queryClient.setQueryData<WorkspaceDirectory[]>(["workspaces", connectionKey], (current) => {
@@ -161,7 +163,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       })
       .catch((error: unknown) => setWorkspaceRegistrationError(errorMessage(error) ?? "Could not register workspace"))
       .finally(() => setIsRegisteringWorkspace(false));
-  }, [agentdConnection, connectionKey, isRegisteringWorkspace, queryClient, workspaceCleanupScriptPath, workspaceRegistrationDirectory, workspaceSetupScriptPath]);
+  }, [agentdConnection, connectionKey, isRegisteringWorkspace, queryClient, workspaceCleanupScriptPath, workspaceRegistrationDirectory, workspaceSetupScriptPath, workspaceWorktreeCopyPatterns]);
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions", connectionKey, terminalId],
@@ -265,6 +267,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       registrationDirectory: workspaceRegistrationDirectory,
       setupScriptPath: workspaceSetupScriptPath,
       cleanupScriptPath: workspaceCleanupScriptPath,
+      worktreeCopyPatterns: workspaceWorktreeCopyPatterns,
       isRegisteringWorkspace,
       registrationError: workspaceRegistrationError,
       errorMessage: workspaceError ?? workspaceBrowserError,
@@ -277,6 +280,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       onRegistrationDirectoryChange: setWorkspaceRegistrationDirectory,
       onSetupScriptPathChange: setWorkspaceSetupScriptPath,
       onCleanupScriptPathChange: setWorkspaceCleanupScriptPath,
+      onWorktreeCopyPatternsChange: setWorkspaceWorktreeCopyPatterns,
       onRegisterWorkspace: registerNewWorkspace,
     },
     isCreating: isCreatingSession,
@@ -300,7 +304,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .catch((error: unknown) => setNewSessionError(errorMessage(error) ?? "Could not create tmux session"))
         .finally(() => setIsCreatingSession(false));
     },
-  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingSession, isRegisteringWorkspace, navigate, newSessionError, newSessionName, newSessionWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedTerminal, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaces]);
+  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingSession, isRegisteringWorkspace, navigate, newSessionError, newSessionName, newSessionWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedTerminal, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
 
   const newPane = useMemo<NewPaneViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -318,6 +322,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       registrationDirectory: workspaceRegistrationDirectory,
       setupScriptPath: workspaceSetupScriptPath,
       cleanupScriptPath: workspaceCleanupScriptPath,
+      worktreeCopyPatterns: workspaceWorktreeCopyPatterns,
       isRegisteringWorkspace,
       registrationError: workspaceRegistrationError,
       errorMessage: workspaceError ?? workspaceBrowserError,
@@ -332,6 +337,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       onRegistrationDirectoryChange: setWorkspaceRegistrationDirectory,
       onSetupScriptPathChange: setWorkspaceSetupScriptPath,
       onCleanupScriptPathChange: setWorkspaceCleanupScriptPath,
+      onWorktreeCopyPatternsChange: setWorkspaceWorktreeCopyPatterns,
       onRegisterWorkspace: registerNewWorkspace,
     },
     kind: newPaneKind,
@@ -381,7 +387,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .finally(() => setIsCreatingPane(false));
     },
     onBack: () => terminalId && selectedSession && navigateTo(sessionPath(terminalId, selectedSession.name)),
-  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaces]);
+  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -525,6 +531,10 @@ function queryStatus(status: "pending" | "error" | "success"): "loading" | "erro
 
 function errorMessage(error: unknown): string | null {
   return error instanceof Error ? error.message : error ? String(error) : null;
+}
+
+function parseWorktreeCopyPatterns(value: string): string[] {
+  return [...new Set(value.split(/\r?\n/).map((pattern) => pattern.trim()).filter(Boolean))];
 }
 
 const fallbackTerminal: TerminalEndpoint = {

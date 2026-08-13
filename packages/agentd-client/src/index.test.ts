@@ -26,14 +26,14 @@ describe("agentd RPC client", () => {
     {
       name: "reads allowed workspaces through the typed query path",
       requestPath: "/api/workspaces",
-      response: { workspaces: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null }] },
+      response: { workspaces: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] }] },
       read: async (client: ReturnType<typeof createAgentdClient>) => client.workspaces(),
       assert: (value: unknown) => expect(value).toMatchObject([{ id: "workspace-1" }]),
     },
     {
       name: "browses host directories through the typed query path",
       requestPath: "/api/workspace-directories",
-      response: { directories: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null }] },
+      response: { directories: [{ id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] }] },
       read: async (client: ReturnType<typeof createAgentdClient>) => client.browseWorkspaces(),
       assert: (value: unknown) => expect(value).toMatchObject([{ name: "mobile-agent" }]),
     },

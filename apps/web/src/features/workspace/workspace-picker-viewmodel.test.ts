@@ -3,8 +3,8 @@ import type { WorkspacePickerInput } from "./workspace-picker-viewmodel";
 import { workspacePickerState, workspacePickerErrorMessage } from "./workspace-picker-viewmodel";
 
 const workspaces = [
-  { id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null },
-  { id: "workspace-2", name: "scratch", directory: "~/tmp/scratch", isGit: false, setupScriptPath: null, cleanupScriptPath: null },
+  { id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
+  { id: "workspace-2", name: "scratch", directory: "~/tmp/scratch", isGit: false, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
 ];
 
 const baseInput = {
@@ -15,6 +15,7 @@ const baseInput = {
   registrationDirectory: "",
   setupScriptPath: "",
   cleanupScriptPath: "",
+  worktreeCopyPatterns: "",
   isRegisteringWorkspace: false,
   registrationError: null,
   errorMessage: null,

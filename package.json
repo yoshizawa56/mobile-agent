@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "bunx --no-install turbo run build",
-    "build:agent": "bun build apps/agent-cli/src/index.ts --compile --minify --outfile dist/agent",
+    "build:agent": "bun scripts/build-agent.mjs",
+    "agent:install": "bun scripts/install-agent.mjs",
     "deps:check": "bun outdated",
     "dev": "bun scripts/dev.mjs",
     "audit:public": "bun scripts/audit-public-repo.mjs",

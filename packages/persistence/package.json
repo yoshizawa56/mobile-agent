@@ -7,12 +7,15 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
       "import": "./dist/index.js"
     }
   },
   "scripts": {
     "build": "bunx --bun tsc -p tsconfig.build.json",
-    "db:generate": "bunx --bun drizzle-kit generate --config drizzle.config.ts",
+    "db:check": "bunx --bun drizzle-kit check --config drizzle.config.ts",
+    "db:generate": "bunx --bun drizzle-kit generate --config drizzle.config.ts && bun ../../scripts/sync-embedded-migrations.mjs",
+    "db:migrate": "bunx --bun drizzle-kit migrate --config drizzle.config.ts",
     "test": "bun test src",
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },

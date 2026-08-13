@@ -1,22 +1,27 @@
 #!/usr/bin/env bun
-import { execFile, spawn as spawnChild } from "node:child_process";
+import { execFile, execFileSync, spawn as spawnChild } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createConnection, createServer } from "node:net";
+import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildServeArgs, buildServeHttpUrl, parseTailscaleHostname } from "../packages/tailscale/src/index.ts";
+import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
   agentdHost: "127.0.0.1",
   agentdPort: 4317,
   webHost: "0.0.0.0",
   webPort: 5227,
+  adoptExistingServices: true,
   readyTimeoutMs: 15_000,
   shutdownTimeoutMs: 2_000,
   probeTimeoutMs: 1_500,
 };
 
 const scriptPath = fileURLToPath(import.meta.url);
+const execFileAsync = promisify(execFile);
 
 export class DevRuntimeError extends Error {
   constructor(message, options = {}) {
@@ -43,25 +48,46 @@ function readDuration(name, fallback, environment) {
 }
 
 export function resolveDevConfig(environment = process.env, cwd = process.cwd()) {
-  const agentdHost = environment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
-  const agentdPort = readPort("AGENTD_PORT", DEFAULT_DEV_CONFIG.agentdPort, environment);
-  const webHost = environment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
-  const webPort = readPort("VITE_DEV_PORT", DEFAULT_DEV_CONFIG.webPort, environment);
+  let baseEnvironment = applyDevWorktreeProfile(environment, cwd);
+  const agentdHost = baseEnvironment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
+  const agentdPort = readPort("AGENTD_PORT", baseEnvironment.AGENTD_PORT ?? DEFAULT_DEV_CONFIG.agentdPort, baseEnvironment);
+  const webHost = baseEnvironment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
+  const webPort = readPort("VITE_DEV_PORT", baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort, baseEnvironment);
   const agentdProbeHost = probeHostForBind(agentdHost);
   const agentdProxyHost = agentdProbeHost;
+  const serveProvider = baseEnvironment.AGENT_DEV_SERVE_PROVIDER;
+  const servePort = serveProvider
+    ? readPort("AGENT_DEV_SERVE_PORT", baseEnvironment.AGENT_DEV_SERVE_PORT ?? 443, baseEnvironment)
+    : undefined;
+  if (serveProvider === "tailscale") {
+    const hostname = resolveTailscaleHostname(baseEnvironment);
+    if (hostname) {
+      baseEnvironment = {
+        ...baseEnvironment,
+        AGENT_TAILSCALE_HOSTNAME: hostname,
+        VITE_ALLOWED_HOSTS: appendAllowedHost(baseEnvironment.VITE_ALLOWED_HOSTS, hostname),
+      };
+    }
+  }
 
   return {
     ...DEFAULT_DEV_CONFIG,
     repoRoot: cwd,
-    baseEnvironment: { ...environment },
+    baseEnvironment,
     agentdHost,
     agentdPort,
     agentdProbeHost,
-    agentdProxyTarget: environment.VITE_AGENTD_PROXY_TARGET ?? `http://${formatHost(agentdProxyHost)}:${agentdPort}`,
+    agentdProxyTarget: baseEnvironment.VITE_AGENTD_PROXY_TARGET ?? `http://${formatHost(agentdProxyHost)}:${agentdPort}`,
     webHost,
     webPort,
-    readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, environment),
-    shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, environment),
+    serveProvider,
+    servePort,
+    // A linked worktree must never silently attach to another worktree's
+    // agentd or Vite process. Reusing an existing listener remains available
+    // to direct supervisor tests and explicitly constructed configurations.
+    adoptExistingServices: false,
+    readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, baseEnvironment),
+    shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, baseEnvironment),
   };
 }
 
@@ -73,6 +99,39 @@ function probeHostForBind(host) {
 
 function formatHost(host) {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function resolveTailscaleHostname(environment) {
+  const configured = normalizeHostname(environment.AGENT_TAILSCALE_HOSTNAME);
+  if (configured) return configured;
+
+  const binary = environment.TAILSCALE_BIN ?? "tailscale";
+  try {
+    const status = execFileSync(binary, ["status", "--json"], {
+      env: environment,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 256 * 1024,
+    });
+    return normalizeHostname(parseTailscaleHostname(status));
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeHostname(value) {
+  if (!value) return undefined;
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`).hostname.replace(/\.+$/, "");
+  } catch {
+    return value.trim().replace(/\.+$/, "") || undefined;
+  }
+}
+
+function appendAllowedHost(value, hostname) {
+  const hosts = (value ?? "").split(",").map((host) => host.trim()).filter(Boolean);
+  if (!hosts.includes(hostname)) hosts.push(hostname);
+  return hosts.join(",");
 }
 
 function endpoint(host, port, pathname = "/") {
@@ -118,6 +177,58 @@ function serviceDefinitions(config) {
       },
     },
   };
+}
+
+export async function configureDevServe(config, runCommand = runExternalCommand) {
+  if (!config.serveProvider) return undefined;
+  if (config.serveProvider !== "tailscale") {
+    throw new DevRuntimeError(`unsupported dev serve provider: ${config.serveProvider}`);
+  }
+
+  const externalPort = config.servePort ?? 443;
+  const binary = config.baseEnvironment.TAILSCALE_BIN ?? "tailscale";
+  const args = buildServeArgs({
+    localPort: config.webPort,
+    externalPort,
+  });
+  let result;
+  try {
+    result = await runCommand(binary, args, { env: config.baseEnvironment });
+  } catch (error) {
+    throw new DevRuntimeError(`could not configure Tailscale Serve: ${errorMessage(error)}`, { cause: error });
+  }
+
+  let hostname = config.baseEnvironment.AGENT_TAILSCALE_HOSTNAME;
+  if (!hostname) {
+    try {
+      hostname = parseTailscaleHostname((await runCommand(binary, ["status", "--json"], { env: config.baseEnvironment })).stdout);
+    } catch {
+      // The Serve route is configured even when the optional display lookup
+      // is unavailable. Users can inspect it with `tailscale serve status`.
+    }
+  }
+
+  return {
+    binary,
+    args,
+    externalPort,
+    localPort: config.webPort,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    url: hostname ? buildServeHttpUrl(hostname, externalPort) : undefined,
+  };
+}
+
+async function runExternalCommand(command, args, options) {
+  try {
+    return await execFileAsync(command, args, {
+      env: options.env,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+    });
+  } catch (error) {
+    throw new DevRuntimeError(`could not run ${command} ${args.join(" ")}: ${errorMessage(error)}`, { cause: error });
+  }
 }
 
 export function isPortAvailable(host, port) {
@@ -479,6 +590,7 @@ class DevSupervisor {
     this.inspectPort = options.inspectPort ?? ((host, port) => inspectPort(host, port));
     this.probeHttp = options.probeHttp ?? probeHttp;
     this.probeWebSocket = options.probeWebSocket ?? probeWebSocket;
+    this.configureServe = options.configureServe ?? configureDevServe;
     this.sleep = options.sleep ?? delay;
     this.signalProcess = options.signalProcess ?? signalProcess;
     this.services = serviceDefinitions(this.config);
@@ -501,6 +613,8 @@ class DevSupervisor {
     if (this.state !== "created") return this;
     this.state = "starting";
     this.log("info", "[dev] starting local stack (Tailscale Serve is opt-in)");
+    this.log("info", `[dev] profile=${this.config.baseEnvironment.AGENT_PROFILE ?? "dev"} worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
+    this.log("info", `[dev] database=${this.config.baseEnvironment.AGENTD_DB_FILE ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
     this.log("info", `[dev] agentd target: ${this.services.agentd.url}`);
     this.log("info", `[dev] web target: ${this.services.web.url} (proxy ${this.config.agentdProxyTarget})`);
 
@@ -509,9 +623,15 @@ class DevSupervisor {
       if (this.state !== "starting") return this;
       await this.ensureService("web");
       if (this.state !== "starting") return this;
+      const serve = await this.configureServe(this.config);
+      if (serve?.stderr) this.log("warn", `[dev] Tailscale Serve: ${serve.stderr.trim()}`);
       this.state = "running";
       this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
+      if (serve) {
+        this.log("info", `[dev] Tailscale Serve: ${serve.url ?? `HTTPS port ${serve.externalPort}`} -> http://127.0.0.1:${serve.localPort}`);
+        this.log("info", "[dev] Tailscale Serve is left running; rerun the command to retarget it");
+      }
       this.log("info", "[dev] press Ctrl-C to stop processes started by this supervisor");
       return this;
     } catch (error) {
@@ -561,6 +681,14 @@ class DevSupervisor {
       this.records.set(name, record);
       await this.waitForReady(record);
       return record;
+    }
+
+    if (this.config.adoptExistingServices === false) {
+      throw this.withPortRecovery(
+        definition,
+        new DevRuntimeError(`existing ${name} adoption is disabled for the current worktree profile`, { service: name }),
+        inspection,
+      );
     }
 
     this.log("warn", `[dev] ${portDescription(definition, inspection)}; checking whether it is a healthy ${name}`);

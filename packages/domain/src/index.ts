@@ -31,6 +31,28 @@ export const agentSessionStates = [
 ] as const;
 export type AgentSessionState = (typeof agentSessionStates)[number];
 
+export const worktreeCopyPatternLimits = {
+  maxPatterns: 100,
+  maxPatternLength: 4_096,
+} as const;
+
+/**
+ * Worktree copy patterns are relative, slash-separated git paths. The
+ * wildcard matcher supports `*` and `**`; keeping validation here lets the
+ * host adapters and the CLI apply the same path-safety rules.
+ */
+export function isValidWorktreeCopyPattern(value: string): boolean {
+  const pattern = value.trim();
+  if (!pattern || pattern.length > worktreeCopyPatternLimits.maxPatternLength) return false;
+  if (pattern.includes("\\") || pattern.includes("\u0000")) return false;
+  if (pattern.startsWith("/") || /^[A-Za-z]:/.test(pattern)) return false;
+  return pattern.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+export function normalizeWorktreeCopyPatterns(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 export type WorkspaceRecord = {
   id: WorkspaceId;
   rootPath: string;
@@ -38,6 +60,7 @@ export type WorkspaceRecord = {
   isGit: boolean;
   setupScriptPath: string | null;
   cleanupScriptPath: string | null;
+  worktreeCopyPatterns: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -50,7 +73,7 @@ export type WorkspaceSelectionMode = (typeof workspaceSelectionModes)[number];
  * resolved by agentd from an allowed-root policy; clients send the stable id
  * back instead of choosing an arbitrary cwd.
  */
-export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit" | "setupScriptPath" | "cleanupScriptPath">;
+export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit" | "setupScriptPath" | "cleanupScriptPath" | "worktreeCopyPatterns">;
 
 export type WorkspaceSelection = {
   workspaceId: WorkspaceId;

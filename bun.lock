@@ -20,6 +20,7 @@
         "@mobile-agent/cli-adapters": "workspace:*",
         "@mobile-agent/domain": "workspace:*",
         "@mobile-agent/persistence": "workspace:*",
+        "@mobile-agent/tailscale": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^26.1.2",

@@ -7,10 +7,12 @@
   "exports": {
     "./server": {
       "types": "./dist/server.d.ts",
+      "development": "./src/server.ts",
       "import": "./dist/server.js"
     },
     "./daemon": {
       "types": "./dist/daemon.d.ts",
+      "development": "./src/daemon.ts",
       "import": "./dist/daemon.js"
     }
   },

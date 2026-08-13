@@ -46,7 +46,7 @@ try {
   installCommandLink();
   process.stdout.write(`Installed production binary: ${installBinary}\n`);
   process.stdout.write(`Installed production command: ${commandPath}\n`);
-  process.stdout.write("Use 'agent' for the production binary and 'agent_main' for the fixed origin/main checkout. Run 'bun dev' directly in a linked worktree for development.\n");
+  process.stdout.write("Use 'agent' for the production binary. Run 'bun dev' directly in a linked worktree for source-based development.\n");
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

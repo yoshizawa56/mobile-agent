@@ -128,44 +128,30 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch and runs the registered workspace setup and cleanup scripts when present. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-`build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. For local development, start the stack with `bun dev` in each linked worktree and use `agent_main` when you need the latest CLI from `origin/main`.
+`build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. For source-based local development, start the stack with `bun dev` in the linked worktree.
 
-### Keeping both agentd processes running
+### Running multiple agentd instances
 
-`agent daemon start` is intentionally a foreground process so launchd, systemd, or another process supervisor can own its lifecycle. Run one service for the stable profile and one for the fixed `agent_main` profile; they must use different SQLite files and HTTP ports while leaving `AGENTD_TMUX_SOCKET` unset so both continue to see the same tmux server.
+`agent daemon start` is intentionally a foreground process so launchd, systemd, or another process supervisor can own its lifecycle. When multiple agentd processes share the normal tmux server, give every process a distinct SQLite file, HTTP port, PID file, and `AGENT_WORKTREE_ID`. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
 
 ```sh
-# stable service command
-agent daemon start --host 127.0.0.1 --port 4317
-
-# main service command
-AGENT_MAIN_DIR="$HOME/.local/share/mobile-agent/agent-main" agent_main daemon start --host 127.0.0.1 --port 6317
+# profile-a.env and profile-b.env are local files and are not committed.
+# Each file contains a unique AGENTD_DB_FILE, AGENTD_PORT, AGENTD_PID_FILE,
+# and AGENT_WORKTREE_ID; leave AGENTD_TMUX_SOCKET unset to share tmux.
+set -a; . ./profile-a.env; set +a
+agent daemon start
 ```
 
-The daemon lifecycle commands use a profile-specific PID file (by default next to the SQLite file):
+The daemon lifecycle commands use the same profile environment:
 
 ```sh
+set -a; . ./profile-a.env; set +a
 agent daemon status
-agent_main daemon status
 agent daemon restart
-agent_main daemon restart
 agent daemon stop
 ```
 
-`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. Therefore updating either runtime is explicit and deterministic:
-
-```sh
-# update and restart main
-git -C "$HOME/.local/share/mobile-agent/agent-main" fetch origin main
-git -C "$HOME/.local/share/mobile-agent/agent-main" checkout --detach origin/main
-agent_main daemon restart
-
-# install and restart stable
-bun run agent:install
-agent daemon restart
-```
-
-There is no live code replacement inside an already-running agentd process. The restart is required so the process loads the new source or standalone binary. A service manager with `KeepAlive`/`Restart=on-failure` should be used for boot-time startup and crash recovery; the explicit `daemon restart` command is also sufficient when updates are performed manually.
+`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running agentd process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should be used for boot-time startup and crash recovery.
 
 ### Releases
 
@@ -173,46 +159,20 @@ Pushing a semantic version tag such as `v0.0.1-beta.1` starts the release workfl
 
 GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
 
-The default state database is `~/.local/state/mobile-agent/agentd.sqlite`. Override it with `AGENTD_DB_FILE`, `AGENT_WORKTREE_ROOT`, or `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state and registered workspace hook paths are stored in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
+The unqualified `agent` command is reserved for the production standalone binary. It never builds the current checkout or silently selects another source tree. For source-based local development, use `bun dev` and run the CLI through the linked checkout.
 
-The repository provides two explicit command channels. The unqualified `agent` command is reserved for the production standalone binary; it never builds the current checkout or silently falls back to `origin/main`. `agent_main` is a thin launcher for one fixed origin/main checkout. It runs `apps/agent-cli/src/index.ts` directly with Bun, does not fetch on invocation, does not create a new worktree, and does not compile a second standalone binary. The checkout is `AGENT_MAIN_DIR` or `~/.local/share/mobile-agent/agent-main`. Development servers are started directly with `bun dev` from each linked worktree; there is no separate current-worktree CLI launcher.
-
-Install the latest stable release and expose the latest-main launcher through PATH:
+Install the latest stable release and expose the production command through PATH:
 
 ```sh
 bun run agent:install
-ln -sfn "$PWD/bin/agent_main" "$HOME/.local/bin/agent_main"
 agent --help
 ```
 
-`bun run agent:install` downloads the latest stable GitHub Release for the current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at `~/.local/libexec/mobile-agent/agent`, and updates `~/.local/bin/agent` to point directly to that binary. To set up the fixed `agent_main` checkout once, use a normal linked worktree and install its dependencies:
+`bun run agent:install` downloads the latest stable GitHub Release for the current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at `~/.local/libexec/mobile-agent/agent`, and updates `~/.local/bin/agent` to point directly to that binary. Override the install paths with `AGENT_INSTALL_DIR` and `AGENT_BIN_DIR` when needed.
 
-```sh
-git worktree add --detach "$HOME/.local/share/mobile-agent/agent-main" origin/main
-(cd "$HOME/.local/share/mobile-agent/agent-main" && bun install --frozen-lockfile)
-```
+The default state database is `~/.local/state/mobile-agent/agentd.sqlite`; override it with `AGENTD_DB_FILE`. Other overrides are `AGENTD_MIGRATIONS_DIR`, `AGENT_WORKTREE_ROOT`, and `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state is stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 
-Override the checkout with `AGENT_MAIN_DIR`; override the state directory with `AGENT_MAIN_STATE_ROOT`. The repository-local `bin/agent_main` launcher can be exposed through PATH as shown above.
-
-The command choice is therefore explicit:
-
-```sh
-agent run codex             # stable production binary
-agent_main run codex        # fixed origin/main checkout executed by Bun
-```
-
-`agent_main` intentionally does not update the checkout during command execution. Update it explicitly when you want a newer `origin/main`, then the next invocation uses that code:
-
-```sh
-git -C "$HOME/.local/share/mobile-agent/agent-main" fetch origin main
-git -C "$HOME/.local/share/mobile-agent/agent-main" checkout --detach origin/main
-```
-
-The stable `agent` command uses the release profile by default, while `agent_main` uses the isolated `main` profile with a separate SQLite file and HTTP port. Both continue to use the default tmux socket, so they can see the same tmux sessions without sharing an agentd process. Override the main profile with `AGENTD_DB_FILE` or `AGENTD_PORT` when needed.
-
-With `--worktree`, the CLI creates an `agent/<name>` branch in the release/default profile and an `agent/<worktree-id>/<name>` branch in the local dev profile. The latter avoids Git branch collisions when the same session name is used from multiple linked worktrees. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
-
-The default release state database is `~/.local/state/mobile-agent/agentd.sqlite`; the local dev profile uses `~/.local/state/mobile-agent/worktrees/<worktree-id>/agentd.sqlite`; `agent_main` uses `~/.local/state/mobile-agent/agent-main/agentd.sqlite`. Override it with `AGENTD_DB_FILE`. The local and main profiles also separate hook output under their respective state directories. Other overrides are `AGENTD_MIGRATIONS_DIR`, `AGENT_PROJECTS_ROOT`, `AGENT_WORKTREE_ROOT`, and `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state is stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
+With `--worktree`, the CLI creates an `agent/<name>` branch by default. When `AGENT_WORKTREE_ID` is set, it uses an isolated worktree directory and `agent/<worktree-id>/<name>` branch namespace, which avoids collisions when the same session name is used from multiple linked worktrees.
 
 `AGENTD_TMUX_SOCKET` is not automatically changed by the dev profile. Leaving it unset means that release and dev processes use the same default tmux server; setting it explicitly changes the tmux server and is an advanced isolation choice, not part of normal worktree separation. Each agentd has its own pane database and HTTP endpoint. Its tmux hooks use a process-specific registration and its pane metadata uses a worktree-specific namespace, so multiple agentd processes can observe the same tmux sessions without overwriting each other's records. Viewport control remains inherently global to a tmux window; two mobile clients should not try to control the same window concurrently.
 

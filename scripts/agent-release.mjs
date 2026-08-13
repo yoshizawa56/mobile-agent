@@ -10,7 +10,7 @@ if (!existsSync(binary)) {
   process.stderr.write([
     `agent: production binary not found: ${binary}`,
     "agent: install the latest stable release with 'bun run agent:install' or set AGENT_RELEASE_BINARY",
-    "agent: use 'agent_main' for the fixed origin/main checkout",
+    "agent: use 'bun run dev' for source-based local development",
   ].join("\n") + "\n");
   process.exitCode = 1;
 } else {
@@ -32,9 +32,7 @@ if (!existsSync(binary)) {
 function releaseEnvironment(environment) {
   const result = {
     ...environment,
-    AGENT_PROFILE: "release",
+    AGENT_PROFILE: environment.AGENT_PROFILE ?? "release",
   };
-  delete result.AGENT_WORKTREE_ID;
-  delete result.AGENT_DEV_STATE_ROOT;
   return result;
 }

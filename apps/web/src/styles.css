@@ -1,3 +1,13 @@
+/* Nerd Font's symbols-only face fills Powerline/private-use glyphs while the
+   following families continue to render ordinary terminal text. */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-display: block;
+  font-style: normal;
+  font-weight: 100 900;
+}
+
 :root {
   color: #d9f4dc;
   background: #050805;

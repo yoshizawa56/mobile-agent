@@ -12,6 +12,7 @@ import { getAgentdWebSocketEndpoint, openAgentdTerminal } from "../api/agentd-ap
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
 import { installTerminalFlickInput } from "./terminal-flick";
 import { installTerminalSelectionGesture } from "./terminal-selection";
+import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./terminal-font";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -167,10 +168,11 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     if (!target || !terminalContainer) return;
 
     const container = terminalContainer;
+    const fontSize = terminalFontSize();
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: '"SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, monospace',
-      fontSize: terminalFontSize(),
+      fontFamily: TERMINAL_FONT_FAMILY,
+      fontSize,
       lineHeight: 1.05,
       letterSpacing: 0,
       scrollback: 10_000,
@@ -206,6 +208,12 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     let resizeFrame: number | null = null;
     let retryScheduled = false;
     let socketGeneration = 0;
+
+    void waitForTerminalFont(fontSize).then(() => {
+      if (disposed) return;
+      terminal.refresh(0, terminal.rows - 1);
+      fitAddon.fit();
+    });
 
     const scheduleReconnect = () => {
       if (disposed || terminalClosedRef.current || retryScheduled || retryCountRef.current >= 8) return;

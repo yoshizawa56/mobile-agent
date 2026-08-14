@@ -21,6 +21,200 @@ export const agentdCapabilitiesSchema = z.object({
 });
 export type AgentdCapabilities = z.infer<typeof agentdCapabilitiesSchema>;
 
+export const authDeviceTypeSchema = z.enum(["browser", "native", "cli"]);
+export type AuthDeviceType = z.infer<typeof authDeviceTypeSchema>;
+
+const base64UrlValueSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
+const displayValueSchema = z.string().trim().min(1).max(120).regex(/^[^\u0000\r\n]+$/);
+
+export const publicKeyJwkSchema = z.object({
+  kty: z.literal("EC"),
+  crv: z.literal("P-256"),
+  x: base64UrlValueSchema,
+  y: base64UrlValueSchema,
+}).strict();
+export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
+
+export const pairingQrPayloadSchema = z.object({
+  v: z.literal(1),
+  webOrigin: z.string().url(),
+  agentdBaseUrl: z.string().url(),
+  serverId: z.string().min(16).max(256),
+  pairingId: z.string().min(16).max(256),
+  pairingSecret: base64UrlValueSchema.min(32).max(512),
+  expiresAt: z.number().int().positive(),
+}).strict();
+export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
+
+const pairingClaimNotificationSchema = z.object({
+  pairingId: z.string().min(16).max(256),
+  serverId: z.string().min(16).max(256),
+  deviceName: displayValueSchema,
+  deviceType: authDeviceTypeSchema,
+  platform: z.string().nullable(),
+  clientVersion: z.string().nullable(),
+  keyFingerprint: z.string().min(1).max(256),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
+
+export const agentdControlRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("create_pairing"),
+    webOrigin: z.string().url(),
+    agentdBaseUrl: z.string().url(),
+  }).strict(),
+  z.object({
+    type: z.literal("approve_pairing"),
+    pairingId: z.string().min(16).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("reject_pairing"),
+    pairingId: z.string().min(16).max(256),
+  }).strict(),
+  z.object({
+    type: z.literal("adopt_agent_session"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("release_agent_session"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+]);
+export type AgentdControlRequest = z.infer<typeof agentdControlRequestSchema>;
+
+export const agentdControlResponseSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("pairing_created"),
+    pairingId: z.string().min(16).max(256),
+    pairingUrl: z.string().url(),
+    payload: pairingQrPayloadSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("pairing_claimed"),
+    ...pairingClaimNotificationSchema.shape,
+  }).strict(),
+  z.object({
+    type: z.literal("pairing_result"),
+    pairingId: z.string().min(16).max(256),
+    status: z.enum(["approved", "rejected"]),
+    deviceId: z.string().min(1).max(256).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent_session_adopted"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("agent_session_released"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("error"),
+    code: z.string().min(1).max(120),
+    message: z.string().min(1).max(4_096),
+  }).strict(),
+]);
+export type AgentdControlResponse = z.infer<typeof agentdControlResponseSchema>;
+
+export const authInfoSchema = z.object({
+  protocolVersion: z.literal(protocolVersion),
+  serverId: z.string().min(16).max(256),
+  serverTime: z.string().datetime(),
+}).strict();
+export type AuthInfo = z.infer<typeof authInfoSchema>;
+
+export const pairingClaimRequestSchema = z.object({
+  pairingSecret: base64UrlValueSchema.min(32).max(512),
+  publicKey: publicKeyJwkSchema,
+  deviceName: displayValueSchema,
+  deviceType: authDeviceTypeSchema,
+  platform: z.string().trim().max(120).regex(/^[^\u0000\r\n]*$/).optional(),
+  clientVersion: z.string().trim().max(120).regex(/^[^\u0000\r\n]*$/).optional(),
+  clientNonce: base64UrlValueSchema.min(16).max(512),
+  signature: base64UrlValueSchema.min(1).max(1024),
+}).strict();
+export type PairingClaimRequest = z.infer<typeof pairingClaimRequestSchema>;
+
+export const pairingClaimResponseSchema = z.object({
+  serverId: z.string().min(16).max(256),
+  pairingId: z.string().min(16).max(256),
+  claimToken: z.string().min(32).max(512),
+  status: z.literal("awaiting_approval"),
+  expiresAt: z.string().datetime(),
+  keyFingerprint: z.string().min(1).max(256),
+}).strict();
+export type PairingClaimResponse = z.infer<typeof pairingClaimResponseSchema>;
+
+export const pairingStatusSchema = z.object({
+  status: z.enum(["offered", "awaiting_approval", "approved", "rejected", "expired"]),
+  deviceId: z.string().min(1).max(256).nullable(),
+}).strict();
+export type PairingStatus = z.infer<typeof pairingStatusSchema>;
+
+export const authChallengeRequestSchema = z.object({
+  deviceId: z.string().min(1).max(256),
+}).strict();
+export type AuthChallengeRequest = z.infer<typeof authChallengeRequestSchema>;
+
+export const authChallengeResponseSchema = z.object({
+  serverId: z.string().min(16).max(256),
+  deviceId: z.string().min(1).max(256),
+  challengeId: z.string().min(16).max(256),
+  nonce: base64UrlValueSchema.min(16).max(512),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type AuthChallengeResponse = z.infer<typeof authChallengeResponseSchema>;
+
+export const authSessionRequestSchema = z.object({
+  deviceId: z.string().min(1).max(256),
+  challengeId: z.string().min(16).max(256),
+  signature: base64UrlValueSchema.min(1).max(1024),
+}).strict();
+export type AuthSessionRequest = z.infer<typeof authSessionRequestSchema>;
+
+export const authSessionResponseSchema = z.object({
+  serverId: z.string().min(16).max(256),
+  deviceId: z.string().min(1).max(256),
+  sessionId: z.string().min(16).max(256),
+  accessToken: z.string().min(32).max(512),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type AuthSessionResponse = z.infer<typeof authSessionResponseSchema>;
+
+export const wsTicketRequestSchema = z.object({
+  endpoint: z.enum(["terminal", "events"]),
+}).strict();
+export type WsTicketRequest = z.infer<typeof wsTicketRequestSchema>;
+
+export const wsTicketResponseSchema = z.object({
+  ticket: z.string().min(32).max(512),
+  endpoint: z.enum(["terminal", "events"]),
+  expiresAt: z.string().datetime(),
+}).strict();
+export type WsTicketResponse = z.infer<typeof wsTicketResponseSchema>;
+
+export const authDeviceSchema = z.object({
+  deviceId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(120),
+  deviceType: authDeviceTypeSchema,
+  platform: z.string().nullable(),
+  clientVersion: z.string().nullable(),
+  keyFingerprint: z.string().min(1).max(256),
+  status: z.enum(["active", "revoked"]),
+  createdAt: z.string().datetime(),
+  lastSeenAt: z.string().datetime().nullable(),
+  revokedAt: z.string().datetime().nullable(),
+}).strict();
+export type AuthDevice = z.infer<typeof authDeviceSchema>;
+
 export const agentdEventSchema = z.object({
   type: z.literal("session_updated"),
   sessionName: z.string().min(1),
@@ -268,3 +462,5 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export type ServerControlMessage = z.infer<typeof serverControlMessageSchema>;
+
+export * from "./auth-crypto.js";

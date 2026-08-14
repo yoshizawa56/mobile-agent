@@ -23,7 +23,9 @@ class FakePanes implements PaneRepository {
   public async list() { return this.records; }
   public async findById(id: string) { return this.records.find((record) => record.id === id); }
   public async findByTmuxPaneId(tmuxPaneId: string) { return this.records.find((record) => record.tmuxPaneId === tmuxPaneId); }
+  public async findByTmuxPaneIdentity(_tmuxServerId: string, tmuxPaneId: string) { return this.records.find((record) => record.tmuxPaneId === tmuxPaneId); }
   public async upsert(record: PaneRecord) { this.records = [record]; }
+  public async pruneStalePanes(_activePaneIds: readonly string[], _olderThan: string, _tmuxServerScope: string) { return 0; }
 }
 
 class FakeGateway implements PaneGateway {

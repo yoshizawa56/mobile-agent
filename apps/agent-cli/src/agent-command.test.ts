@@ -73,6 +73,25 @@ describe("agent command migration", () => {
     expect(tmux.paneMetadata.some((entry) => entry.field === "pane_name" && entry.value === "terminal-shell")).toBe(true);
   });
 
+  it("returns an unmanaged pane to shell metadata after the agent exits", async () => {
+    const fixture = createFixture();
+    const tmux = new RecordingTmuxAdapter();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: { ...fixture.env, TMUX_PANE: "%7" },
+      io: { out: captureOutput(), err: captureOutput() },
+      tmux,
+    });
+
+    await expect(command.execute(["run", "claude", "--no-worktree", "-n", "unmanaged"])).resolves.toBe(0);
+    command.close();
+
+    expect(tmux.paneMetadata.filter((entry) => entry.field === "kind").map((entry) => entry.value)).toEqual(["agent", "shell"]);
+    expect(tmux.paneMetadata.filter((entry) => entry.field === "agent_id").map((entry) => entry.value)).toEqual(["claude", ""]);
+    expect(tmux.paneMetadata.filter((entry) => entry.field === "run_id").at(-1)?.value).toBe("");
+  });
+
   it("rolls back a partially configured managed tmux session", async () => {
     const fixture = createFixture();
     const tmux = new RecordingTmuxAdapter({ failOnSessionOption: true });
@@ -274,7 +293,7 @@ class RecordingTmuxAdapter extends TmuxAdapter {
     this.environments.push({ name, key, value });
   }
 
-  public override setAgentSessionMetadata(name: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
+  public override setManagedSessionMetadata(name: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
     this.sessionMetadata.push({ name, field, value });
   }
 

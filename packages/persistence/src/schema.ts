@@ -10,6 +10,9 @@ export const panes = sqliteTable(
   {
     id: text("id").primaryKey(),
     tmuxPaneId: text("tmux_pane_id").notNull(),
+    tmuxServerId: text("tmux_server_id").notNull().default("legacy"),
+    agentSessionId: text("agent_session_id"),
+    agentExecutionId: text("agent_execution_id"),
     sessionName: text("session_name").notNull(),
     windowId: text("window_id").notNull(),
     kind: text("kind", { enum: ["agent", "shell", "unknown"] }).notNull(),
@@ -26,7 +29,8 @@ export const panes = sqliteTable(
     ...timestamps,
   },
   (table) => ({
-    tmuxPaneIndex: uniqueIndex("panes_tmux_pane_id_index").on(table.tmuxPaneId),
+    tmuxPaneIndex: uniqueIndex("panes_tmux_server_pane_id_index").on(table.tmuxServerId, table.tmuxPaneId),
+    agentSessionIndex: index("panes_agent_session_index").on(table.agentSessionId),
   }),
 );
 
@@ -91,6 +95,9 @@ export const agentSessions = sqliteTable(
     baselineStatus: text("baseline_status"),
     codexSessionBaseline: text("codex_session_baseline"),
     lastExitStatus: integer("last_exit_status"),
+    executionId: text("execution_id"),
+    executionPid: integer("execution_pid"),
+    executionStartedAt: text("execution_started_at"),
     ...timestamps,
   },
   (table) => ({

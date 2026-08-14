@@ -24,6 +24,7 @@ export type TerminalSessionOptions = {
   /** Injectable for lifecycle tests; production uses the Bun-native PTY adapter. */
   spawnPty?: typeof spawnPty;
   sessions?: TerminalSessionRegistry;
+  authDeviceId?: string;
 };
 
 /**
@@ -42,9 +43,9 @@ export class TerminalSessionRegistry {
     this.sessions.set(session.sessionId, session);
   }
 
-  public find(sessionId: string, resumeToken: string): TerminalSession | undefined {
+  public find(sessionId: string, resumeToken: string, authDeviceId?: string): TerminalSession | undefined {
     const session = this.sessions.get(sessionId);
-    return session?.matchesResumeToken(resumeToken) ? session : undefined;
+    return session?.matchesResumeToken(resumeToken) && session.matchesAuthContext(authDeviceId) ? session : undefined;
   }
 
   public unregister(session: TerminalSession): void {
@@ -76,7 +77,7 @@ type AttachMessage = Extract<ClientControlMessage, { type: "attach" }>;
 export class TerminalSession {
   public readonly sessionId = opaqueId();
 
-  private readonly resumeToken = opaqueToken();
+  private resumeToken = opaqueToken();
   private readonly registry: TerminalSessionRegistry;
   private readonly resumeGraceMs: number;
   private socket: WebSocket | undefined;
@@ -104,6 +105,10 @@ export class TerminalSession {
 
   public matchesResumeToken(resumeToken: string): boolean {
     return !this.disposed && this.resumeToken === resumeToken;
+  }
+
+  public matchesAuthContext(authDeviceId?: string): boolean {
+    return this.options.authDeviceId === authDeviceId;
   }
 
   public dispose(): void {
@@ -238,7 +243,7 @@ export class TerminalSession {
     }
 
     if (message.sessionId && message.resumeToken) {
-      const existing = this.registry.find(message.sessionId, message.resumeToken);
+      const existing = this.registry.find(message.sessionId, message.resumeToken, this.options.authDeviceId);
       if (!existing) {
         this.sendError("resume_not_found", "The terminal session is no longer resumable", true);
         return;
@@ -293,6 +298,7 @@ export class TerminalSession {
       return true;
     }
 
+    this.resumeToken = opaqueToken();
     this.sendReady(true);
     return true;
   }

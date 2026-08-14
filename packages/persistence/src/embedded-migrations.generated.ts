@@ -2,7 +2,7 @@
 export const embeddedMigrationFiles = [
   {
     "path": "meta/_journal.json",
-    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    }\n  ]\n}"
+    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786668549000,\n      \"tag\": \"0002_tmux_server_identity\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786672149000,\n      \"tag\": \"0003_agent_session_adoption\",\n      \"breakpoints\": true\n    }\n  ]\n}\n"
   },
   {
     "path": "0000_fair_shinko_yamashiro.sql",
@@ -11,5 +11,13 @@ export const embeddedMigrationFiles = [
   {
     "path": "0001_adorable_omega_sentinel.sql",
     "contents": "ALTER TABLE `workspaces` ADD `worktree_copy_patterns` text DEFAULT '[]' NOT NULL;"
+  },
+  {
+    "path": "0002_tmux_server_identity.sql",
+    "contents": "ALTER TABLE `panes` ADD `tmux_server_id` text DEFAULT 'legacy' NOT NULL;\n--> statement-breakpoint\nDROP INDEX `panes_tmux_pane_id_index`;\n--> statement-breakpoint\nCREATE UNIQUE INDEX `panes_tmux_server_pane_id_index` ON `panes` (`tmux_server_id`,`tmux_pane_id`);\n"
+  },
+  {
+    "path": "0003_agent_session_adoption.sql",
+    "contents": "ALTER TABLE `panes` ADD `agent_session_id` text;\n--> statement-breakpoint\nALTER TABLE `panes` ADD `agent_execution_id` text;\n--> statement-breakpoint\nCREATE INDEX `panes_agent_session_index` ON `panes` (`agent_session_id`);\n--> statement-breakpoint\nALTER TABLE `agent_sessions` ADD `execution_id` text;\n--> statement-breakpoint\nALTER TABLE `agent_sessions` ADD `execution_pid` integer;\n--> statement-breakpoint\nALTER TABLE `agent_sessions` ADD `execution_started_at` text;\n"
   }
 ] as const;

@@ -26,6 +26,7 @@ bun run audit:public
 - `apps/agent-cli`: the `agent` CLI, with agent lifecycle state managed by SQLite
 - `apps/web`: renders one pane with xterm.js and sends terminal size changes to agentd
 - `packages/agentd-client`: the TypeScript client for Hono RPC, Zod validation, and the agentd terminal WebSocket
+- `packages/cli-adapters`: CLI-side infrastructure adapters and composition factories
 - `packages/domain`: Pane/Run state and agent waiting-state rules
 - `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
 - `packages/persistence`: Drizzle + SQLite persistence for panes, runs, audits, registered workspaces, and agent sessions
@@ -143,7 +144,7 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured unmanaged files such as `.env` into the same relative paths, and then runs the registered workspace setup script when present. Copy patterns are relative and support `*` and `**`; missing matches are warnings. Cleanup scripts run before the worktree is removed. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside this managed path.
+`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
 
 `build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 

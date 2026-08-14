@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
+import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -374,11 +375,10 @@ export class AgentCommand {
 
   private restoreCurrentPaneMetadata(environment = this.env): void {
     const shellRunId = environment.AGENTD_SHELL_RUN_ID;
-    if (!shellRunId) return;
     this.markCurrentPane({
       kind: "shell",
       agentId: null,
-      runId: shellRunId,
+      runId: shellRunId ?? "",
       name: environment.AGENTD_PANE_NAME ?? environment.AGENTD_MANAGED_SESSION_NAME ?? "shell",
     }, environment);
   }
@@ -481,6 +481,7 @@ export class AgentCommand {
 
     const worktree = options.useWorktree ? this.createWorktree(workspace, name, options.worktreeRoot) : emptyWorktree();
     const now = timestamp();
+    const claudeBackendSessionId = backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : null;
     const session: AgentSessionRecord = {
       id: randomUUID(),
       name,
@@ -495,7 +496,10 @@ export class AgentCommand {
       cleanupHook,
       setupOutputFile: null,
       cleanupOutputFile: null,
-      backendSessionId: backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : null,
+      // A Claude session ID is generated locally for the launch command, but
+      // is persisted only after the backend process has actually spawned.
+      // This keeps setup-stage crashes from becoming falsely resumable.
+      backendSessionId: null,
       codexProfile: backend === "codex" ? options.codexProfile : null,
       codexRemote: backend === "codex" ? codexRemoteEndpoint(options.backendArgs, this.defaultCodexRemote) : null,
       setupRan: false,
@@ -503,6 +507,9 @@ export class AgentCommand {
       baselineStatus: null,
       codexSessionBaseline: null,
       lastExitStatus: null,
+      executionId: randomUUID(),
+      executionPid: process.pid,
+      executionStartedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -534,22 +541,30 @@ export class AgentCommand {
       throw new AgentCommandError("Codex rollout baseline capture failed; mapping retained");
     }
     const startedAt = Math.floor(Date.now() / 1000);
-    current = updateSession(current, { status: "running" });
-    await this.sessions.update(current);
+    current = updateSession(current, { status: "running", backendSessionId: claudeBackendSessionId });
+    // Keep the generated Claude ID out of durable state until runBackend has
+    // observed a successful child spawn. Codex remains null until discovery.
+    await this.sessions.update(updateSession(current, { backendSessionId: null }));
     const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    await this.adoptSessionPane(current);
     this.markCurrentPane({ kind: "agent", agentId: backend, runId: current.id, name: current.name });
-    const result = await this.runBackend(current, command, runDir, startedAt);
+    let result: ProcessResult;
     try {
-      return await this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
+      result = await this.runBackend(current, command, runDir, startedAt);
     } finally {
+      await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
     }
+    return this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
   }
 
   private async resumeSession(options: ResumeOptions): Promise<number> {
     if (!options.reference) return 0;
     const session = await this.locateSession(options.reference, options.global);
     if (session.status === "setup_failed") throw new AgentCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
+    if (session.status === "starting" || session.status === "setup" || session.status === "ready") {
+      throw new AgentCommandError(`session '${session.name}' has not started its backend; rerun it instead of resuming`);
+    }
     if (!session.backendSessionId) throw new AgentCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new AgentCommandError(`session working directory is missing: ${runDir}`);
@@ -557,15 +572,71 @@ export class AgentCommand {
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env);
     const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    const current = updateSession(session, { status: "resuming", resuming: true });
+    if (session.executionPid !== null && session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
+      throw new AgentCommandError(`session '${session.name}' is already running (pid ${session.executionPid})`);
+    }
+    const executionId = randomUUID();
+    const executionStartedAt = timestamp();
+    const claimed = await this.sessions.claimExecution(session.id, session.executionPid ?? null, executionId, process.pid, executionStartedAt);
+    if (!claimed) throw new AgentCommandError(`session '${session.name}' is already being resumed`);
+    const current = updateSession(session, { status: "resuming", resuming: true, executionId, executionPid: process.pid, executionStartedAt });
     await this.sessions.update(current);
+    await this.adoptSessionPane(current);
     const startedAt = Math.floor(Date.now() / 1000);
     this.markCurrentPane({ kind: "agent", agentId: session.backend, runId: current.id, name: current.name });
-    const result = await this.runBackend(current, command, runDir, startedAt);
+    let result: ProcessResult;
     try {
-      return await this.finalizeSession(current, result, startedAt, runDir, true);
+      result = await this.runBackend(current, command, runDir, startedAt);
     } finally {
+      await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
+    }
+    return this.finalizeSession(current, result, startedAt, runDir, true);
+  }
+
+  private async adoptSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.adoptAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        setFallbackSessionMetadata(this.env, input);
+        return;
+      }
+      this.warn(`agentd could not adopt pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async releaseSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.releaseAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        if (clearFallbackSessionMetadata(this.env, input)) {
+          try {
+            this.tmux.resetAgentPaneMetadata(tmuxPaneId);
+          } catch {
+            // A disappearing tmux pane is already on its way out of the projection.
+          }
+        }
+        return;
+      }
+      this.warn(`agentd could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -829,6 +900,13 @@ export class AgentCommand {
       ...this.env,
       AGENTD_RUN_ID: session.id,
       AGENTD_AGENT_ID: session.backend,
+    }, async () => {
+      if (session.backend !== "claude" || !session.backendSessionId) return;
+      try {
+        await this.sessions.update(session);
+      } catch (error) {
+        this.warn(`Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
+      }
     });
     if (nameWatcher) await nameWatcher.stop();
     this.restoreTerminalTitle();
@@ -838,10 +916,26 @@ export class AgentCommand {
   private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
     if (session.backend === "codex" && !session.backendSessionId && codexBaseline) {
       const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-      if (id) session = updateSession(session, { backendSessionId: id });
-      else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
+      if (id) {
+        session = updateSession(session, { backendSessionId: id });
+        await this.manageRemoteThread(session, "name");
+      }
+      else {
+        const persisted = await this.sessions.findById(session.id);
+        if (persisted?.backendSessionId) {
+          session = persisted;
+          await this.manageRemoteThread(session, "name");
+        }
+        else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
+      }
     }
-    session = updateSession(session, { lastExitStatus: result.code, updatedAt: timestamp() });
+    session = updateSession(session, {
+      lastExitStatus: result.code,
+      executionId: null,
+      executionPid: null,
+      executionStartedAt: null,
+      updatedAt: timestamp(),
+    });
     if (result.interrupted || result.code === 130 || result.code === 143) {
       session = updateSession(session, { status: "interrupted" });
       await this.sessions.update(session);
@@ -994,6 +1088,7 @@ export class AgentCommand {
         const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
         if (id) {
           try {
+            await this.sessions.setBackendSessionIdIfMissing(session.id, id);
             await this.manageRemoteThread({ ...session, backendSessionId: id }, "name");
             return;
           } catch {
@@ -1087,6 +1182,7 @@ export class AgentCommand {
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
+  agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
   agent daemon <start|status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
   agent serve tailscale [--port PORT] [--agentd-port PORT]
   agent dev [serve tailscale]
@@ -1191,6 +1287,62 @@ function realpathAfterMkdir(path: string): string {
 
 function timestamp(): string {
   return new Date().toISOString();
+}
+
+type SessionPaneAdoption = {
+  agentSessionId: string;
+  tmuxPaneId: string;
+  executionId: string;
+};
+
+function currentTmuxPane(env: NodeJS.ProcessEnv): string | undefined {
+  const pane = env.TMUX && env.TMUX_PANE ? env.TMUX_PANE.trim() : "";
+  return /^%[0-9]+$/.test(pane) ? pane : undefined;
+}
+
+function defaultControlSocket(env: NodeJS.ProcessEnv, databaseFile: string): string {
+  if (env.AGENTD_CONTROL_SOCKET) return env.AGENTD_CONTROL_SOCKET;
+  return `${databaseFile !== ":memory:" ? databaseFile : join(homedir(), ".local", "state", "mobile-agent", "agentd")}.control.sock`;
+}
+
+function isControlSocketUnavailable(error: unknown): boolean {
+  return error instanceof PairingControlError && error.code.startsWith("control_socket_");
+}
+
+function setFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): void {
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_execution_id", input.executionId]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_session_id", input.agentSessionId]);
+}
+
+function clearFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): boolean {
+  const current = runTmuxMetadataCommand(env, ["show-options", "-q", "-p", "-v", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  if (current.status !== 0 || current.stdout.trim() !== input.executionId) return false;
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_session_id"]);
+  return true;
+}
+
+function runTmuxMetadataCommand(env: NodeJS.ProcessEnv, args: string[]): { status: number | null; stdout: string } {
+  const socket = env.TMUX?.split(",", 1)[0] ?? env.AGENTD_TMUX_SOCKET;
+  try {
+    const result = spawnSync("tmux", [...(socket ? ["-S", socket] : []), ...args], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return { status: result.status, stdout: result.stdout ?? "" };
+  } catch {
+    return { status: null, stdout: "" };
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
 }
 
 function localTimestamp(): string {
@@ -1349,7 +1501,13 @@ async function ensureCodexRemoteControl(backend: AgentBackend, args: string[], b
   }
 }
 
-async function spawnAttached(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<ProcessResult> {
+async function spawnAttached(
+  binary: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  onStarted?: () => void | Promise<void>,
+): Promise<ProcessResult> {
   const child = spawn(binary, args, { cwd, env, stdio: "inherit" });
   let interrupted = false;
   const onInterrupt = (signal: NodeJS.Signals) => {
@@ -1358,13 +1516,19 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
   };
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onInterrupt);
-  const result = await new Promise<ProcessResult>((resolvePromise) => {
+  const started = new Promise<boolean>((resolvePromise) => {
+    child.once("spawn", () => resolvePromise(true));
+    child.once("error", () => resolvePromise(false));
+  });
+  const result = new Promise<ProcessResult>((resolvePromise) => {
     child.once("error", () => resolvePromise({ code: 127, interrupted }));
     child.once("close", (code, signal) => resolvePromise({ code: code ?? signalExitCode(signal), interrupted }));
   });
+  if (await started) await onStarted?.();
+  const finalResult = await result;
   process.off("SIGINT", onInterrupt);
   process.off("SIGTERM", onInterrupt);
-  return result;
+  return finalResult;
 }
 
 async function runAttachedProcess(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<number> {

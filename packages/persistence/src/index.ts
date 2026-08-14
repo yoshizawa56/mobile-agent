@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, like, lt, notInArray, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
@@ -35,6 +35,19 @@ import {
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
+export { AuthStore, AuthStoreError } from "./auth.js";
+export type {
+  AuthDeviceRecord,
+  AuthDeviceStatus,
+  AuthDeviceType,
+  AuthPairingRecord,
+  AuthPairingStatus,
+  AuthSessionRecord,
+  ClaimPairingInput,
+  ClaimPairingResult,
+  CreatePairingInput,
+  CreatePairingResult,
+} from "./auth.js";
 
 export type AgentDatabase = {
   db: ReturnType<typeof drizzle>;
@@ -63,6 +76,7 @@ export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memor
     sqlite.close();
     throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
+  ensureAuthSchema(sqlite);
 
   return {
     db,
@@ -139,20 +153,68 @@ export class DrizzlePaneRepository implements PaneRepository {
   }
 
   public async findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined> {
-    const row = this.database.select().from(panes).where(eq(panes.tmuxPaneId, tmuxPaneId)).get();
+    const row = this.database
+      .select()
+      .from(panes)
+      .where(eq(panes.tmuxPaneId, tmuxPaneId))
+      .orderBy(desc(panes.updatedAt))
+      .get();
+    return row ? toPaneRecord(row) : undefined;
+  }
+
+  public async findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined> {
+    const row = this.database
+      .select()
+      .from(panes)
+      .where(and(eq(panes.tmuxServerId, tmuxServerId), eq(panes.tmuxPaneId, tmuxPaneId)))
+      .get();
     return row ? toPaneRecord(row) : undefined;
   }
 
   public async upsert(record: PaneRecord): Promise<void> {
     const now = new Date().toISOString();
+    const row = toPaneRow(record, now);
     this.database
       .insert(panes)
-      .values(toPaneRow(record, now))
+      .values(row)
       .onConflictDoUpdate({
-        target: panes.id,
-        set: toPaneRow(record, now),
+        target: [panes.tmuxServerId, panes.tmuxPaneId],
+        set: {
+          tmuxPaneId: row.tmuxPaneId,
+          tmuxServerId: row.tmuxServerId,
+          agentSessionId: row.agentSessionId,
+          agentExecutionId: row.agentExecutionId,
+          sessionName: row.sessionName,
+          windowId: row.windowId,
+          kind: row.kind,
+          name: row.name,
+          cwd: row.cwd,
+          workspaceId: row.workspaceId,
+          agentId: row.agentId,
+          runId: row.runId,
+          state: row.state,
+          title: row.title,
+          lastSeenAt: row.lastSeenAt,
+          updatedAt: row.updatedAt,
+        },
       })
       .run();
+  }
+
+  public async pruneStalePanes(activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string): Promise<number> {
+    // An empty live set is deliberately not treated as authoritative. tmux
+    // exits its server after the last session disappears, so deleting all old
+    // rows here would turn a temporary tmux outage into data loss.
+    if (activePaneIds.length === 0) return 0;
+
+    const condition = and(
+      lt(panes.lastSeenAt, olderThan),
+      notInArray(panes.id, [...activePaneIds]),
+      or(eq(panes.tmuxServerId, "legacy"), like(panes.tmuxServerId, `${tmuxServerScope}:%`)),
+    );
+    const candidates = this.database.select({ id: panes.id }).from(panes).where(condition).all();
+    this.database.delete(panes).where(condition).run();
+    return candidates.length;
   }
 }
 
@@ -289,10 +351,36 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
         baselineStatus: record.baselineStatus,
         codexSessionBaseline: record.codexSessionBaseline,
         lastExitStatus: record.lastExitStatus,
+        executionId: record.executionId ?? null,
+        executionPid: record.executionPid ?? null,
+        executionStartedAt: record.executionStartedAt ?? null,
         updatedAt: now,
       })
       .where(eq(agentSessions.id, record.id))
       .run();
+  }
+
+  public async claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean> {
+    const predicate = expectedExecutionPid === null
+      ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
+      : and(eq(agentSessions.id, id), eq(agentSessions.executionPid, expectedExecutionPid));
+    const result = this.database
+      .update(agentSessions)
+      .set({ executionId, executionPid, executionStartedAt, status: "resuming", resuming: true, updatedAt: new Date().toISOString() })
+      .where(predicate)
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
+  }
+
+  public async setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean> {
+    const result = this.database
+      .update(agentSessions)
+      .set({ backendSessionId, updatedAt: new Date().toISOString() })
+      .where(and(eq(agentSessions.id, id), isNull(agentSessions.backendSessionId)))
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
   }
 
   public async delete(id: string): Promise<void> {
@@ -346,6 +434,66 @@ function baselineLegacyDatabase(sqlite: Database, migrationsFolder: string): voi
     .run(initialMigration.hash, initialMigration.folderMillis);
 }
 
+function ensureAuthSchema(sqlite: Database): void {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS auth_metadata (
+      id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+      server_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_devices (
+      device_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      public_key_jwk TEXT NOT NULL,
+      key_fingerprint TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      device_type TEXT NOT NULL,
+      platform TEXT,
+      client_version TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      approved_at TEXT NOT NULL,
+      last_seen_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_devices_status_index ON auth_devices (status);
+    CREATE TABLE IF NOT EXISTS auth_pairings (
+      pairing_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      web_origin TEXT NOT NULL,
+      agentd_base_url TEXT NOT NULL,
+      secret_hash TEXT NOT NULL UNIQUE,
+      claim_token_hash TEXT UNIQUE,
+      status TEXT NOT NULL,
+      offered_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      claim_expires_at TEXT,
+      claimed_at TEXT,
+      approved_at TEXT,
+      pending_public_key_jwk TEXT,
+      pending_fingerprint TEXT,
+      pending_display_name TEXT,
+      pending_device_type TEXT,
+      pending_platform TEXT,
+      pending_client_version TEXT,
+      device_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_pairings_status_index ON auth_pairings (status);
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      session_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      issued_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS auth_sessions_device_index ON auth_sessions (device_id);
+    CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index ON auth_sessions (expires_at);
+  `);
+}
+
 function ensureColumn(sqlite: Database, table: string, column: string, definition: string): void {
   const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((entry) => entry.name === column)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -360,6 +508,9 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
   return {
     id: record.id,
     tmuxPaneId: record.tmuxPaneId,
+    tmuxServerId: record.tmuxServerId ?? "legacy",
+    agentSessionId: record.agentSessionId ?? null,
+    agentExecutionId: record.agentExecutionId ?? null,
     sessionName: record.sessionName,
     windowId: record.windowId,
     kind: record.kind,
@@ -380,6 +531,9 @@ function toPaneRecord(row: PaneRow): PaneRecord {
   return {
     id: row.id,
     tmuxPaneId: row.tmuxPaneId,
+    ...(row.tmuxServerId === "legacy" ? {} : { tmuxServerId: row.tmuxServerId }),
+    ...(row.agentSessionId ? { agentSessionId: row.agentSessionId } : {}),
+    ...(row.agentExecutionId ? { agentExecutionId: row.agentExecutionId } : {}),
     sessionName: row.sessionName,
     windowId: row.windowId,
     kind: row.kind,
@@ -469,6 +623,9 @@ function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agen
     baselineStatus: record.baselineStatus,
     codexSessionBaseline: record.codexSessionBaseline,
     lastExitStatus: record.lastExitStatus,
+    executionId: record.executionId ?? null,
+    executionPid: record.executionPid ?? null,
+    executionStartedAt: record.executionStartedAt ?? null,
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -500,6 +657,9 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     baselineStatus: row.baselineStatus,
     codexSessionBaseline: row.codexSessionBaseline,
     lastExitStatus: row.lastExitStatus,
+    ...(row.executionId ? { executionId: row.executionId } : {}),
+    ...(row.executionPid === null ? {} : { executionPid: row.executionPid }),
+    ...(row.executionStartedAt ? { executionStartedAt: row.executionStartedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -1,159 +1,274 @@
 import { describe, expect, it } from "vitest";
-import { buildServeArgs, buildServeHttpUrl, buildServeUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "./index.js";
+import {
+  hasError,
+  noFixture,
+  returns,
+  runOperationTable,
+  type Assertion,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import {
+  buildServeArgs,
+  buildServeHttpUrl,
+  buildServeUrl,
+  buildTailscaleInvocation,
+  normalizeTailscaleStdout,
+  parseTailscaleHostname,
+  type TailscaleInvocation,
+  type TailscaleServeConfig,
+} from "./index.js";
 
-type InvocationCase = {
-  name: string;
-  binary: string;
-  args: string[];
-  environment: NodeJS.ProcessEnv;
-  platform: NodeJS.Platform;
-  executablePaths: string[];
-  allowShellFallback?: boolean;
-  shellFallback: boolean;
+type EmptyContext = {};
+
+type InvocationExpectation = {
   command: string;
-  invocationArgs: string[];
+  invocationArgs: readonly string[];
   path: string;
   cliMode: string;
+  shellFallback: boolean;
+};
+
+type InvocationInput = {
+  binary: string;
+  args: readonly string[];
+  environment: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  executablePaths: readonly string[];
+  allowShellFallback?: boolean;
+  expected: InvocationExpectation;
 };
 
 const invocationCases = [
   {
     name: "runs a named macOS command through the configured interactive shell",
-    binary: "tailscale",
-    args: ["serve", "--set-path=/agent's", "http://127.0.0.1:4317"],
-    environment: { HOME: "/Users/tester", PATH: "/usr/bin", SHELL: "/bin/zsh" },
-    platform: "darwin" as const,
-    executablePaths: [],
-    shellFallback: true,
-    command: "/bin/zsh",
-    invocationArgs: ["-ic", "printf '%s\\n' '__mobile_agent_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__mobile_agent_tailscale_stdout_end__'; exit \"$status\""],
-    path: "/usr/bin:/Applications/Tailscale.app/Contents/MacOS:/Users/tester/Applications/Tailscale.app/Contents/MacOS",
-    cliMode: "1",
+    input: {
+      binary: "tailscale",
+      args: ["serve", "--set-path=/agent's", "http://127.0.0.1:4317"],
+      environment: { HOME: "/Users/tester", PATH: "/usr/bin", SHELL: "/bin/zsh" },
+      platform: "darwin",
+      executablePaths: [],
+      expected: {
+        command: "/bin/zsh",
+        invocationArgs: ["-ic", "printf '%s\\n' '__mobile_agent_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__mobile_agent_tailscale_stdout_end__'; exit \"$status\""],
+        path: "/usr/bin:/Applications/Tailscale.app/Contents/MacOS:/Users/tester/Applications/Tailscale.app/Contents/MacOS",
+        cliMode: "1",
+        shellFallback: true,
+      },
+    },
+    assert: [
+      {
+        name: "matches the shell fallback invocation",
+        check: (_ctx: EmptyContext, result) => {
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          assertInvocation(result.value, invocationCases[0]!.input.expected);
+        },
+      },
+    ],
   },
   {
     name: "keeps an explicit executable path direct",
-    binary: "/opt/tailscale/Tailscale",
-    args: ["status", "--json"],
-    environment: { PATH: "/usr/bin", TAILSCALE_BE_CLI: "0" },
-    platform: "darwin" as const,
-    executablePaths: [],
-    shellFallback: false,
-    command: "/opt/tailscale/Tailscale",
-    invocationArgs: ["status", "--json"],
-    path: "/usr/bin",
-    cliMode: "0",
+    input: {
+      binary: "/opt/tailscale/Tailscale",
+      args: ["status", "--json"],
+      environment: { PATH: "/usr/bin", TAILSCALE_BE_CLI: "0" },
+      platform: "darwin",
+      executablePaths: [],
+      allowShellFallback: false,
+      expected: { command: "/opt/tailscale/Tailscale", invocationArgs: ["status", "--json"], path: "/usr/bin", cliMode: "0", shellFallback: false },
+    },
+    assert: [
+      {
+        name: "keeps the explicit executable invocation direct",
+        check: (_ctx: EmptyContext, result) => {
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          assertInvocation(result.value, invocationCases[1]!.input.expected);
+        },
+      },
+    ],
   },
   {
     name: "keeps a PATH executable direct",
-    binary: "tailscale",
-    args: ["serve", "--bg"],
-    environment: { PATH: "/usr/bin" },
-    platform: "darwin" as const,
-    executablePaths: ["/usr/bin/tailscale"],
-    shellFallback: false,
-    command: "tailscale",
-    invocationArgs: ["serve", "--bg"],
-    path: "/usr/bin",
-    cliMode: "1",
+    input: {
+      binary: "tailscale",
+      args: ["serve", "--bg"],
+      environment: { PATH: "/usr/bin" },
+      platform: "darwin",
+      executablePaths: ["/usr/bin/tailscale"],
+      expected: { command: "tailscale", invocationArgs: ["serve", "--bg"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+    },
+    assert: [
+      {
+        name: "keeps the PATH executable invocation direct",
+        check: (_ctx: EmptyContext, result) => {
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          assertInvocation(result.value, invocationCases[2]!.input.expected);
+        },
+      },
+    ],
   },
   {
     name: "uses the bundled macOS CLI when it is not on PATH",
-    binary: "tailscale",
-    args: ["status", "--json"],
-    environment: { HOME: "/Users/tester", PATH: "/usr/bin", SHELL: "/bin/zsh" },
-    platform: "darwin" as const,
-    executablePaths: ["/Applications/Tailscale.app/Contents/MacOS/Tailscale"],
-    shellFallback: false,
-    command: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-    invocationArgs: ["status", "--json"],
-    path: "/usr/bin",
-    cliMode: "1",
+    input: {
+      binary: "tailscale",
+      args: ["status", "--json"],
+      environment: { HOME: "/Users/tester", PATH: "/usr/bin", SHELL: "/bin/zsh" },
+      platform: "darwin",
+      executablePaths: ["/Applications/Tailscale.app/Contents/MacOS/Tailscale"],
+      expected: { command: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", invocationArgs: ["status", "--json"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+    },
+    assert: [
+      {
+        name: "uses the bundled executable directly",
+        check: (_ctx: EmptyContext, result) => {
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          assertInvocation(result.value, invocationCases[3]!.input.expected);
+        },
+      },
+    ],
   },
   {
     name: "can disable shell fallback for synchronous daemon lookups",
-    binary: "tailscale",
-    args: ["ip", "-4"],
-    environment: { PATH: "/usr/bin", SHELL: "/bin/zsh" },
-    platform: "darwin" as const,
-    executablePaths: [],
-    allowShellFallback: false,
-    shellFallback: false,
-    command: "tailscale",
-    invocationArgs: ["ip", "-4"],
-    path: "/usr/bin",
-    cliMode: "1",
-  },
-] satisfies readonly InvocationCase[];
-
-describe("tailscale serve adapter", () => {
-  it.each(invocationCases)("$name", (testCase: InvocationCase) => {
-    const invocation = buildTailscaleInvocation(
-      testCase.binary,
-      [...testCase.args],
-      testCase.environment,
-      testCase.platform,
+    input: {
+      binary: "tailscale",
+      args: ["ip", "-4"],
+      environment: { PATH: "/usr/bin", SHELL: "/bin/zsh" },
+      platform: "darwin",
+      executablePaths: [],
+      allowShellFallback: false,
+      expected: { command: "tailscale", invocationArgs: ["ip", "-4"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+    },
+    assert: [
       {
-        isExecutable: (path) => testCase.executablePaths.includes(path),
-        ...(testCase.allowShellFallback === undefined ? {} : { allowShellFallback: testCase.allowShellFallback }),
+        name: "returns a direct invocation when shell fallback is disabled",
+        check: (_ctx: EmptyContext, result) => {
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          assertInvocation(result.value, invocationCases[4]!.input.expected);
+        },
       },
-    );
+    ],
+  },
+] satisfies readonly OperationCase<"default", InvocationInput, TailscaleInvocation, EmptyContext>[];
 
-    expect(invocation.command).toBe(testCase.command);
-    expect(invocation.args).toEqual(testCase.invocationArgs);
-    expect(invocation.environment.PATH).toBe(testCase.path);
-    expect(invocation.environment.TAILSCALE_BE_CLI).toBe(testCase.cliMode);
-    expect(invocation.stdoutMarkers !== undefined).toBe(testCase.shellFallback);
-  });
-
-  it.each([
+const invocationTable: OperationTable<undefined, "default", InvocationInput, TailscaleInvocation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: invocationCases,
+  execute: (_fixture, input) => buildTailscaleInvocation(
+    input.binary,
+    [...input.args],
+    input.environment,
+    input.platform,
     {
-      name: "extracts command output between shell markers",
+      isExecutable: (path) => input.executablePaths.includes(path),
+      ...(input.allowShellFallback === undefined ? {} : { allowShellFallback: input.allowShellFallback }),
+    },
+  ),
+  observe: () => ({}),
+};
+
+function assertInvocation(actual: TailscaleInvocation, expected: InvocationExpectation): void {
+  expect(actual.command).toBe(expected.command);
+  expect(actual.args).toEqual(expected.invocationArgs);
+  expect(actual.environment.PATH).toBe(expected.path);
+  expect(actual.environment.TAILSCALE_BE_CLI).toBe(expected.cliMode);
+  expect(actual.stdoutMarkers !== undefined).toBe(expected.shellFallback);
+}
+
+type StdoutInput = { stdout: string; expected: string };
+const stdoutCases = [
+  {
+    name: "extracts command output between shell markers",
+    input: {
       stdout: "zsh startup message\n__mobile_agent_tailscale_stdout_begin__\n{\"Self\":{}}\n__mobile_agent_tailscale_stdout_end__\n",
       expected: "{\"Self\":{}}\n",
     },
-    {
-      name: "preserves output when the shell did not reach the marker",
-      stdout: "zsh startup failure\n",
-      expected: "zsh startup failure\n",
-    },
-  ])("$name", ({ stdout, expected }) => {
+    assert: [returns<EmptyContext, string>("{\"Self\":{}}\n")],
+  },
+  {
+    name: "preserves output when the shell did not reach the marker",
+    input: { stdout: "zsh startup failure\n", expected: "zsh startup failure\n" },
+    assert: [returns<EmptyContext, string>("zsh startup failure\n")],
+  },
+] satisfies readonly OperationCase<"default", StdoutInput, string, EmptyContext>[];
+
+const stdoutTable: OperationTable<undefined, "default", StdoutInput, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: stdoutCases,
+  execute: (_fixture, input) => {
     const invocation = buildTailscaleInvocation("tailscale", ["status", "--json"], { PATH: "/usr/bin" }, "linux", {
       isExecutable: () => false,
     });
-    expect(normalizeTailscaleStdout(stdout, invocation)).toBe(expected);
-  });
+    return normalizeTailscaleStdout(input.stdout, invocation);
+  },
+  observe: () => ({}),
+};
 
-  it.each([
-    { localPort: 4317, externalPort: 443, args: ["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:4317"] },
-    { localPort: 1, externalPort: 8449, args: ["serve", "--bg", "--https=8449", "--yes", "http://127.0.0.1:1"] },
-  ])("builds a persistent HTTPS Serve command", ({ localPort, externalPort, args }) => {
-    expect(buildServeArgs({ localPort, externalPort })).toEqual(args);
-  });
+const argsCases = [
+  { name: "builds a persistent HTTPS command", input: { localPort: 4317, externalPort: 443 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:4317"])] },
+  { name: "builds a command for a custom external port", input: { localPort: 1, externalPort: 8449 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=8449", "--yes", "http://127.0.0.1:1"])] },
+  { name: "builds a path-mounted command", input: { localPort: 4317, externalPort: 443, path: "agentd" }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "--set-path=/agentd", "http://127.0.0.1:4317"])] },
+] satisfies readonly OperationCase<"default", TailscaleServeConfig, string[], EmptyContext>[];
 
-  it("builds a path-mounted Serve command", () => {
-    expect(buildServeArgs({ localPort: 4317, externalPort: 443, path: "agentd" })).toEqual([
-      "serve", "--bg", "--https=443", "--yes", "--set-path=/agentd", "http://127.0.0.1:4317",
-    ]);
-  });
+const argsTable: OperationTable<undefined, "default", TailscaleServeConfig, string[], EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: argsCases,
+  execute: (_fixture, input) => buildServeArgs(input),
+  observe: () => ({}),
+};
 
-  it("builds a websocket URL for the Serve endpoint", () => {
-    expect(buildServeUrl("host.tailnet.ts.net", "agent")).toBe("wss://host.tailnet.ts.net/agent");
-  });
+type UrlInput =
+  | { kind: "http"; hostname: string; port: number }
+  | { kind: "websocket"; hostname: string; path: string };
+const urlCases = [
+  { name: "builds a websocket URL", input: { hostname: "host.tailnet.ts.net", path: "agent", kind: "websocket" }, assert: [returns<EmptyContext, string>("wss://host.tailnet.ts.net/agent")] },
+  { name: "builds HTTPS without a port for 443", input: { hostname: "host.tailnet.ts.net", port: 443, kind: "http" }, assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net/")] },
+  { name: "includes a non-default HTTPS port", input: { hostname: "host.tailnet.ts.net", port: 8449, kind: "http" }, assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net:8449/")] },
+] satisfies readonly OperationCase<"default", UrlInput, string, EmptyContext>[];
 
-  it.each([
-    { port: 443, expected: "https://host.tailnet.ts.net/" },
-    { port: 8449, expected: "https://host.tailnet.ts.net:8449/" },
-  ])("builds an HTTPS Serve URL without a port for 443", ({ port, expected }) => {
-    expect(buildServeHttpUrl("host.tailnet.ts.net", port)).toBe(expected);
-  });
+const urlTable: OperationTable<undefined, "default", UrlInput, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: urlCases,
+  execute: (_fixture, input) => input.kind === "http" ? buildServeHttpUrl(input.hostname, input.port) : buildServeUrl(input.hostname, input.path),
+  observe: () => ({}),
+};
 
-  it("reads the current node DNS name from Tailscale status JSON", () => {
-    expect(parseTailscaleHostname(JSON.stringify({ Self: { DNSName: "host.tailnet.ts.net." } }))).toBe("host.tailnet.ts.net");
-    expect(parseTailscaleHostname("not json")).toBeUndefined();
-  });
+const hostnameCases = [
+  { name: "reads and normalizes the current DNS name", input: JSON.stringify({ Self: { DNSName: "host.tailnet.ts.net." } }), assert: [returns<EmptyContext, string | undefined>("host.tailnet.ts.net")] },
+  { name: "returns undefined for malformed status JSON", input: "not json", assert: [returns<EmptyContext, string | undefined>(undefined)] },
+] satisfies readonly OperationCase<"default", string, string | undefined, EmptyContext>[];
 
-  it("rejects an invalid port", () => {
-    expect(() => buildServeArgs({ localPort: 65_536, externalPort: 443 })).toThrow("Invalid Tailscale Serve port");
-    expect(() => buildServeArgs({ localPort: 4317, externalPort: 65_536 })).toThrow("Invalid Tailscale Serve external port");
-  });
+const hostnameTable: OperationTable<undefined, "default", string, string | undefined, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: hostnameCases,
+  execute: (_fixture, input) => parseTailscaleHostname(input),
+  observe: () => ({}),
+};
+
+type InvalidInput = { kind: "local" | "external"; localPort: number; externalPort: number };
+const invalidCases = [
+  { name: "rejects an invalid local port", input: { kind: "local", localPort: 65_536, externalPort: 443 }, assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve port/ })] },
+  { name: "rejects an invalid external port", input: { kind: "external", localPort: 4317, externalPort: 65_536 }, assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve external port/ })] },
+] satisfies readonly OperationCase<"default", InvalidInput, string[], EmptyContext>[];
+
+const invalidTable: OperationTable<undefined, "default", InvalidInput, string[], EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: invalidCases,
+  execute: (_fixture, input) => buildServeArgs({ localPort: input.localPort, externalPort: input.externalPort }),
+  observe: () => ({}),
+};
+
+describe("tailscale serve adapter", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, invocationTable);
+  runOperationTable(register, stdoutTable);
+  runOperationTable(register, argsTable);
+  runOperationTable(register, urlTable);
+  runOperationTable(register, hostnameTable);
+  runOperationTable(register, invalidTable);
 });

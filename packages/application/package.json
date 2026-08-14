@@ -19,6 +19,7 @@
     "@mobile-agent/domain": "workspace:*"
   },
   "devDependencies": {
+    "@mobile-agent/test-support": "workspace:*",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

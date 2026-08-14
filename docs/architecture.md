@@ -359,18 +359,42 @@ Use TanStack Query for server state such as pane lists, Run metadata, settings, 
 
 ### Backend testing conventions
 
-Use table-driven tests for domain, application, adapter, and protocol behavior. Normal and error cases should use the same execution shape.
+Use table-driven tests for every domain, application, adapter, protocol, HTTP, CLI, persistence, WebSocket, tmux, and integration behavior test. Normal and error cases use the same execution shape.
 
 ~~~ts
-type TestCase<When, Result, Context> = {
-  given: () => Promise<unknown> | unknown
-  when: (given: unknown) => When
-  check: Array<(result: Result) => Promise<unknown> | unknown>
-  assert: Array<(context: Context) => void>
+type TestCase<FixtureKey extends string, Input, Result, Context> = {
+  name: string
+  fixture?: FixtureKey
+  input: Input
+  assert: readonly [Assertion<Context, Result>, ...Assertion<Context, Result>[]]
+}
+
+type OperationTable<Fixture, FixtureKey extends string, Input, Result, Context> = {
+  defaultFixture: FixtureFactory<Fixture>
+  fixtures?: Readonly<Record<FixtureKey, FixtureFactory<Fixture>>>
+  cases: readonly TestCase<FixtureKey, Input, Result, Context>[]
+  execute: (fixture: Fixture, input: Input) => Promise<Result> | Result
+  observe: (fixture: Fixture, result: Outcome<Result>) => Promise<Context> | Context
 }
 ~~~
 
-A shared runner performs given -> when -> check, storing values in ctx, -> assert. Adapter fixtures use the same format so that the act portion does not need to be duplicated across cases.
+Use `runOperationTable` when each row performs one public operation. Use `runScenarioTable` when a protocol has multiple typed data steps, such as reconnect, resume/cleanup, or attach/detach. In both cases the shared lifecycle is:
+
+~~~text
+select fixture -> execute(fixture, input/steps) -> observe(fixture, outcome) -> assertAll(ctx, outcome) -> cleanup
+~~~
+
+Rows are declarative: `name`, optional `fixture`, `input` or typed `steps`, and a non-empty `assert` list. Do not put `when`, `given`, `check`, setup callbacks, executors, observers, arbitrary mock implementations, or lifecycle control in a row. The table owns one `execute` and one post-execution `observe` function.
+
+A fixture is the complete test world: the SUT, DI bindings, fakes/stubs/mocks/spies, clocks, environment, database/filesystem/socket state, seed data, and cleanup. `defaultFixture` is lazy and fresh for each row. If a row specifies `fixture`, only that named factory is selected; the default is not evaluated or merged. This is required for empty-state and error-path tests.
+
+The runner captures only errors thrown by `execute` as `Outcome<Result>`. Fixture setup and `observe` errors are infrastructure failures. `observe` only reads recordings and state after execution; it must not call the SUT, advance time, emit events, or consume streams. Every assertion is named and all assertions run sequentially. Failures retain their matcher diff and original stack and are reported together. An execute error must be explicitly handled by `hasError(...)` or a custom assertion marked as handling outcome errors; otherwise the row fails even if an observation happens to match.
+
+Use the shared helpers from `@mobile-agent/test-support`: `hasNoError()`, `returns(expected)`, `hasError({ code, message, details })`, `hasObserved(key, expected)`, `hasCalls(key, expected)`, and `hasEvents(key, expected)`. Custom assertions are allowed only when these helpers cannot express the contract and must be read-only.
+
+Fixture factories may register cleanup callbacks while setup is in progress. The runner executes all registered callbacks and the returned cleanup callback in LIFO order, including when setup, execute, observe, or assertions fail, and aggregates cleanup failures.
+
+Run `bun run test:table` to check every test file, followed by `bun run typecheck` and `bun run test`. The checker rejects bare `it`/`test` registrations, direct `*.each` APIs, untyped table/case declarations, row-level lifecycle callbacks, function-valued scenario steps, and empty assertion lists.
 
 ## 7. AgentPlugin design
 

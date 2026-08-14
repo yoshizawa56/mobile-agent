@@ -1,5 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { ListPanes, ResizePane, SendPaneInput, type PaneRepository, type PaneGateway } from "./index.js";
+import { describe, it } from "vitest";
+import {
+  hasError,
+  hasNoError,
+  hasObserved,
+  returns,
+  runScenarioTable,
+  type FixtureHandle,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import { ListPanes, ResizePane, SendPaneInput, type PaneGateway, type PaneRepository } from "./index.js";
 import type { PaneRecord } from "@mobile-agent/domain";
 
 const pane: PaneRecord = {
@@ -36,27 +47,67 @@ class FakeGateway implements PaneGateway {
   public async close() {}
 }
 
+type ApplicationFixture = { repository: FakePanes; gateway: FakeGateway };
+type ApplicationStep =
+  | { type: "list" }
+  | { type: "send"; paneId: string; input: string }
+  | { type: "resize"; paneId: string; cols: number; rows: number };
+type ApplicationResult = PaneRecord[] | undefined;
+type ApplicationContext = { inputs: readonly string[]; sizes: readonly (readonly [number, number])[] };
+
+const applicationFixture = (): FixtureHandle<ApplicationFixture> => ({
+  fixture: { repository: new FakePanes(), gateway: new FakeGateway() },
+});
+
+const applicationCases = [
+  {
+    name: "lists panes through the repository port",
+    steps: [{ type: "list" }],
+    assert: [hasNoError<ApplicationContext, ApplicationResult>(), returns<ApplicationContext, ApplicationResult>([pane])],
+  },
+  {
+    name: "sends input for a known pane",
+    steps: [{ type: "send", paneId: "pane-1", input: "yes\n" }],
+    assert: [hasNoError<ApplicationContext, ApplicationResult>(), returns<ApplicationContext, ApplicationResult>(undefined), hasObserved<ApplicationContext, ApplicationResult>("inputs", ["yes\n"])],
+  },
+  {
+    name: "resizes a known pane",
+    steps: [{ type: "resize", paneId: "pane-1", cols: 80, rows: 24 }],
+    assert: [hasNoError<ApplicationContext, ApplicationResult>(), returns<ApplicationContext, ApplicationResult>(undefined), hasObserved<ApplicationContext, ApplicationResult>("sizes", [[80, 24]])],
+  },
+  {
+    name: "rejects an unknown pane before sending input",
+    steps: [{ type: "send", paneId: "missing", input: "x" }],
+    assert: [hasError<ApplicationContext, ApplicationResult>({ message: "Pane not found: missing" }), hasObserved<ApplicationContext, ApplicationResult>("inputs", [])],
+  },
+  {
+    name: "rejects an unknown pane before resizing",
+    steps: [{ type: "resize", paneId: "missing", cols: 80, rows: 24 }],
+    assert: [hasError<ApplicationContext, ApplicationResult>({ message: "Pane not found: missing" }), hasObserved<ApplicationContext, ApplicationResult>("sizes", [])],
+  },
+] satisfies readonly ScenarioCase<"default", ApplicationStep, ApplicationResult, ApplicationContext>[];
+
+const applicationTable: ScenarioTable<ApplicationFixture, "default", ApplicationStep, ApplicationResult, ApplicationContext> = {
+  defaultFixture: applicationFixture,
+  cases: applicationCases,
+  execute: async (fixture, steps) => {
+    let result: ApplicationResult;
+    for (const step of steps) {
+      if (step.type === "list") result = await new ListPanes(fixture.repository).execute();
+      if (step.type === "send") {
+        await new SendPaneInput(fixture.repository, fixture.gateway).execute(step.paneId, step.input);
+        result = undefined;
+      }
+      if (step.type === "resize") {
+        await new ResizePane(fixture.repository, fixture.gateway).execute(step.paneId, step.cols, step.rows);
+        result = undefined;
+      }
+    }
+    return result;
+  },
+  observe: (fixture) => ({ inputs: [...fixture.gateway.inputs], sizes: fixture.gateway.sizes.map((size) => [...size] as [number, number]) }),
+};
+
 describe("application use cases", () => {
-  it("lists panes through the repository port", async () => {
-    const repository = new FakePanes();
-    await expect(new ListPanes(repository).execute()).resolves.toEqual([pane]);
-  });
-
-  it.each([
-    { name: "sends input", run: (repository: FakePanes, gateway: FakeGateway) => new SendPaneInput(repository, gateway).execute("pane-1", "yes\n") },
-    { name: "resizes a pane", run: (repository: FakePanes, gateway: FakeGateway) => new ResizePane(repository, gateway).execute("pane-1", 80, 24) },
-  ])("$name for a known pane", async ({ run }) => {
-    const repository = new FakePanes();
-    const gateway = new FakeGateway();
-    await expect(run(repository, gateway)).resolves.toBeUndefined();
-  });
-
-  it("rejects an unknown pane before touching the gateway", async () => {
-    const repository = new FakePanes();
-    const gateway = new FakeGateway();
-    await expect(new SendPaneInput(repository, gateway).execute("missing", "x")).rejects.toThrow("Pane not found");
-    await expect(new ResizePane(repository, gateway).execute("missing", 80, 24)).rejects.toThrow("Pane not found");
-    expect(gateway.inputs).toEqual([]);
-    expect(gateway.sizes).toEqual([]);
-  });
+  runScenarioTable(it as unknown as TestRegistrar, applicationTable);
 });

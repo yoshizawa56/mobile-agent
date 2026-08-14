@@ -1,70 +1,81 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
+import {
+  hasError,
+  noFixture,
+  returns,
+  runOperationTable,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
 import {
   canTransitionRunState,
   isAttentionState,
   paneKindForCommand,
   transitionRunState,
   validateWorkspaceSelection,
+  type RunState,
   type WorkspaceDirectoryOption,
   type WorkspaceSelection,
 } from "./index.js";
 
-type TableCase = {
-  name: string;
-  given: () => { from: Parameters<typeof canTransitionRunState>[0]; to: Parameters<typeof canTransitionRunState>[1] };
-  when: (input: ReturnType<TableCase["given"]>) => boolean;
-  check: Array<(ctx: { result?: boolean; error?: unknown }) => void>;
-  assert: Array<(ctx: { result?: boolean; error?: unknown }) => void>;
+type EmptyContext = {};
+type TransitionInput = { from: RunState; to: RunState };
+const transitionCases = [
+  { name: "allows a running agent to wait for input", input: { from: "running", to: "waiting_input" }, assert: [returns<EmptyContext, boolean>(true)] },
+  { name: "rejects a transition after completion", input: { from: "completed", to: "running" }, assert: [returns<EmptyContext, boolean>(false)] },
+] satisfies readonly OperationCase<"default", TransitionInput, boolean, EmptyContext>[];
+
+const transitionTable: OperationTable<undefined, "default", TransitionInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: transitionCases,
+  execute: (_fixture, input) => canTransitionRunState(input.from, input.to),
+  observe: () => ({}),
 };
 
-const cases: TableCase[] = [
+type RecordInput = { current: RunState; next: RunState; reason: string; at: string };
+const recordCases = [
   {
-    name: "allows a running agent to wait for input",
-    given: () => ({ from: "running", to: "waiting_input" }),
-    when: ({ from, to }) => canTransitionRunState(from, to),
-    check: [(ctx) => expect(ctx.result).toBe(true)],
-    assert: [],
+    name: "returns a transition record for an allowed change",
+    input: { current: "running", next: "waiting_approval", reason: "agent asked for approval", at: "2026-08-09T00:00:00.000Z" },
+    assert: [returns<EmptyContext, ReturnType<typeof transitionRunState>>({ from: "running", to: "waiting_approval", reason: "agent asked for approval", at: "2026-08-09T00:00:00.000Z" })],
   },
-  {
-    name: "rejects a transition after completion",
-    given: () => ({ from: "completed", to: "running" }),
-    when: ({ from, to }) => canTransitionRunState(from, to),
-    check: [(ctx) => expect(ctx.result).toBe(false)],
-    assert: [],
-  },
-];
+] satisfies readonly OperationCase<"default", RecordInput, ReturnType<typeof transitionRunState>, EmptyContext>[];
 
-describe("run state domain rules", () => {
-  it.each(cases)("$name", ({ given, when, check, assert }) => {
-    const ctx: { result?: boolean; error?: unknown } = {};
-    try {
-      ctx.result = when(given());
-    } catch (error) {
-      ctx.error = error;
-    }
-    check.forEach((checkCase) => checkCase(ctx));
-    assert.forEach((assertCase) => assertCase(ctx));
-  });
+const recordTable: OperationTable<undefined, "default", RecordInput, ReturnType<typeof transitionRunState>, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: recordCases,
+  execute: (_fixture, input) => transitionRunState(input.current, input.next, input.reason, input.at),
+  observe: () => ({}),
+};
 
-  it("returns a transition record for an allowed change", () => {
-    expect(transitionRunState("running", "waiting_approval", "agent asked for approval", "2026-08-09T00:00:00.000Z"))
-      .toEqual({
-        from: "running",
-        to: "waiting_approval",
-        reason: "agent asked for approval",
-        at: "2026-08-09T00:00:00.000Z",
-      });
-  });
+type AttentionInput = { state: RunState };
+const attentionCases = [
+  { name: "classifies waiting input as attention", input: { state: "waiting_input" }, assert: [returns<EmptyContext, boolean>(true)] },
+  { name: "classifies running as ordinary", input: { state: "running" }, assert: [returns<EmptyContext, boolean>(false)] },
+] satisfies readonly OperationCase<"default", AttentionInput, boolean, EmptyContext>[];
 
-  it("classifies attention states and ordinary shells", () => {
-    expect(isAttentionState("waiting_input")).toBe(true);
-    expect(isAttentionState("running")).toBe(false);
-    expect(paneKindForCommand("/bin/zsh -l")).toBe("shell");
-    expect(paneKindForCommand("zsh")).toBe("shell");
-    expect(paneKindForCommand("codex --profile local-agent")).toBe("agent");
-    expect(paneKindForCommand("claude --session-id example")).toBe("agent");
-  });
-});
+const attentionTable: OperationTable<undefined, "default", AttentionInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: attentionCases,
+  execute: (_fixture, input) => isAttentionState(input.state),
+  observe: () => ({}),
+};
+
+type CommandInput = { command: string };
+const commandCases = [
+  { name: "classifies zsh as a shell", input: { command: "/bin/zsh -l" }, assert: [returns<EmptyContext, string>("shell")] },
+  { name: "classifies a bare zsh as a shell", input: { command: "zsh" }, assert: [returns<EmptyContext, string>("shell")] },
+  { name: "classifies codex as an agent", input: { command: "codex --profile local-agent" }, assert: [returns<EmptyContext, string>("agent")] },
+  { name: "classifies claude as an agent", input: { command: "claude --session-id example" }, assert: [returns<EmptyContext, string>("agent")] },
+] satisfies readonly OperationCase<"default", CommandInput, string, EmptyContext>[];
+
+const commandTable: OperationTable<undefined, "default", CommandInput, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: commandCases,
+  execute: (_fixture, input) => paneKindForCommand(input.command),
+  observe: () => ({}),
+};
 
 const workspace: WorkspaceDirectoryOption = {
   id: "workspace-1",
@@ -76,50 +87,26 @@ const workspace: WorkspaceDirectoryOption = {
   worktreeCopyPatterns: [".env", "config/**/*.local.json"],
 };
 
-describe("workspace selection domain rules", () => {
-  it.each([
-    {
-      name: "accepts a workspace directory",
-      selection: { workspaceId: workspace.id, mode: "workspace" },
-      workspace,
-      expected: undefined,
-    },
-    {
-      name: "accepts a workspace worktree",
-      selection: { workspaceId: workspace.id, mode: "worktree" },
-      workspace,
-      expected: undefined,
-    },
-    {
-      name: "rejects worktrees for non-git directories",
-      selection: { workspaceId: workspace.id, mode: "worktree" },
-      workspace: { ...workspace, isGit: false },
-      expected: "worktree_not_supported",
-    },
-  ] satisfies Array<{
-    name: string;
-    selection: WorkspaceSelection;
-    workspace: WorkspaceDirectoryOption | undefined;
-    expected: string | undefined;
-  }>) ("$name", ({ selection, workspace: selectedWorkspace, expected }) => {
-    if (expected) {
-      try {
-        validateWorkspaceSelection(selection, selectedWorkspace);
-        throw new Error("expected a workspace selection error");
-      } catch (error) {
-        expect(error).toMatchObject({ code: expected });
-      }
-      return;
-    }
-    expect(validateWorkspaceSelection(selection, selectedWorkspace)).toEqual(selection);
-  });
+type WorkspaceInput = { selection: WorkspaceSelection; workspace: WorkspaceDirectoryOption | undefined };
+const workspaceCases = [
+  { name: "accepts a workspace directory", input: { selection: { workspaceId: workspace.id, mode: "workspace" }, workspace }, assert: [returns<EmptyContext, WorkspaceSelection>({ workspaceId: workspace.id, mode: "workspace" })] },
+  { name: "accepts a workspace worktree", input: { selection: { workspaceId: workspace.id, mode: "worktree" }, workspace }, assert: [returns<EmptyContext, WorkspaceSelection>({ workspaceId: workspace.id, mode: "worktree" })] },
+  { name: "rejects worktrees for non-git directories", input: { selection: { workspaceId: workspace.id, mode: "worktree" }, workspace: { ...workspace, isGit: false } }, assert: [hasError<EmptyContext, WorkspaceSelection>({ code: "worktree_not_supported" })] },
+  { name: "rejects an unknown workspace", input: { selection: { workspaceId: "missing", mode: "workspace" }, workspace: undefined }, assert: [hasError<EmptyContext, WorkspaceSelection>({ code: "workspace_not_found" })] },
+] satisfies readonly OperationCase<"default", WorkspaceInput, WorkspaceSelection, EmptyContext>[];
 
-  it("rejects an unknown workspace", () => {
-    try {
-      validateWorkspaceSelection({ workspaceId: "missing", mode: "workspace" }, undefined);
-      throw new Error("expected a workspace selection error");
-    } catch (error) {
-      expect(error).toMatchObject({ code: "workspace_not_found" });
-    }
-  });
+const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, WorkspaceSelection, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: workspaceCases,
+  execute: (_fixture, input) => validateWorkspaceSelection(input.selection, input.workspace),
+  observe: () => ({}),
+};
+
+describe("domain rules", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, transitionTable);
+  runOperationTable(register, recordTable);
+  runOperationTable(register, attentionTable);
+  runOperationTable(register, commandTable);
+  runOperationTable(register, workspaceTable);
 });

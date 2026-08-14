@@ -16,6 +16,7 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@mobile-agent/test-support": "workspace:*",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

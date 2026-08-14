@@ -1,13 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
+import {
+  noFixture,
+  returns,
+  runOperationTable,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
 import { errorMessage } from "./app-error-view";
 
-describe.each([
-  [new Error("agentd is unavailable"), "agentd is unavailable"],
-  ["route failed", "route failed"],
-  [{ code: "ECONNREFUSED" }, '{"code":"ECONNREFUSED"}'],
-  [null, "Unknown error"],
-] as const)("errorMessage", (error, expected) => {
-  it(`formats ${expected}`, () => {
-    expect(errorMessage(error)).toBe(expected);
-  });
+type Input = { error: unknown };
+type Context = {};
+
+const cases = [
+  { name: "formats an Error", input: { error: new Error("agentd is unavailable") }, assert: [returns<Context, string>("agentd is unavailable")] },
+  { name: "formats a string", input: { error: "route failed" }, assert: [returns<Context, string>("route failed")] },
+  { name: "formats an object", input: { error: { code: "ECONNREFUSED" } }, assert: [returns<Context, string>('{"code":"ECONNREFUSED"}')] },
+  { name: "formats null as an unknown error", input: { error: null }, assert: [returns<Context, string>("Unknown error")] },
+] satisfies readonly OperationCase<"default", Input, string, Context>[];
+
+const table: OperationTable<undefined, "default", Input, string, Context> = {
+  defaultFixture: noFixture(),
+  cases,
+  execute: (_fixture, input) => errorMessage(input.error),
+  observe: () => ({}),
+};
+
+describe("errorMessage", () => {
+  runOperationTable(it as unknown as TestRegistrar, table);
 });

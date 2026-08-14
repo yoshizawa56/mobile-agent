@@ -31,6 +31,22 @@ The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux
 VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
 ```
 
+## Table-driven tests
+
+Every behavior test uses `@mobile-agent/test-support` with one table-level `execute` and `observe`. A row contains only a unique `name`, optional `fixture`, declarative `input` or typed `steps`, and a non-empty list of named assertions. Fixtures include DI and environment setup; a selected fixture completely replaces the lazy default for that row.
+
+Use `runOperationTable` for one public operation and `runScenarioTable` for typed multi-step protocols. The lifecycle is `fixture -> execute -> observe -> assertAll -> cleanup`. `observe` is post-execution and read-only. Unexpected execute errors fail the row unless `hasError(...)` or a custom outcome-aware assertion explicitly handles them. All assertions run and their diffs and stacks are aggregated. Cleanup callbacks run in LIFO order even when setup or assertions fail.
+
+Use the standard helpers `hasNoError()`, `returns(expected)`, `hasError(...)`, `hasObserved(...)`, `hasCalls(...)`, and `hasEvents(...)` before writing a custom named assertion. Do not use bare `it`/`test`, direct `*.each`, row-level `when`/`given`/executor callbacks, or function-valued scenario steps.
+
+Before submitting a change, run:
+
+```sh
+bun run test:table
+bun run typecheck
+bun run test
+```
+
 ## Pull requests
 
 All repository changes should be developed on a branch and merged through a pull request. Do not push directly to `main`.

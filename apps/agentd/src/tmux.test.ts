@@ -2,277 +2,251 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveAgentCommand, TmuxAdapter } from "./tmux.js";
+import {
+  hasObserved,
+  returns,
+  runOperationTable,
+  type Assertion,
+  type FixtureHandle,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import { resolveAgentCommand, TmuxAdapter, type TmuxLiveSnapshot, type TmuxPane } from "./tmux.js";
 
-describe("tmux adapter split behavior", () => {
-  it.each([
-    { name: "keeps a zoomed window zoomed", keepZoomed: true, includesZoomFlag: true },
-    { name: "does not zoom an ordinary desktop split", keepZoomed: false, includesZoomFlag: false },
-  ])("$name", ({ keepZoomed, includesZoomFlag }) => {
-    const adapter = new RecordingTmuxAdapter();
-    adapter.splitWindow("/tmp", undefined, "right", "%1", keepZoomed);
+type EmptyContext = {};
+type RecordingFixture = { adapter: RecordingTmuxAdapter };
+const recordingFixture = (): FixtureHandle<RecordingFixture> => ({ fixture: { adapter: new RecordingTmuxAdapter() } });
 
-    expect(adapter.lastArgs.includes("-Z")).toBe(includesZoomFlag);
-  });
-});
+type SplitInput = { keepZoomed: boolean };
+const splitCases = [
+  { name: "keeps a zoomed window zoomed", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-Z", "-h", "-t", "%1", "-c", "/tmp"])] },
+  { name: "does not zoom an ordinary desktop split", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "/tmp"])] },
+] satisfies readonly OperationCase<"default", SplitInput, string[], EmptyContext>[];
+const splitTable: OperationTable<RecordingFixture, "default", SplitInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: splitCases,
+  execute: (fixture, input) => {
+    fixture.adapter.splitWindow("/tmp", undefined, "right", "%1", input.keepZoomed);
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-describe("tmux adapter managed session setup", () => {
-  it("passes a wrapper command when creating a session", () => {
-    const adapter = new RecordingTmuxAdapter();
-    adapter.createSession("work", "/tmp/project", "agent shell");
+const switchCases = [
+  { name: "keeps a zoomed window zoomed during client switch", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["switch-client", "-Z", "-c", "/dev/ttys016", "-t", "%1"])] },
+  { name: "uses the ordinary client switch by default", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["switch-client", "-c", "/dev/ttys016", "-t", "%1"])] },
+] satisfies readonly OperationCase<"default", SplitInput, string[], EmptyContext>[];
+const switchTable: OperationTable<RecordingFixture, "default", SplitInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: switchCases,
+  execute: (fixture, input) => {
+    fixture.adapter.switchClient("/dev/ttys016", "%1", input.keepZoomed);
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-    expect(adapter.lastArgs).toEqual([
-      "new-session",
-      "-d",
-      "-s",
-      "work",
-      "-c",
-      "/tmp/project",
-      "agent shell",
-    ]);
-  });
+const createSessionCases = [
+  { name: "passes a wrapper command when creating a session", input: {}, assert: [returns<EmptyContext, string[]>(["new-session", "-d", "-s", "work", "-c", "/tmp/project", "agent shell"])] },
+] satisfies readonly OperationCase<"default", {}, string[], EmptyContext>[];
+const createSessionTable: OperationTable<RecordingFixture, "default", {}, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: createSessionCases,
+  execute: (fixture) => {
+    fixture.adapter.createSession("work", "/tmp/project", "agent shell");
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-  it("uses session options and environment for managed wrappers", () => {
-    const adapter = new RecordingTmuxAdapter();
-    adapter.setSessionOption("work", "default-command", "agent shell");
-    expect(adapter.lastArgs).toEqual(["set-option", "-t", "work", "default-command", "agent shell"]);
+const sessionOptionCases = [
+  { name: "uses the session option for managed wrappers", input: {}, assert: [returns<EmptyContext, string[]>(["set-option", "-t", "work", "default-command", "agent shell"])] },
+] satisfies readonly OperationCase<"default", {}, string[], EmptyContext>[];
+const sessionOptionTable: OperationTable<RecordingFixture, "default", {}, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: sessionOptionCases,
+  execute: (fixture) => {
+    fixture.adapter.setSessionOption("work", "default-command", "agent shell");
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-    adapter.setSessionEnvironment("work", "AGENTD_MANAGED_SESSION_ID", "session-1");
-    expect(adapter.lastArgs).toEqual(["set-environment", "-t", "work", "AGENTD_MANAGED_SESSION_ID", "session-1"]);
-  });
-});
+const sessionEnvironmentCases = [
+  { name: "uses the session environment for managed wrappers", input: {}, assert: [returns<EmptyContext, string[]>(["set-environment", "-t", "work", "AGENTD_MANAGED_SESSION_ID", "session-1"])] },
+] satisfies readonly OperationCase<"default", {}, string[], EmptyContext>[];
+const sessionEnvironmentTable: OperationTable<RecordingFixture, "default", {}, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: sessionEnvironmentCases,
+  execute: (fixture) => {
+    fixture.adapter.setSessionEnvironment("work", "AGENTD_MANAGED_SESSION_ID", "session-1");
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-describe("agent command resolution", () => {
-  it("uses the explicit launcher override", () => {
-    expect(resolveAgentCommand(
-      { AGENTD_AGENT_COMMAND: "/opt/mobile-agent/agent" },
-      { argv: ["bun", "compiled"], execPath: "/opt/bun" },
-    )).toBe("/opt/mobile-agent/agent");
-  });
+type ResolveInput = { environment: NodeJS.ProcessEnv; runtime: { argv: string[]; execPath: string } };
+const compiledEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/dev.mjs");
+const sourceAgentEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../agent-cli/src/index.ts");
+const resolveCases = [
+  { name: "uses the explicit launcher override", input: { environment: { AGENTD_AGENT_COMMAND: "/opt/mobile-agent/agent" }, runtime: { argv: ["bun", "compiled"], execPath: "/opt/bun" } }, assert: [returns<EmptyContext, string>("/opt/mobile-agent/agent")] },
+  { name: "uses the current executable for a compiled launcher", input: { environment: {}, runtime: { argv: ["/opt/mobile-agent/agent", "tmux"], execPath: "/opt/mobile-agent/agent" } }, assert: [returns<EmptyContext, string>("/opt/mobile-agent/agent")] },
+  { name: "keeps a compiled JavaScript package launcher on the installed agent binary", input: { environment: {}, runtime: { argv: ["/opt/node", compiledEntry], execPath: "/opt/node" } }, assert: [returns<EmptyContext, string>("agent")] },
+  { name: "uses the current checkout source launcher", input: { environment: {}, runtime: { argv: ["/opt/bun", fileURLToPath(import.meta.url)], execPath: "/opt/bun" } }, assert: [returns<EmptyContext, string>(sourceAgentEntry)] },
+] satisfies readonly OperationCase<"default", ResolveInput, string, EmptyContext>[];
+const resolveTable: OperationTable<undefined, "default", ResolveInput, string, EmptyContext> = {
+  defaultFixture: () => ({ fixture: undefined }),
+  cases: resolveCases,
+  execute: (_fixture, input) => resolveAgentCommand(input.environment, input.runtime),
+  observe: () => ({}),
+};
 
-  it("uses the current executable for a compiled launcher", () => {
-    expect(resolveAgentCommand(
-      {},
-      { argv: ["/opt/mobile-agent/agent", "tmux"], execPath: "/opt/mobile-agent/agent" },
-    )).toBe("/opt/mobile-agent/agent");
-  });
+type RedrawInput = {};
+const attachCases = [
+  { name: "attaches to the resolved pane target", input: {}, assert: [returns<EmptyContext, string[]>(["-S", "/private/tmp/mobile-agent-test.sock", "attach-session", "-f", "active-pane", "-t", "%1"])] },
+] satisfies readonly OperationCase<"default", RedrawInput, string[], EmptyContext>[];
+const attachTable: OperationTable<RecordingFixture, "default", RedrawInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: attachCases,
+  execute: (fixture) => fixture.adapter.attachArgs("%1"),
+  observe: () => ({}),
+};
 
-  it("keeps a compiled JavaScript package launcher on the installed agent binary", () => {
-    const compiledEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../scripts/dev.mjs");
-    expect(resolveAgentCommand(
-      {},
-      { argv: ["/opt/node", compiledEntry], execPath: "/opt/node" },
-    )).toBe("agent");
-  });
+const refreshCases = [
+  { name: "fully redraws a client after viewport reconciliation", input: {}, assert: [returns<EmptyContext, string[]>(["refresh-client", "-t", "/dev/ttys016"])] },
+] satisfies readonly OperationCase<"default", RedrawInput, string[], EmptyContext>[];
+const refreshTable: OperationTable<RecordingFixture, "default", RedrawInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: refreshCases,
+  execute: (fixture) => {
+    fixture.adapter.refreshClient("/dev/ttys016");
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
 
-  it("uses the current checkout source launcher", () => {
-    const sourceAgentEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../agent-cli/src/index.ts");
-    expect(resolveAgentCommand(
-      {},
-      { argv: ["/opt/bun", fileURLToPath(import.meta.url)], execPath: "/opt/bun" },
-    )).toBe(sourceAgentEntry);
-  });
-});
+type ListResult = { panes: TmuxPane[]; args: string[] };
+type ListContext = {};
+const hasPaneListing: Assertion<ListContext, ListResult> = {
+  name: "keeps the pane index separate from the server-wide pane id",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.panes).toMatchObject([{ paneId: "%32", windowIndex: 2, paneIndex: 4 }]);
+    expect(result.value.args[3]).toContain("#{pane_index}");
+  },
+};
+const listCases = [{ name: "keeps the pane index separate from the server-wide pane id", input: {}, assert: [hasPaneListing] }] satisfies readonly OperationCase<"default", {}, ListResult, ListContext>[];
+const listTable: OperationTable<{ adapter: ListingTmuxAdapter }, "default", {}, ListResult, ListContext> = {
+  defaultFixture: () => ({ fixture: { adapter: new ListingTmuxAdapter() } }),
+  cases: listCases,
+  execute: (fixture) => ({ panes: fixture.adapter.listPanes(), args: fixture.adapter.lastArgs }),
+  observe: () => ({}),
+};
 
-describe("tmux adapter client switching", () => {
-  it.each([
-    { name: "keeps a zoomed window zoomed", keepZoomed: true, includesZoomFlag: true },
-    { name: "uses the ordinary client switch by default", keepZoomed: false, includesZoomFlag: false },
-  ])("$name", ({ keepZoomed, includesZoomFlag }) => {
-    const adapter = new RecordingTmuxAdapter();
-    adapter.switchClient("/dev/ttys016", "%1", keepZoomed);
+type SnapshotFixture = { adapter: SnapshotTmuxAdapter };
+type SnapshotKey = "available" | "missing";
+const snapshotFixtures: Readonly<Record<SnapshotKey, () => FixtureHandle<SnapshotFixture>>> = {
+  available: () => ({ fixture: { adapter: new SnapshotTmuxAdapter({
+    status: 0,
+    stdout: ["%1", "@0", "work", "shell", "0", "0", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "80", "24", "pane-1", "", "shell", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f"),
+    stderr: "",
+  }) } }),
+  missing: () => ({ fixture: { adapter: new SnapshotTmuxAdapter({ status: 1, stdout: "", stderr: "no server running on /tmp/socket\n" }) } }),
+};
+const snapshotCases = [
+  {
+    name: "includes a server generation in the pane identity",
+    fixture: "available",
+    input: {},
+    assert: [{
+      name: "returns the server generation and scope",
+      check: (_ctx: {}, result: { ok: true; value: TmuxLiveSnapshot } | { ok: false; error: unknown }) => {
+        if (!result.ok) throw result.error;
+        const scope = createHash("sha256").update("/private/tmp/mobile-agent-test.sock").digest("hex").slice(0, 16);
+        expect(result.value).toMatchObject({ available: true, tmuxServerId: `${scope}:1234:2026-08-14T12:00:00Z`, tmuxServerScope: scope, panes: [{ paneId: "%1", tmuxServerId: `${scope}:1234:2026-08-14T12:00:00Z` }] });
+      },
+    }],
+  },
+  { name: "marks a missing tmux server as unavailable", fixture: "missing", input: {}, assert: [returns<{}, TmuxLiveSnapshot>({ panes: [], available: false, tmuxServerId: null, tmuxServerScope: null })] },
+] satisfies readonly OperationCase<SnapshotKey, {}, TmuxLiveSnapshot, {}>[];
+const snapshotTable: OperationTable<SnapshotFixture, SnapshotKey, {}, TmuxLiveSnapshot, {}> = {
+  defaultFixture: snapshotFixtures.available,
+  fixtures: snapshotFixtures,
+  cases: snapshotCases,
+  execute: (fixture) => fixture.adapter.listPanesSnapshot(),
+  observe: () => ({}),
+};
 
-    expect(adapter.lastArgs.includes("-Z")).toBe(includesZoomFlag);
-  });
-});
+type MetadataFixture = { adapter: MetadataTmuxAdapter };
+const metadataWriteCases = [{ name: "writes execution identity before session identity", input: {}, assert: [hasObserved<{ required: string[][] }, void>("required", [["set-option", "-p", "-t", "%1", "@agentd.agent_execution_id", "execution-id-123456"], ["set-option", "-p", "-t", "%1", "@agentd.agent_session_id", "session-id"]])] }] satisfies readonly OperationCase<"default", {}, void, { required: string[][] }>[];
+const metadataWriteTable: OperationTable<MetadataFixture, "default", {}, void, { required: string[][] }> = {
+  defaultFixture: () => ({ fixture: { adapter: new MetadataTmuxAdapter("new-execution-123456") } }),
+  cases: metadataWriteCases,
+  execute: (fixture) => { fixture.adapter.setAgentExecutionMetadata("%1", "session-id", "execution-id-123456"); },
+  observe: (fixture) => ({ required: [...fixture.adapter.required] }),
+};
+type ClearInput = { expectedExecutionId: string };
+type ClearKey = "old" | "new";
+const metadataClearCases = [
+  { name: "does not clear metadata for a different execution", fixture: "old", input: { expectedExecutionId: "old-execution-123456" }, assert: [returns<{ required: string[][] }, boolean>(false), hasObserved<{ required: string[][] }, boolean>("required", [])] },
+  { name: "clears metadata for the expected execution", fixture: "new", input: { expectedExecutionId: "new-execution-123456" }, assert: [returns<{ required: string[][] }, boolean>(true), hasObserved<{ required: string[][] }, boolean>("required", [["set-option", "-p", "-u", "-t", "%1", "@agentd.agent_execution_id"], ["set-option", "-p", "-u", "-t", "%1", "@agentd.agent_session_id"]])] },
+] satisfies readonly OperationCase<ClearKey, ClearInput, boolean, { required: string[][] }>[];
+const metadataClearTable: OperationTable<MetadataFixture, ClearKey, ClearInput, boolean, { required: string[][] }> = {
+  defaultFixture: () => ({ fixture: { adapter: new MetadataTmuxAdapter("new-execution-123456") } }),
+  fixtures: { old: () => ({ fixture: { adapter: new MetadataTmuxAdapter("new-execution-123456") } }), new: () => ({ fixture: { adapter: new MetadataTmuxAdapter("new-execution-123456") } }) },
+  cases: metadataClearCases,
+  execute: (fixture, input) => fixture.adapter.clearAgentExecutionMetadata("%1", input.expectedExecutionId),
+  observe: (fixture) => ({ required: [...fixture.adapter.required] }),
+};
 
-describe("tmux adapter pane listing", () => {
-  it("keeps the pane index separate from the server-wide pane id", () => {
-    const adapter = new ListingTmuxAdapter();
-
-    expect(adapter.listPanes()).toMatchObject([{
-      paneId: "%32",
-      windowIndex: 2,
-      paneIndex: 4,
-    }]);
-    expect(adapter.lastArgs).toEqual([
-      "list-panes",
-      "-a",
-      "-F",
-      expect.stringContaining("#{pane_index}"),
-    ]);
-  });
-});
-
-describe("tmux adapter mobile attach redraw", () => {
-  it("attaches to the resolved pane target", () => {
-    const adapter = new RecordingTmuxAdapter();
-
-    expect(adapter.attachArgs("%1")).toEqual([
-      "-S",
-      "/private/tmp/mobile-agent-test.sock",
-      "attach-session",
-      "-f",
-      "active-pane",
-      "-t",
-      "%1",
-    ]);
-  });
-
-  it("resets and fully redraws a client after viewport reconciliation", () => {
-    const adapter = new RecordingTmuxAdapter();
-    adapter.refreshClient("/dev/ttys016");
-
-    expect(adapter.lastArgs).toEqual(["refresh-client", "-t", "/dev/ttys016"]);
-  });
-});
-
-describe("tmux adapter live snapshots", () => {
-  it("includes a server generation in the pane identity", () => {
-    const socketPath = "/private/tmp/mobile-agent-test.sock";
-    const adapter = new SnapshotTmuxAdapter({
-      status: 0,
-      stdout: [
-        "%1", "@0", "work", "shell", "0", "0", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "80", "24",
-        "pane-1", "", "shell", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", socketPath,
-      ].join("\u001f"),
-      stderr: "",
-    });
-
-    const snapshot = adapter.listPanesSnapshot();
-    const scope = createHash("sha256").update(socketPath).digest("hex").slice(0, 16);
-
-    expect(snapshot).toMatchObject({
-      available: true,
-      tmuxServerId: `${scope}:1234:2026-08-14T12:00:00Z`,
-      tmuxServerScope: scope,
-      panes: [{ paneId: "%1", tmuxServerId: `${scope}:1234:2026-08-14T12:00:00Z` }],
-    });
-  });
-
-  it("marks a missing tmux server as unavailable", () => {
-    const adapter = new SnapshotTmuxAdapter({ status: 1, stdout: "", stderr: "no server running on /tmp/socket\n" });
-
-    expect(adapter.listPanesSnapshot()).toEqual({ panes: [], available: false, tmuxServerId: null, tmuxServerScope: null });
-  });
-});
-
-describe("tmux agent session metadata", () => {
-  it("writes execution identity before session identity", () => {
-    const adapter = new MetadataTmuxAdapter("execution-id-123456");
-
-    adapter.setAgentExecutionMetadata("%1", "session-id", "execution-id-123456");
-
-    expect(adapter.required.map((args) => args.find((value) => value.startsWith("@agentd.")))).toEqual([
-      "@agentd.agent_execution_id",
-      "@agentd.agent_session_id",
-    ]);
-  });
-
-  it("only clears metadata for the expected execution", () => {
-    const adapter = new MetadataTmuxAdapter("new-execution-123456");
-
-    expect(adapter.clearAgentExecutionMetadata("%1", "old-execution-123456")).toBe(false);
-    expect(adapter.required).toEqual([]);
-
-    expect(adapter.clearAgentExecutionMetadata("%1", "new-execution-123456")).toBe(true);
-    expect(adapter.required.map((args) => args.find((value) => value.startsWith("@agentd.")))).toEqual([
-      "@agentd.agent_execution_id",
-      "@agentd.agent_session_id",
-    ]);
-  });
+describe("tmux adapter", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, splitTable);
+  runOperationTable(register, switchTable);
+  runOperationTable(register, createSessionTable);
+  runOperationTable(register, sessionOptionTable);
+  runOperationTable(register, sessionEnvironmentTable);
+  runOperationTable(register, resolveTable);
+  runOperationTable(register, attachTable);
+  runOperationTable(register, refreshTable);
+  runOperationTable(register, listTable);
+  runOperationTable(register, snapshotTable);
+  runOperationTable(register, metadataWriteTable);
+  runOperationTable(register, metadataClearTable);
 });
 
 class RecordingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];
-
-  public constructor() {
-    super("/private/tmp/mobile-agent-test.sock");
-  }
-
-  public override require(args: string[]): string {
-    this.lastArgs = args;
-    return "%2\n";
-  }
-
-  public override command(args: string[]) {
-    this.lastArgs = args;
-    return { status: 0, stdout: "", stderr: "" };
-  }
+  public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
+  public override require(args: string[]): string { this.lastArgs = args; return "%2\n"; }
+  public override command(args: string[]) { this.lastArgs = args; return { status: 0, stdout: "", stderr: "" }; }
 }
 
 class ListingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];
-
-  public constructor() {
-    super("/private/tmp/mobile-agent-test.sock");
-  }
-
+  public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
   public override command(args: string[]) {
     this.lastArgs = args;
-    const separator = "\u001f";
     return {
       status: 0,
-      stdout: [
-        "%32",
-        "@5",
-        "agentd",
-        "code",
-        "2",
-        "4",
-        "/tmp",
-        "zsh",
-        "zsh",
-        "1",
-        "0",
-        "0",
-        "80",
-        "24",
-        "120",
-        "40",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "1234",
-        "2026-08-14T12:00:00Z",
-        "/private/tmp/mobile-agent-test.sock",
-      ].join(separator) + "\n",
+      stdout: ["%32", "@5", "agentd", "code", "2", "4", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "120", "40", "", "", "", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f") + "\n",
       stderr: "",
     };
   }
 }
 
 class SnapshotTmuxAdapter extends TmuxAdapter {
-  public constructor(private readonly result: { status: number; stdout: string; stderr: string }) {
-    super("/private/tmp/mobile-agent-test.sock");
-  }
-
-  public override command(_args: string[]): { status: number; stdout: string; stderr: string } {
-    return this.result;
-  }
+  public constructor(private readonly result: { status: number; stdout: string; stderr: string }) { super("/private/tmp/mobile-agent-test.sock"); }
+  public override command(_args: string[]): { status: number; stdout: string; stderr: string } { return this.result; }
 }
 
 class MetadataTmuxAdapter extends TmuxAdapter {
   public required: string[][] = [];
-
-  public constructor(private readonly executionId: string) {
-    super("/private/tmp/mobile-agent-test.sock");
-  }
-
-  public override command(args: string[]): { status: number; stdout: string; stderr: string } {
+  public constructor(private readonly executionId: string) { super("/private/tmp/mobile-agent-test.sock"); }
+  public override command(args: string[]) {
     if (args[0] === "show-options") return { status: 0, stdout: `${this.executionId}\n`, stderr: "" };
     return { status: 0, stdout: "", stderr: "" };
   }
-
-  public override require(args: string[]): string {
-    this.required.push(args);
-    return "";
-  }
+  public override require(args: string[]): string { this.required.push(args); return ""; }
 }

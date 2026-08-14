@@ -39,6 +39,6 @@ describe("TerminalPairingPresenter", () => {
 
     expect(received).toBe(offer.pairingUrl);
     expect(out.value).toContain("rendered-qr");
-    expect(out.value).toContain("Web画面でこのQRを読み取ってください");
+    expect(out.value).toContain("Scan this QR code in the Web UI");
   });
 });

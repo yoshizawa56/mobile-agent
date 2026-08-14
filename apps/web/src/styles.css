@@ -1,3 +1,13 @@
+/* Nerd Font's symbols-only face fills Powerline/private-use glyphs while the
+   following families continue to render ordinary terminal text. */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-display: block;
+  font-style: normal;
+  font-weight: 100 900;
+}
+
 :root {
   color: #d9f4dc;
   background: #050805;
@@ -1816,6 +1826,17 @@ kbd {
     linear-gradient(rgb(57 214 91 / 3%) 1px, transparent 1px),
     #071409;
   background-size: 100% 16px;
+}
+
+.tmux-window-panes-compact {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  align-content: stretch;
+  overflow: auto;
+}
+
+.tmux-window-panes-compact .tmux-layout-pane {
+  position: relative;
+  min-height: 56px;
 }
 
 .tmux-layout-pane-real {
@@ -4134,6 +4155,18 @@ kbd {
   }
 }
 
+.pane-layout-overlay .tmux-window-panes-compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane-layout-overlay .tmux-window-panes-compact .tmux-layout-pane {
+  position: relative;
+  min-height: 56px;
+}
+
 /* --------------------------------------------------------------------------
    Mobile app interaction contract
 
@@ -4279,8 +4312,10 @@ textarea:focus-visible,
     padding: 12px;
   }
 
-  .tmux-layout-pane-real {
+  .app-shell-terminal .pane-layout-overlay-ghost .tmux-window-panes-compact .tmux-layout-pane {
+    position: relative;
     min-height: 44px;
+    padding: 9px;
   }
 
   .session-overview-add-pane,
@@ -4438,13 +4473,10 @@ textarea:focus-visible,
   position: relative;
 }
 
-.app-shell-terminal .terminal-container-selection-mode {
-  touch-action: none;
-}
-
 .app-shell-terminal .terminal-container,
 .app-shell-terminal .terminal-container .xterm,
-.app-shell-terminal .terminal-container .xterm * {
+.app-shell-terminal .terminal-container .xterm-viewport {
+  touch-action: none;
   -webkit-touch-callout: none;
 }
 

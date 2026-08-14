@@ -195,7 +195,7 @@ export async function configureDevServe(config, runCommand = runExternalCommand)
   try {
     result = await runCommand(binary, args, { env: config.baseEnvironment });
   } catch (error) {
-    throw new DevRuntimeError(`could not configure Tailscale Serve: ${errorMessage(error)}`, { cause: error });
+    throw new DevRuntimeError("could not configure Tailscale Serve", { cause: error });
   }
 
   let hostname = config.baseEnvironment.AGENT_TAILSCALE_HOSTNAME;
@@ -227,7 +227,7 @@ async function runExternalCommand(command, args, options) {
       maxBuffer: 256 * 1024,
     });
   } catch (error) {
-    throw new DevRuntimeError(`could not run ${command} ${args.join(" ")}: ${errorMessage(error)}`, { cause: error });
+    throw new DevRuntimeError(`could not run ${command}`, { cause: error });
   }
 }
 
@@ -428,8 +428,11 @@ function jsonBody(body) {
 }
 
 function responseSummary(response) {
-  const body = response?.body?.replace(/\s+/g, " ").trim() ?? "no response body";
-  return `HTTP ${response?.statusCode ?? 0}: ${body.slice(0, 180)}`;
+  const body = typeof response?.body === "string" ? response.body : "";
+  const contentType = typeof response?.headers?.["content-type"] === "string"
+    ? ` contentType=${response.headers["content-type"]}`
+    : "";
+  return `HTTP ${response?.statusCode ?? 0}${contentType} bodyBytes=${Buffer.byteLength(body, "utf8")}`;
 }
 
 function readyHealth(detail, evidence = {}) {
@@ -505,7 +508,20 @@ export async function checkWebHealth(config, requests = {}) {
 }
 
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    const value = error instanceof Error ? error.message : String(error);
+    return redactDiagnosticText(value);
+  } catch {
+    return "unknown error";
+  }
+}
+
+function redactDiagnosticText(value) {
+  return value
+    .replace(/\bCommand failed:[\s\S]*/gi, "Command failed: [REDACTED]")
+    .replace(/(--(?:prompt|token|secret|password|api[-_]?key))(?:=|\s+)("[^"]*"|'[^']*'|\S+)/gi, "$1=[REDACTED]")
+    .replace(/\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi, "$1=[REDACTED]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 
 function normalizeOwners(owners) {
@@ -585,6 +601,7 @@ export function createDevSupervisor(options = {}) {
 class DevSupervisor {
   constructor(options) {
     this.config = options.config ?? resolveDevConfig();
+    this.verbose = options.verbose ?? this.config.baseEnvironment.AGENT_DEV_VERBOSE === "1";
     this.logger = options.logger ?? console;
     this.spawnProcess = options.spawnProcess ?? spawnChild;
     this.inspectPort = options.inspectPort ?? ((host, port) => inspectPort(host, port));
@@ -623,7 +640,10 @@ class DevSupervisor {
       if (this.state !== "starting") return this;
       await this.ensureService("web");
       if (this.state !== "starting") return this;
+      const serveStartedAt = Date.now();
+      this.log("debug", "[dev] configuring Tailscale Serve");
       const serve = await this.configureServe(this.config);
+      this.log("debug", `[dev] Tailscale Serve configuration finished in ${Date.now() - serveStartedAt}ms`);
       if (serve?.stderr) this.log("warn", `[dev] Tailscale Serve: ${serve.stderr.trim()}`);
       this.state = "running";
       this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
@@ -649,6 +669,8 @@ class DevSupervisor {
     if (this.state === "stopping") return this.stopPromise;
 
     this.state = "stopping";
+    const stopStartedAt = Date.now();
+    this.log("debug", `[dev] shutdown started reason=${reason}`);
     this.log("info", `[dev] stopping local stack (${reason})`);
     this.stopPromise = (async () => {
       const records = [...this.records.values()];
@@ -666,6 +688,7 @@ class DevSupervisor {
       }
       if (this.failure && finalExitCode === 0) finalExitCode = 1;
       this.state = "stopped";
+      this.log("debug", `[dev] shutdown finished exitCode=${finalExitCode} durationMs=${Date.now() - stopStartedAt}`);
       this.resolveExit?.({ exitCode: finalExitCode, reason, failure: this.failure });
     })();
     return this.stopPromise;
@@ -674,7 +697,9 @@ class DevSupervisor {
   async ensureService(name) {
     if (this.state !== "starting") return undefined;
     const definition = this.services[name];
+    this.log("debug", `[dev] checking ${name} on ${definition.host}:${definition.port}`);
     const inspection = await this.inspectPort(definition.host, definition.port);
+    this.log("debug", `[dev] ${name} port inspection available=${inspection.available} owners=${formatPortOwners(inspection.owners)}`);
     if (inspection.available) {
       this.log("info", `[dev] ${name} port ${definition.host}:${definition.port} is free; starting ${name}`);
       const record = this.launch(definition);
@@ -717,6 +742,7 @@ class DevSupervisor {
   }
 
   launch(definition) {
+    this.log("debug", `[dev] spawning ${definition.name}: executable=${definition.command} argumentCount=${definition.args.length}`);
     const child = this.spawnProcess(definition.command, definition.args, {
       cwd: definition.cwd,
       env: definition.environment,
@@ -749,6 +775,7 @@ class DevSupervisor {
       record.exitCode = code;
       record.exitSignal = signal;
       record.resolveExit?.();
+      this.log("debug", `[dev] ${definition.name} exited code=${code ?? "null"} signal=${signal ?? "none"} intentional=${record.intentionalStop}`);
       if (this.state === "running" && !record.intentionalStop) {
         void this.handleUnexpectedExit(record, code, signal);
       }
@@ -760,8 +787,10 @@ class DevSupervisor {
     const deadline = Date.now() + this.config.readyTimeoutMs;
     let lastHealth = failedHealth("no health response yet");
     let lastInspection = { available: false, owners: record.ownerSnapshot ?? [] };
+    let attempt = 0;
 
     while (Date.now() <= deadline) {
+      attempt += 1;
       if (record.startError) {
         throw new DevRuntimeError(`${record.name} failed to start: ${errorMessage(record.startError)}`, {
           service: record.name,
@@ -782,6 +811,7 @@ class DevSupervisor {
           throw this.replacedProcessError(record.definition, record.ownerSnapshot, lastInspection.owners);
         }
         lastHealth = await this.checkHealth(record.definition);
+        this.log("debug", `[dev] ${record.name} readiness probe attempt=${attempt} healthy=${lastHealth.ok} detail=${lastHealth.detail}`);
         if (lastHealth.ok) {
           if (lastInspection.owners?.length) record.ownerSnapshot = normalizeOwners(lastInspection.owners);
           return lastHealth;
@@ -813,6 +843,8 @@ class DevSupervisor {
 
   async terminateRecord(record) {
     if (!record?.owned || record.intentionalStop) return;
+    const startedAt = Date.now();
+    this.log("debug", `[dev] stopping ${record.name} pid=${record.child?.pid ?? "unknown"}`);
     record.intentionalStop = true;
     try {
       this.signalProcess(record.child, "SIGTERM");
@@ -853,6 +885,7 @@ class DevSupervisor {
       this.failure ??= error;
       this.log("error", error.message);
     }
+    this.log("debug", `[dev] stopped ${record.name} exited=${record.exited} portReleased=${portStatus.released} durationMs=${Date.now() - startedAt}`);
   }
 
   async waitForRecordExit(record, timeoutMs) {
@@ -900,6 +933,7 @@ class DevSupervisor {
   }
 
   log(level, message) {
+    if (level === "debug" && !this.verbose) return;
     logWith(this.logger, level, message);
   }
 }
@@ -909,8 +943,7 @@ export async function main(options = {}) {
   try {
     supervisor = createDevSupervisor(options);
   } catch (error) {
-    const message = error instanceof DevRuntimeError ? error.message : `[dev] ${errorMessage(error)}`;
-    console.error(message);
+    console.error(formatDevError(error));
     process.exitCode = 1;
     return { exitCode: 1, failure: error };
   }
@@ -925,8 +958,7 @@ export async function main(options = {}) {
     process.exitCode = result.exitCode;
     return result;
   } catch (error) {
-    const message = error instanceof DevRuntimeError ? error.message : `[dev] ${errorMessage(error)}`;
-    console.error(message);
+    console.error(formatDevError(error));
     await supervisor.stop("startup failure", 1);
     process.exitCode = 1;
     return { exitCode: 1, failure: error };
@@ -938,7 +970,12 @@ export async function main(options = {}) {
 
 if (resolve(process.argv[1] ?? "") === scriptPath) {
   void main().catch((error) => {
-    console.error(`[dev] ${errorMessage(error)}`);
+    console.error(formatDevError(error));
     process.exitCode = 1;
   });
+}
+
+function formatDevError(error) {
+  if (process.env.AGENT_DEV_VERBOSE === "1" && error instanceof Error && error.stack) return redactDiagnosticText(error.stack);
+  return `[dev] ${errorMessage(error)}`;
 }

@@ -86,7 +86,7 @@ export function installTerminalSelectionGesture(
     terminal.select(start.column, start.row, terminalSelectionLength(pending.startCell, cell, terminal.cols));
   };
 
-  const stopEvent = (event: PointerEvent) => {
+  const stopEvent = (event: Event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
   };
@@ -165,11 +165,35 @@ export function installTerminalSelectionGesture(
     if (options.isSelectionMode() || pending?.started) event.preventDefault();
   };
 
+  const onTouchMove = (event: TouchEvent) => {
+    if (!pending?.started || activePointers.size !== 1) return;
+    const touch = event.touches[0] ?? event.changedTouches[0];
+    if (!touch) return;
+    // Pointer Events can still be cancelled by an embedded WebView's native
+    // gesture router. Touch Events are the final cancel-prevention boundary on
+    // iOS, so keep the selection drag alive once long-press has activated it.
+    stopEvent(event);
+    updateSelection(touch.clientX, touch.clientY);
+  };
+
+  const onTouchEnd = (event: TouchEvent) => {
+    if (pending?.started) event.preventDefault();
+  };
+
+  const onTouchCancel = () => {
+    if (!pending?.started) return;
+    clearPending();
+    activePointers.clear();
+  };
+
   container.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
   container.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   container.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
   container.addEventListener("pointercancel", onPointerCancel, { capture: true });
   container.addEventListener("contextmenu", onContextMenu, { capture: true });
+  container.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+  container.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
+  container.addEventListener("touchcancel", onTouchCancel, { capture: true });
 
   return () => {
     clearPending();
@@ -179,6 +203,9 @@ export function installTerminalSelectionGesture(
     container.removeEventListener("pointerup", onPointerUp, true);
     container.removeEventListener("pointercancel", onPointerCancel, true);
     container.removeEventListener("contextmenu", onContextMenu, true);
+    container.removeEventListener("touchmove", onTouchMove, true);
+    container.removeEventListener("touchend", onTouchEnd, true);
+    container.removeEventListener("touchcancel", onTouchCancel, true);
   };
 }
 

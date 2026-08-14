@@ -20,17 +20,17 @@ export class TerminalPairingPresenter implements PairingPresenterPort {
   public async showPairing(offer: PairingOffer): Promise<void> {
     const qr = await this.qrRenderer.render(offer.pairingUrl);
     this.write("agent pair\n");
-    this.write(`Web: ${offer.webOrigin}\nagentd: ${offer.agentdBaseUrl}\n有効期限: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
+    this.write(`Web: ${offer.webOrigin}\nagentd: ${offer.agentdBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
     this.write(qr);
     if (!qr.endsWith("\n")) this.write("\n");
-    this.write("Web画面でこのQRを読み取ってください。接続要求が届くまで待機します。\n");
+    this.write("Scan this QR code in the Web UI. Waiting for a connection request.\n");
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {
-    this.write(`\n端末から接続要求が届きました。\n  名前: ${claim.deviceName}\n  種別: ${claim.deviceType}\n  platform: ${claim.platform ?? "(未申告)"}\n  clientVersion: ${claim.clientVersion ?? "(未申告)"}\n  公開鍵 fingerprint: ${claim.keyFingerprint}\n`);
+    this.write(`\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`);
     const prompt = createInterface({ input: this.options.input, output: this.options.out });
     try {
-      const answer = await prompt.question("この端末を承認しますか？ [y/N] ");
+      const answer = await prompt.question("Approve this device? [y/N] ");
       return /^(y|yes)$/i.test(answer.trim());
     } finally {
       prompt.close();

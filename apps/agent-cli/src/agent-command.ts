@@ -13,11 +13,11 @@ import type {
 } from "@mobile-agent/domain";
 import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
 import {
-  defaultAgentDatabaseFile,
   createAgentDatabase,
   DrizzleAgentSessionRepository,
   DrizzleWorkspaceRepository,
   recordAuditEvent,
+  resolveAgentdPaths,
   type AgentDatabase,
 } from "@mobile-agent/persistence";
 import { manageCodexThread } from "./codex-remote.js";
@@ -79,6 +79,7 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private readonly instanceDirectory: string | undefined;
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
@@ -88,9 +89,14 @@ export class AgentCommand {
     this.env = { ...process.env, ...options.env };
     this.io = options.io ?? { out: process.stdout, err: process.stderr };
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-    this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
+    const paths = resolveAgentdPaths(this.env, { databaseFile: options.databaseFile });
+    this.hookOutputRoot = resolveFromRoot(paths.hookOutputDirectory, this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
-    this.databaseFile = options.databaseFile ?? defaultAgentDatabaseFile(this.env);
+    this.databaseFile = options.databaseFile ?? paths.databaseFile;
+    const configuredDatabaseFile = options.databaseFile ?? this.env.AGENTD_DB_FILE ?? this.env.AGENT_DATABASE_FILE;
+    this.instanceDirectory = this.databaseFile === ":memory:" || (configuredDatabaseFile?.trim() && !this.env.AGENTD_INSTANCE_DIR?.trim())
+      ? undefined
+      : paths.instanceDirectory;
   }
 
   public close(): void {
@@ -910,6 +916,7 @@ export class AgentCommand {
     if (this.database) return;
     this.database = createAgentDatabase(this.databaseFile, {
       migrationsFolder: this.env.AGENTD_MIGRATIONS_DIR ?? this.env.AGENT_MIGRATIONS_DIR,
+      instanceDirectory: this.instanceDirectory,
     });
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);

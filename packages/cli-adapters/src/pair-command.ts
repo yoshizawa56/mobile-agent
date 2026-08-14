@@ -1,7 +1,7 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { resolve } from "node:path";
 import type { PairDevice } from "@mobile-agent/application";
+import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence/paths";
 
 export type PairCommandIo = {
   out: Writable;
@@ -76,8 +76,8 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
-    if (argument === "--control-socket") controlSocket = requireValue(argument, args[++index]);
-    else if (argument.startsWith("--control-socket=")) controlSocket = argument.slice("--control-socket=".length);
+    if (argument === "--control-socket") controlSocket = resolve(requireValue(argument, args[++index]));
+    else if (argument.startsWith("--control-socket=")) controlSocket = resolve(argument.slice("--control-socket=".length));
     else if (argument === "--web-origin") webOrigin = requireValue(argument, args[++index]);
     else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
@@ -85,12 +85,12 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
     else throw new PairCommandError(`unknown agent pair option: ${argument}`);
   }
 
+  validateAgentdControlSocketPath(controlSocket);
   return { controlSocket, webOrigin, agentdBaseUrl };
 }
 
 function defaultControlSocket(env: NodeJS.ProcessEnv): string {
-  const databaseFile = env.AGENTD_DB_FILE ?? env.AGENT_DATABASE_FILE;
-  return `${databaseFile && databaseFile !== ":memory:" ? databaseFile : join(homedir(), ".local", "state", "mobile-agent", "agentd")}.control.sock`;
+  return resolveAgentdPaths(env).controlSocket;
 }
 
 function requireValue(option: string, value: string | undefined): string {

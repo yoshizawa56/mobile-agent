@@ -12,7 +12,7 @@
       "name": "@mobile-agent/agent-cli",
       "version": "0.1.0",
       "bin": {
-        "agent": "dist/index.js",
+        "agent": "src/index.ts",
       },
       "dependencies": {
         "@mobile-agent/agentd": "workspace:*",
@@ -116,6 +116,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@mobile-agent/application": "workspace:*",
+        "@mobile-agent/persistence": "workspace:*",
         "@mobile-agent/protocol": "workspace:*",
         "qrcode": "^1.5.4",
       },

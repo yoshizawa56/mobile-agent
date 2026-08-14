@@ -1,7 +1,8 @@
 import { Writable, Readable } from "node:stream";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PairDevice } from "@mobile-agent/application";
-import { PairCommand, type PairDeviceRuntime } from "./pair-command.js";
+import { PairCommand, parsePairCommandOptions, type PairDeviceRuntime } from "./pair-command.js";
 
 class CaptureOutput extends Writable {
   public value = "";
@@ -13,6 +14,16 @@ class CaptureOutput extends Writable {
 }
 
 describe("agent pair CLI adapter", () => {
+  it("derives the control socket from the instance directory", () => {
+    expect(parsePairCommandOptions([], { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" }).controlSocket)
+      .toBe("/tmp/mobile-agent/main/agentd.sock");
+  });
+
+  it("normalizes a relative control socket override", () => {
+    expect(parsePairCommandOptions(["--control-socket", "run/agentd.sock"], {}).controlSocket)
+      .toBe(resolve("run/agentd.sock"));
+  });
+
   it("maps command options into the injected use case and result code", async () => {
     const out = new CaptureOutput();
     let closed = false;

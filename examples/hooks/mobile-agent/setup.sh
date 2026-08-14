@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 generic_directory=$script_directory/../generic
@@ -36,12 +37,17 @@ workspace_path() {
 
 env_file=${MOBILE_AGENT_ENV_FILE:-.env}
 env_file=$(worktree_path "$env_file")
-database_path=${MOBILE_AGENT_DB_PATH:-.local/agentd.sqlite}
+instance_path=${MOBILE_AGENT_INSTANCE_PATH:-.local}
+instance_directory=$(worktree_path "$instance_path")
+database_path=${MOBILE_AGENT_DB_PATH:-$instance_path/agentd.sqlite}
 database_file=$(worktree_path "$database_path")
+mkdir -p "$instance_directory"
+chmod 700 "$instance_directory"
 mkdir -p "$(dirname -- "$database_file")"
 
 home_directory=${HOME:-}
-default_database_file=$home_directory/.local/state/mobile-agent/agentd.sqlite
+default_instance_directory=${AGENTD_INSTANCE_DIR:-$home_directory/.local/state/mobile-agent}
+default_database_file=$default_instance_directory/agentd.sqlite
 base_database_file=${MOBILE_AGENT_BASE_DB_FILE:-${AGENTD_DB_FILE:-$default_database_file}}
 case "$base_database_file" in
   ~) base_database_file=$home_directory ;;
@@ -70,6 +76,9 @@ if [ "${MOBILE_AGENT_COPY_DB:-1}" = "1" ]; then
 else
   hook_log "SQLite copy disabled; using the worktree database path"
 fi
+if [ -e "$database_file" ]; then
+  chmod 600 "$database_file"
+fi
 
 port_stride=${MOBILE_AGENT_PORT_STRIDE:-3}
 port_slot_count=${MOBILE_AGENT_PORT_SLOT_COUNT:-20000}
@@ -84,6 +93,7 @@ fi
   --slot-count "$port_slot_count" \
   --port AGENTD_PORT=4317 \
   --port VITE_DEV_PORT=5227 \
+  --set "AGENTD_INSTANCE_DIR=$instance_directory" \
   --set "AGENTD_DB_FILE=$database_file"
 
 if [ "${MOBILE_AGENT_INSTALL_DEPENDENCIES:-0}" = "1" ]; then
@@ -94,6 +104,7 @@ fi
 
 if [ -n "${MOBILE_AGENT_MIGRATION_COMMAND:-}" ]; then
   hook_log "running configured SQLite migration"
+  AGENTD_INSTANCE_DIR="$instance_directory" \
   AGENTD_DB_FILE="$database_file" \
   AGENT_SQLITE_FILE="$database_file" \
     sh -c "$MOBILE_AGENT_MIGRATION_COMMAND"

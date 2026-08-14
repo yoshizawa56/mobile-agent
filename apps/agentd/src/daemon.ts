@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { defaultAgentDatabaseFile } from "@mobile-agent/persistence";
+import { dirname, resolve } from "node:path";
+import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import { createAgentdServer } from "./server.js";
 
 export type AgentdCliOptions = {
@@ -102,8 +101,9 @@ function isAgentdCommand(value: string): value is AgentdCommand {
 function parseAgentdOptions(args: string[]): AgentdCliOptions {
   let host = process.env.AGENTD_HOST ?? "127.0.0.1";
   let port = Number(process.env.AGENTD_PORT ?? 4317);
-  let pidFile = defaultAgentdPidFile(process.env);
-  let controlSocket = process.env.AGENTD_CONTROL_SOCKET;
+  const paths = resolveAgentdPaths(process.env);
+  let pidFile = paths.pidFile;
+  let controlSocket = paths.controlSocket;
   let webOrigin = process.env.AGENTD_WEB_ORIGIN;
   let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
 
@@ -124,16 +124,8 @@ function parseAgentdOptions(args: string[]): AgentdCliOptions {
     else throw new Error(`unknown agent daemon option: ${argument}`);
   }
 
+  validateAgentdControlSocketPath(controlSocket);
   return { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl };
-}
-
-function defaultAgentdPidFile(environment: NodeJS.ProcessEnv): string {
-  const configured = environment.AGENTD_PID_FILE;
-  if (configured) return resolve(configured);
-
-  const databaseFile = defaultAgentDatabaseFile(environment);
-  if (databaseFile !== ":memory:") return `${resolve(databaseFile)}.pid`;
-  return join(homedir(), ".local", "state", "mobile-agent", "agentd.pid");
 }
 
 async function statusAgentd(options: AgentdCliOptions): Promise<number> {

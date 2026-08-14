@@ -28,14 +28,23 @@ type CommandRunner = (
   options: { env: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string; stderr: string }>;
 
+export function serveUsage(): string {
+  return [
+    "Usage: agent serve tailscale [--port PORT] [--agentd-port PORT] [--agentd-host HOST]",
+    "",
+    "Ensures agentd is running in the background, then configures persistent Tailscale Serve with --bg.",
+  ].join("\n");
+}
+
 export function parseServeOptions(args: string[], environment: NodeJS.ProcessEnv = process.env): ServeCommandOptions {
   const [provider, ...rest] = args;
   if (provider !== "tailscale") {
     if (!provider || provider === "--help" || provider === "-h") {
-      throw new Error("Usage: agent serve tailscale [--port PORT] [--agentd-port PORT] [--agentd-host HOST]");
+      throw new Error(serveUsage());
     }
     throw new Error(`unsupported serve provider: ${provider}`);
   }
+  if (rest.includes("-h") || rest.includes("--help")) throw new Error(serveUsage());
 
   let externalPort = parsePort("AGENT_SERVE_PORT", environment.AGENT_SERVE_PORT ?? "8444");
   let agentdPort = parsePort("AGENTD_PORT", environment.AGENTD_PORT ?? "4317");
@@ -82,9 +91,13 @@ export async function runServeCommand(
   dependencies: ServeCommandDependencies = {},
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<number> {
-  const options = parseServeOptions(args, environment);
   const out = dependencies.out ?? ((value: string) => process.stdout.write(value));
   const err = dependencies.err ?? ((value: string) => process.stderr.write(value));
+  if (args.includes("-h") || args.includes("--help")) {
+    out(`${serveUsage()}\n`);
+    return 0;
+  }
+  const options = parseServeOptions(args, environment);
   const ensureAgentd = dependencies.ensureAgentd ?? ensureLocalAgentd;
   const runCommand = dependencies.runCommand ?? runExternalCommand;
 

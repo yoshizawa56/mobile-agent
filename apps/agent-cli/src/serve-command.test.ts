@@ -49,4 +49,16 @@ describe("agent serve command", () => {
   it("rejects a provider that is not implemented yet", () => {
     expect(() => parseServeOptions(["cloudflare"])).toThrow("unsupported serve provider");
   });
+
+  it("documents automatic background startup in help", async () => {
+    let output = "";
+    await expect(runServeCommand(["tailscale", "--help"], {
+      out: (value) => {
+        output += value;
+      },
+    })).resolves.toBe(0);
+
+    expect(output).toContain("Ensures agentd is running in the background");
+    expect(output).toContain("Tailscale Serve with --bg");
+  });
 });

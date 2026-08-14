@@ -923,9 +923,15 @@ export class AgentCommand {
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
   agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
-  agent daemon <start|status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
+  agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH]
+  agent daemon <status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
   agent serve tailscale [--port PORT] [--agentd-port PORT]
   agent dev [serve tailscale]
+
+Lifecycle behavior:
+  agent daemon start backgrounds agentd by default; use --foreground for a service manager.
+  agent daemon restart restarts agentd in the background.
+  agent serve tailscale starts agentd automatically when needed, then configures Tailscale Serve in the background.
 
 Run options:
   -n, --name NAME          Logical session name; does not create a worktree.

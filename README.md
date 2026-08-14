@@ -146,7 +146,7 @@ With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured u
 
 ### Running multiple agentd instances
 
-`agent daemon start` is intentionally a foreground process so launchd, systemd, or another process supervisor can own its lifecycle. When multiple agentd processes share the normal tmux server, give every process a distinct SQLite file, HTTP port, PID file, and `AGENT_WORKTREE_ID`. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
+`agent daemon start` starts agentd in a detached process, waits for its health endpoint, and returns to the shell. Use `agent daemon status`, `agent daemon restart`, and `agent daemon stop` for its lifecycle. If launchd, systemd, or another process supervisor needs to own the foreground process directly, use `agent daemon start --foreground` (or the `apps/agentd` package entrypoint). When multiple agentd processes share the normal tmux server, give every process a distinct SQLite file, HTTP port, PID file, and `AGENT_WORKTREE_ID`. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
 
 ```sh
 # profile-a.env and profile-b.env are local files and are not committed.
@@ -165,7 +165,7 @@ agent daemon restart
 agent daemon stop
 ```
 
-`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running agentd process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should be used for boot-time startup and crash recovery.
+`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running agentd process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should invoke the explicit `--foreground` mode for boot-time startup and crash recovery.
 
 ### Releases
 

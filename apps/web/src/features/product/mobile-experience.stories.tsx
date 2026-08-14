@@ -29,7 +29,7 @@ import type { WorkspacePickerStatus, WorkspaceSelectionMode } from "../workspace
 type ProductStage = ConnectionFlowStage | "new-session" | "new-pane" | "session-overview" | "control-room";
 type WorkspaceStoryState = "ready" | "loading" | "error" | "empty";
 
-function MobileExperience({ initialStage = "terminals", initialTerminalId = null, initialSessionName = null, initialPaneId = null, initialMapOpen = false, initialNewSession = false, initialWorkspaceState = "ready", initialSelectionMode = "workspace", autoAdvance = true }: { initialStage?: ProductStage; initialTerminalId?: string | null; initialSessionName?: string | null; initialPaneId?: string | null; initialMapOpen?: boolean; initialNewSession?: boolean; initialWorkspaceState?: WorkspaceStoryState; initialSelectionMode?: WorkspaceSelectionMode; autoAdvance?: boolean }) {
+function MobileExperience({ initialStage = "terminals", initialTerminalId = null, initialSessionName = null, initialPaneId = null, initialMapOpen = false, initialNewSession = false, initialWorkspaceState = "ready", initialSelectionMode = "worktree", autoAdvance = true }: { initialStage?: ProductStage; initialTerminalId?: string | null; initialSessionName?: string | null; initialPaneId?: string | null; initialMapOpen?: boolean; initialNewSession?: boolean; initialWorkspaceState?: WorkspaceStoryState; initialSelectionMode?: WorkspaceSelectionMode; autoAdvance?: boolean }) {
   const [stage, setStage] = useState<ProductStage>(initialNewSession ? "new-session" : initialStage);
   const [terminalId, setTerminalId] = useState<string | null>(initialTerminalId);
   const [sessionName, setSessionName] = useState<string | null>(initialSessionName);

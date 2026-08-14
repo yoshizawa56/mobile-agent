@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionRecord } from "@mobile-agent/domain";
-import { createAgentDatabase, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
+import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentCommand, buildResumeCommand, buildRunCommand } from "./agent-command.js";
 
 const temporaryRoots: string[] = [];
@@ -90,7 +90,7 @@ describe("agent command migration", () => {
     const fakeName = join(fixture.root, "fake-codex-name");
     const nameLog = join(fixture.root, "name.log");
     const remoteLog = join(fixture.root, "remote.log");
-    writeExecutable(fakeCodex, `#!/bin/sh\nprintf 'codex:' >>"$TEST_AGENT_REMOTE_LOG"\nfor arg in "$@"; do printf ' [%s]' "$arg" >>"$TEST_AGENT_REMOTE_LOG"; done\nprintf '\\n' >>"$TEST_AGENT_REMOTE_LOG"\nif [ "\${1:-}" = "app-server" ]; then exit 0; fi\nmkdir -p "$CODEX_HOME/sessions/test"\nprintf '{"type":"session_meta","id":"%s","session_id":"%s","cwd":"%s","originator":"codex_chatgpt_ios_remote","thread_source":"user"}\\n' "$TEST_AGENT_SESSION_ID" "$TEST_AGENT_SESSION_ID" "$PWD" >"$CODEX_HOME/sessions/test/$TEST_AGENT_SESSION_ID.jsonl"\n`);
+    writeExecutable(fakeCodex, `#!/bin/sh\nprintf 'codex:' >>"$TEST_AGENT_REMOTE_LOG"\nfor arg in "$@"; do printf ' [%s]' "$arg" >>"$TEST_AGENT_REMOTE_LOG"; done\nprintf '\\n' >>"$TEST_AGENT_REMOTE_LOG"\nif [ "\${1:-}" = "app-server" ]; then exit 0; fi\nmkdir -p "$CODEX_HOME/sessions/test"\nprintf '{"timestamp":"2026-08-14T00:00:00.000Z","type":"session_meta","payload":{"id":"%s","session_id":"%s","cwd":"%s","originator":"codex_chatgpt_ios_remote","thread_source":"user"}}\\n' "$TEST_AGENT_SESSION_ID" "$TEST_AGENT_SESSION_ID" "$PWD" >"$CODEX_HOME/sessions/test/$TEST_AGENT_SESSION_ID.jsonl"\n`);
     writeExecutable(fakeName, `#!/bin/sh\ncase " $* " in\n  *" --archive "*) label=archive ;;\n  *" --unarchive "*) label=unarchive ;;\n  *) label=name ;;\nesac\nprintf '%s:' "$label" >>"$TEST_AGENT_NAME_LOG"\nfor arg in "$@"; do printf ' [%s]' "$arg" >>"$TEST_AGENT_NAME_LOG"; done\nprintf '\\n' >>"$TEST_AGENT_NAME_LOG"\n`);
     const output = captureOutput();
     const command = new AgentCommand({
@@ -107,12 +107,126 @@ describe("agent command migration", () => {
       io: { out: output, err: output },
     });
     await expect(command.execute(["run", "codex", "--no-worktree", "-n", "remote"])).resolves.toBe(0);
-    await expect(command.execute(["cleanup", "remote"])).resolves.toBe(0);
     command.close();
 
+    // Simulate a session created by the pre-0.147.0 parser, which left the
+    // backend mapping empty even though Codex persisted its rollout file.
+    const database = createAgentDatabase(fixture.database);
+    const sessions = new DrizzleAgentSessionRepository(database.db);
+    const workspaceId = createHash("sha256").update(realpathSync(fixture.workspace)).digest("hex").slice(0, 16);
+    const stored = await sessions.findByName(workspaceId, "remote");
+    if (!stored) throw new Error("test session was not persisted");
+    await sessions.update({ ...stored, backendSessionId: null });
+    database.close();
+
+    const resumeOutput = captureOutput();
+    const resumed = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: {
+        ...fixture.env,
+        AGENT_CODEX_BIN: fakeCodex,
+        AGENT_CODEX_NAME_BIN: fakeName,
+        CODEX_HOME: join(fixture.root, "codex-home"),
+        TEST_AGENT_NAME_LOG: nameLog,
+        TEST_AGENT_REMOTE_LOG: remoteLog,
+      },
+      io: { out: resumeOutput, err: resumeOutput },
+    });
+    await expect(resumed.execute(["resume", "remote"])).resolves.toBe(0);
+
+    const repairedDatabase = createAgentDatabase(fixture.database);
+    const repaired = await new DrizzleAgentSessionRepository(repairedDatabase.db).findByName(workspaceId, "remote");
+    repairedDatabase.close();
+    await expect(resumed.execute(["cleanup", "remote"])).resolves.toBe(0);
+    resumed.close();
+
     expect(readFileSync(remoteLog, "utf8")).toContain("[app-server] [daemon] [enable-remote-control]");
+    expect(readFileSync(remoteLog, "utf8")).toContain("[resume] [codex-session-id]");
     expect(readFileSync(nameLog, "utf8")).toContain("[--name] [remote]");
     expect(readFileSync(nameLog, "utf8")).toContain("[--archive]");
+    expect(resumeOutput.value()).toContain("recovered Codex session ID for 'remote'");
+    expect(repaired?.backendSessionId).toBe("codex-session-id");
+  });
+
+  it("captures legacy flat Codex session metadata", async () => {
+    const fixture = createFixture({ AGENT_CODEX_REMOTE: "", TEST_AGENT_SESSION_ID: "legacy-codex-session" });
+    const fakeCodex = join(fixture.root, "fake-codex");
+    writeExecutable(fakeCodex, `#!/bin/sh\nmkdir -p "$CODEX_HOME/sessions/test"\nprintf '{"type":"session_meta","id":"%s","session_id":"%s","cwd":"%s","originator":"codex_chatgpt_ios_remote","thread_source":"user"}\\n' "$TEST_AGENT_SESSION_ID" "$TEST_AGENT_SESSION_ID" "$PWD" >"$CODEX_HOME/sessions/test/$TEST_AGENT_SESSION_ID.jsonl"\n`);
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: { ...fixture.env, AGENT_CODEX_BIN: fakeCodex, CODEX_HOME: join(fixture.root, "codex-home") },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["run", "codex", "--no-worktree", "-n", "legacy"])).resolves.toBe(0);
+    command.close();
+
+    const database = createAgentDatabase(fixture.database);
+    const session = await new DrizzleAgentSessionRepository(database.db).findByName(
+      createHash("sha256").update(realpathSync(fixture.workspace)).digest("hex").slice(0, 16),
+      "legacy",
+    );
+    database.close();
+    expect(session?.backendSessionId).toBe("legacy-codex-session");
+  });
+
+  it("does not guess when multiple Codex rollouts match a missing mapping", async () => {
+    const fixture = createFixture({ AGENT_CODEX_REMOTE: "" });
+    const codexHome = join(fixture.root, "codex-home");
+    const sessionRoot = join(codexHome, "sessions", "test");
+    mkdirSync(sessionRoot, { recursive: true });
+    const workspaceRoot = realpathSync(fixture.workspace);
+    const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 16);
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const database = createAgentDatabase(fixture.database);
+    const sessions = new DrizzleAgentSessionRepository(database.db);
+    for (const name of ["first", "second"]) {
+      await sessions.insert({
+        ...sessionFixture("codex"),
+        id: `${name}-id`,
+        name,
+        workspaceId,
+        workspaceRoot,
+        workspaceName: "workspace",
+        useWorktree: false,
+        worktreeRoot: null,
+        worktreePath: null,
+        branch: null,
+        baseCommit: null,
+        setupHook: null,
+        cleanupHook: null,
+        setupOutputFile: null,
+        cleanupOutputFile: null,
+        backendSessionId: null,
+        codexRemote: "",
+        codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
+        createdAt,
+        updatedAt: createdAt,
+      });
+      writeFileSync(
+        join(sessionRoot, `${name}.jsonl`),
+        `${JSON.stringify({ type: "session_meta", payload: { id: `${name}-id`, session_id: `${name}-id`, cwd: workspaceRoot, originator: "codex_chatgpt_ios_remote", thread_source: "user" } })}\n`,
+      );
+    }
+    database.close();
+
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: { ...fixture.env, CODEX_HOME: codexHome },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["resume", "first"])).rejects.toThrow("no backend session ID");
+    command.close();
+
+    const verification = createAgentDatabase(fixture.database);
+    const stored = await new DrizzleAgentSessionRepository(verification.db).findByName(workspaceId, "first");
+    verification.close();
+    expect(output.value()).toContain("cannot safely recover Codex session ID for 'first'");
+    expect(stored?.backendSessionId).toBeNull();
   });
 });
 

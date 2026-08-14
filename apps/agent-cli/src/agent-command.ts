@@ -394,15 +394,27 @@ export class AgentCommand {
 
   private async resumeSession(options: ResumeOptions): Promise<number> {
     if (!options.reference) return 0;
-    const session = await this.locateSession(options.reference, options.global);
+    let session = await this.locateSession(options.reference, options.global);
     if (session.status === "setup_failed") throw new AgentCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
-    if (!session.backendSessionId) throw new AgentCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new AgentCommandError(`session working directory is missing: ${runDir}`);
     if (session.useWorktree && !this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
+    let recoveredSessionId: string | undefined;
+    if (!session.backendSessionId && session.backend === "codex") {
+      recoveredSessionId = await this.recoverCodexSessionId(session, runDir);
+      if (recoveredSessionId) session = updateSession(session, { backendSessionId: recoveredSessionId });
+    }
+    if (!session.backendSessionId) throw new AgentCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env);
-    const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    let command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    if (recoveredSessionId) {
+      const persisted = await this.sessions.setBackendSessionIdIfMissing(session.id, recoveredSessionId);
+      if (!persisted?.backendSessionId) throw new AgentCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
+      session = persisted;
+      command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
+      if (session.backendSessionId === recoveredSessionId) this.info(`recovered Codex session ID for '${session.name}'`);
+    }
     const current = updateSession(session, { status: "resuming", resuming: true });
     await this.sessions.update(current);
     const startedAt = Math.floor(Date.now() / 1000);
@@ -801,22 +813,63 @@ export class AgentCommand {
     const attempts = endpoint ? 25 : 1;
     const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const files = await this.codexSessionFiles();
-      let best: { id: string; mtime: number } | undefined;
-      let fallback: { id: string; mtime: number } | undefined;
-      for (const file of files) {
-        const stat = statSync(file);
-        const meta = codexMeta(file);
-        if (!meta || stat.mtimeMs / 1000 < startedAt || meta.cwd !== runDir || !["codex-tui", "codex_chatgpt_ios_remote"].includes(meta.originator ?? "") || meta.thread_source === "subagent" || !meta.session_id || baseline.has(meta.session_id)) continue;
-        const candidate = { id: meta.session_id, mtime: stat.mtimeMs };
-        if (meta.session_id === meta.id) {
-          if (!best || candidate.mtime > best.mtime) best = candidate;
-        } else if (!fallback || candidate.mtime > fallback.mtime) fallback = candidate;
-      }
-      if (best?.id ?? fallback?.id) return best?.id ?? fallback?.id;
+      const candidates = this.codexSessionCandidates(await this.codexSessionFiles(), startedAt, runDir, baseline);
+      const preferred = candidates.find((candidate) => candidate.rolloutIdMatches);
+      if (preferred?.id ?? candidates[0]?.id) return preferred?.id ?? candidates[0]?.id;
       if (attempt + 1 < attempts) await sleep(200);
     }
     return undefined;
+  }
+
+  private async recoverCodexSessionId(session: AgentSessionRecord, runDir: string): Promise<string | undefined> {
+    const createdAt = Date.parse(session.createdAt);
+    if (!Number.isFinite(createdAt)) return undefined;
+    const baseline = new Set<string>(readCodexBaseline(session.codexSessionBaseline));
+    const candidates = this.codexSessionCandidates(
+      await this.codexSessionFiles(),
+      Math.floor(createdAt / 1_000),
+      runDir,
+      baseline,
+    );
+    if (candidates.length === 1) return candidates[0]!.id;
+    if (candidates.length > 1) {
+      this.warn(`cannot safely recover Codex session ID for '${session.name}'; found ${candidates.length} matching rollouts`);
+    }
+    return undefined;
+  }
+
+  private codexSessionCandidates(
+    files: string[],
+    startedAt: number,
+    runDir: string,
+    baseline: Set<string>,
+  ): Array<{ id: string; mtime: number; rolloutIdMatches: boolean }> {
+    const candidates = new Map<string, { id: string; mtime: number; rolloutIdMatches: boolean }>();
+    for (const file of files) {
+      let stat;
+      try {
+        stat = statSync(file);
+      } catch {
+        continue;
+      }
+      const meta = codexMeta(file);
+      if (!meta || stat.mtimeMs / 1000 < startedAt || meta.cwd !== runDir || !["codex-tui", "codex_chatgpt_ios_remote"].includes(meta.originator ?? "") || meta.thread_source === "subagent" || !meta.session_id || baseline.has(meta.session_id)) continue;
+      const candidate = {
+        id: meta.session_id,
+        mtime: stat.mtimeMs,
+        rolloutIdMatches: meta.session_id === meta.id,
+      };
+      const previous = candidates.get(candidate.id);
+      const isPreferred = candidate.rolloutIdMatches && !previous?.rolloutIdMatches;
+      const isNewerSameKind = previous && candidate.rolloutIdMatches === previous.rolloutIdMatches && candidate.mtime > previous.mtime;
+      if (!previous || isPreferred || isNewerSameKind) {
+        candidates.set(candidate.id, candidate);
+      }
+    }
+    return [...candidates.values()].sort((left, right) => {
+      if (left.rolloutIdMatches !== right.rolloutIdMatches) return left.rolloutIdMatches ? -1 : 1;
+      return right.mtime - left.mtime;
+    });
   }
 
   private async codexSessionFiles(): Promise<string[]> {
@@ -1225,14 +1278,20 @@ function readCodexBaseline(value: string | null | undefined): string[] {
 function codexMeta(file: string): { session_id?: string; id?: string; cwd?: string; originator?: string; thread_source?: string } | undefined {
   try {
     const line = readFileSync(file, "utf8").split("\n", 1)[0];
-    const parsed = JSON.parse(line) as { type?: string } & Record<string, unknown>;
+    const parsed = JSON.parse(line) as { type?: string; payload?: unknown } & Record<string, unknown>;
     if (parsed.type !== "session_meta") return undefined;
+    // Codex 0.147.0 moved session metadata under `payload`, while older
+    // rollouts kept these fields at the top level. Read both shapes so
+    // persisted sessions remain resumable across Codex upgrades.
+    const metadata = parsed.payload && typeof parsed.payload === "object" && !Array.isArray(parsed.payload)
+      ? parsed.payload as Record<string, unknown>
+      : parsed;
     return {
-      session_id: stringValue(parsed.session_id),
-      id: stringValue(parsed.id),
-      cwd: stringValue(parsed.cwd),
-      originator: stringValue(parsed.originator),
-      thread_source: stringValue(parsed.thread_source),
+      session_id: stringValue(metadata.session_id),
+      id: stringValue(metadata.id),
+      cwd: stringValue(metadata.cwd),
+      originator: stringValue(metadata.originator),
+      thread_source: stringValue(metadata.thread_source),
     };
   } catch {
     return undefined;

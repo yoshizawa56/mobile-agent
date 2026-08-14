@@ -32,6 +32,7 @@
     "@mobile-agent/logging": "workspace:*",
     "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
+    "@mobile-agent/tailscale": "workspace:*",
     "hono": "^4.12.32",
     "ws": "^8.18.3"
   },

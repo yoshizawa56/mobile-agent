@@ -83,6 +83,8 @@ agent serve tailscale
 
 This uses `AGENT_SERVE_PORT` (default `8444`) for the external HTTPS port and `AGENTD_PORT` for the local agentd port. A staging main checkout can set `AGENT_SERVE_PORT=8443`; a release binary can use `AGENT_SERVE_PORT=8444`, or `443` when it runs on a separate Tailscale node. Neither command restores an earlier worktree or removes the route when the local process exits. To inspect the provider's current configuration, use `tailscale serve status`.
 
+On macOS, `agent serve tailscale` resolves a PATH executable first and automatically detects the App Store CLI at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (or the same path under `~/Applications`). If only an alias or shell function from `.zshrc` or `.bashrc` is available, it falls back to the user's interactive shell. To use the bundled CLI explicitly, set `TAILSCALE_BIN=/Applications/Tailscale.app/Contents/MacOS/Tailscale`; the CLI mode environment is enabled automatically.
+
 After exposing the host-side service, register the full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
 
 To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.

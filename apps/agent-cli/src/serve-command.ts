@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { runAgentdCommand } from "@mobile-agent/agentd/daemon";
 import { errorFields, errorMessage, parseLogLevel, type Logger, type LogLevel } from "@mobile-agent/logging";
-import { buildServeArgs, buildServeHttpUrl, parseTailscaleHostname } from "@mobile-agent/tailscale";
+import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "@mobile-agent/tailscale";
 
 const execFile = promisify(execFileCallback);
+const tailscaleCommandTimeoutMs = 15_000;
 
 export type ServeCommandOptions = {
   provider: "tailscale";
@@ -202,11 +203,14 @@ async function runExternalCommand(
   options: { env: NodeJS.ProcessEnv },
 ): Promise<{ stdout: string; stderr: string }> {
   try {
-    return await execFile(command, args, {
-      env: options.env,
+    const invocation = buildTailscaleInvocation(command, args, options.env);
+    const result = await execFile(invocation.command, invocation.args, {
+      env: invocation.environment,
       encoding: "utf8",
       maxBuffer: 256 * 1024,
+      timeout: tailscaleCommandTimeoutMs,
     });
+    return { ...result, stdout: normalizeTailscaleStdout(result.stdout, invocation) };
   } catch (error) {
     throw new Error(`could not run ${command}: ${errorMessage(error)}`, { cause: error });
   }

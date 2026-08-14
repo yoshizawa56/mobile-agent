@@ -40,6 +40,7 @@
         "@mobile-agent/logging": "workspace:*",
         "@mobile-agent/persistence": "workspace:*",
         "@mobile-agent/protocol": "workspace:*",
+        "@mobile-agent/tailscale": "workspace:*",
         "hono": "^4.12.32",
         "ws": "^8.18.3",
       },
@@ -182,6 +183,7 @@
       "name": "@mobile-agent/tailscale",
       "version": "0.1.0",
       "devDependencies": {
+        "@types/node": "^26.1.2",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },

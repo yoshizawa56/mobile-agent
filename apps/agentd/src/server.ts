@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
+import { isIP } from "node:net";
 import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
@@ -9,6 +10,7 @@ import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord,
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
 import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, resolveAgentdPaths } from "@mobile-agent/persistence";
+import { buildTailscaleInvocation } from "@mobile-agent/tailscale";
 import { AgentdControlServer } from "./auth/control.js";
 import { AuthService, type AuthContext } from "./auth/service.js";
 import { AgentdEventHub } from "./events.js";
@@ -682,9 +684,17 @@ function shellQuote(value: string): string {
 }
 
 function tailscaleIp(): string | undefined {
-  const result = spawnSync("tailscale", ["ip", "-4"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const invocation = buildTailscaleInvocation(process.env.TAILSCALE_BIN ?? "tailscale", ["ip", "-4"], process.env, process.platform, {
+    allowShellFallback: false,
+  });
+  const result = spawnSync(invocation.command, invocation.args, {
+    encoding: "utf8",
+    env: invocation.environment,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 500,
+  });
   const address = result.status === 0 ? result.stdout.trim().split("\n")[0] : "";
-  return address || undefined;
+  return isIP(address) === 4 ? address : undefined;
 }
 
 function durationOption(value: number | undefined, environmentName: string, fallback: number, minimum: number): number {

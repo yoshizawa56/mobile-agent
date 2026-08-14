@@ -1,3 +1,6 @@
+import { accessSync, constants } from "node:fs";
+import { join } from "node:path";
+
 export type TailscaleServeConfig = {
   localPort: number;
   externalPort: number;
@@ -5,6 +8,98 @@ export type TailscaleServeConfig = {
   confirm?: boolean;
   path?: string;
 };
+
+export type TailscaleInvocation = {
+  command: string;
+  args: string[];
+  environment: NodeJS.ProcessEnv;
+  stdoutMarkers?: {
+    start: string;
+    end: string;
+  };
+};
+
+export type TailscaleInvocationOptions = {
+  isExecutable?: (path: string) => boolean;
+  allowShellFallback?: boolean;
+};
+
+const shellStdoutStartMarker = "__mobile_agent_tailscale_stdout_begin__";
+const shellStdoutEndMarker = "__mobile_agent_tailscale_stdout_end__";
+
+/**
+ * Builds the child-process invocation for the Tailscale CLI.
+ *
+ * Prefer a real executable so a daemon does not need to load the user's full
+ * interactive shell configuration. If only a shell alias or function exists,
+ * fall back to the user's interactive shell. The macOS App-Store CLI bundle
+ * is added as a direct executable fallback for the standard `tailscale` name.
+ * Arguments are quoted individually because the shell fallback receives one
+ * command string.
+ */
+export function buildTailscaleInvocation(
+  binary: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  options: TailscaleInvocationOptions = {},
+): TailscaleInvocation {
+  const childEnvironment = { ...environment };
+  const isExecutable = options.isExecutable ?? defaultExecutableCheck;
+  if (platform === "darwin" && childEnvironment.TAILSCALE_BE_CLI === undefined) {
+    childEnvironment.TAILSCALE_BE_CLI = "1";
+  }
+
+  if (platform === "win32" || binary.includes("/") || !isShellCommandName(binary)) {
+    return { command: binary, args, environment: childEnvironment };
+  }
+
+  if (hasExecutableOnPath(binary, childEnvironment.PATH, platform, isExecutable)) {
+    return { command: binary, args, environment: childEnvironment };
+  }
+
+  const bundledBinary = bundledTailscaleBinary(binary, childEnvironment.HOME, platform, isExecutable);
+  if (bundledBinary) {
+    return { command: bundledBinary, args, environment: childEnvironment };
+  }
+
+  if (options.allowShellFallback === false) {
+    return { command: binary, args, environment: childEnvironment };
+  }
+
+  if (platform === "darwin" && binary === "tailscale") {
+    childEnvironment.PATH = appendMacTailscalePaths(childEnvironment.PATH, childEnvironment.HOME);
+  }
+
+  const shell = childEnvironment.SHELL ?? (platform === "darwin" ? "/bin/zsh" : "/bin/sh");
+  const commandLine = [
+    `printf '%s\\n' ${shellQuote(shellStdoutStartMarker)}`,
+    [binary, ...args.map(shellQuote)].join(" "),
+    "status=$?",
+    `printf '%s\\n' ${shellQuote(shellStdoutEndMarker)}`,
+    'exit "$status"',
+  ].join("; ");
+  return {
+    command: shell,
+    args: ["-ic", commandLine],
+    environment: childEnvironment,
+    stdoutMarkers: { start: shellStdoutStartMarker, end: shellStdoutEndMarker },
+  };
+}
+
+export function normalizeTailscaleStdout(stdout: string, invocation: TailscaleInvocation): string {
+  const markers = invocation.stdoutMarkers;
+  if (!markers) return stdout;
+
+  const startIndex = stdout.indexOf(markers.start);
+  if (startIndex < 0) return stdout;
+  let payloadStart = startIndex + markers.start.length;
+  if (stdout.startsWith("\r\n", payloadStart)) payloadStart += 2;
+  else if (stdout.startsWith("\n", payloadStart)) payloadStart += 1;
+
+  const endIndex = stdout.indexOf(markers.end, payloadStart);
+  return stdout.slice(payloadStart, endIndex < 0 ? stdout.length : endIndex);
+}
 
 /**
  * Builds a persistent HTTPS reverse-proxy configuration. The local target is
@@ -62,4 +157,47 @@ function normalizePath(path: string): string {
   const normalized = path.trim();
   if (!normalized || normalized === "/") return "/";
   return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function isShellCommandName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value);
+}
+
+function hasExecutableOnPath(binary: string, path: string | undefined, platform: NodeJS.Platform, isExecutable: (path: string) => boolean): boolean {
+  const separator = platform === "win32" ? ";" : ":";
+  return (path ?? "").split(separator).some((directory) => isExecutable(join(directory || ".", binary)));
+}
+
+function bundledTailscaleBinary(binary: string, home: string | undefined, platform: NodeJS.Platform, isExecutable: (path: string) => boolean): string | undefined {
+  if (platform !== "darwin" || binary !== "tailscale") return undefined;
+  const candidates = [
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ...(home ? [`${home}/Applications/Tailscale.app/Contents/MacOS/Tailscale`] : []),
+  ];
+  return candidates.find(isExecutable);
+}
+
+function appendMacTailscalePaths(path: string | undefined, home: string | undefined): string {
+  const entries = (path ?? "").split(":").filter(Boolean);
+  const fallbackPaths = [
+    "/Applications/Tailscale.app/Contents/MacOS",
+    ...(home ? [`${home}/Applications/Tailscale.app/Contents/MacOS`] : []),
+  ];
+  for (const fallbackPath of fallbackPaths) {
+    if (!entries.includes(fallbackPath)) entries.push(fallbackPath);
+  }
+  return entries.join(":");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function defaultExecutableCheck(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }

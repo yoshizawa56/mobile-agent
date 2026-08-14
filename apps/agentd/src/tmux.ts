@@ -1,7 +1,17 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { PanePlacement } from "@mobile-agent/protocol";
+
+type AgentRuntime = {
+  argv: readonly string[];
+  execPath: string;
+};
+
+const stableAgentSessionMetadataKey = "@agentd.agent_session_id";
+const stableAgentExecutionMetadataKey = "@agentd.agent_execution_id";
 
 export type TmuxWindowSize = "largest" | "smallest" | "manual" | "latest";
 
@@ -12,8 +22,12 @@ export type TmuxPaneRef = {
 };
 
 export type TmuxPane = TmuxPaneRef & {
+  tmuxServerId?: string;
+  agentdSessionId?: string;
+  agentdExecutionId?: string;
   windowName: string;
   windowIndex: number;
+  paneIndex: number;
   cwd: string;
   command: string;
   title: string;
@@ -30,6 +44,16 @@ export type TmuxPane = TmuxPaneRef & {
   agentdAgentId?: string;
   agentdRunId?: string;
   agentdWorkspaceId?: string;
+  agentdManagedSessionId?: string;
+  agentdParentRunId?: string;
+};
+
+export type TmuxLiveSnapshot = {
+  panes: TmuxPane[];
+  /** False means the adapter could not obtain an authoritative tmux snapshot. */
+  available: boolean;
+  tmuxServerId: string | null;
+  tmuxServerScope: string | null;
 };
 
 export type TmuxWindowSnapshot = TmuxPaneRef & {
@@ -72,16 +96,36 @@ export class TmuxError extends Error {
   }
 }
 
+export function resolveAgentCommand(
+  environment: NodeJS.ProcessEnv = process.env,
+  runtime: AgentRuntime = process,
+): string {
+  const configured = environment.AGENTD_AGENT_COMMAND;
+  if (configured) return configured;
+
+  const entry = runtime.argv[1];
+  const sourceEntry = entry && entry.endsWith(".ts") && existsSync(resolve(entry)) ? resolve(entry) : undefined;
+  if (sourceEntry) {
+    if (sourceEntry.endsWith("/apps/agent-cli/src/index.ts")) return sourceEntry;
+    const siblingAgentEntry = resolve(dirname(sourceEntry), "../../agent-cli/src/index.ts");
+    if (existsSync(siblingAgentEntry)) return siblingAgentEntry;
+  }
+  if (entry && /\.(?:[cm]?js)$/.test(entry) && existsSync(resolve(entry))) return "agent";
+  return runtime.execPath;
+}
+
 export class TmuxAdapter {
   private readonly commandPrefix: string[];
   private readonly metadataPrefix: string;
+  private readonly environment: NodeJS.ProcessEnv;
 
-  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET, configFile?: string) {
+  public constructor(socketPath = process.env.AGENTD_TMUX_SOCKET, configFile?: string, environment: NodeJS.ProcessEnv = process.env) {
+    this.environment = { ...process.env, ...environment };
     this.commandPrefix = [
       ...(configFile ? ["-f", configFile] : []),
       ...(socketPath ? ["-S", socketPath] : []),
     ];
-    const namespace = process.env.AGENT_WORKTREE_ID?.trim();
+    const namespace = this.environment.AGENT_WORKTREE_ID?.trim();
     this.metadataPrefix = namespace ? `@agentd.${sanitizeMetadataNamespace(namespace)}.` : "@agentd.";
   }
 
@@ -90,7 +134,7 @@ export class TmuxAdapter {
     const result = spawnSync("tmux", fullArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: this.environment,
     });
 
     return {
@@ -112,33 +156,50 @@ export class TmuxAdapter {
     return result.stdout;
   }
 
-  public ensureSession(target: string, cwd: string): void {
+  public ensureSession(target: string, cwd: string, command?: string): boolean {
     const existing = this.command(["has-session", "-t", target]);
-    if (existing.status === 0) return;
+    if (existing.status === 0) return false;
 
-    const created = this.command(["new-session", "-d", "-s", target, "-c", resolveTmuxCwd(cwd)]);
+    const args = ["new-session", "-d", "-s", target, "-c", resolveTmuxCwd(cwd)];
+    if (command) args.push(command);
+    const created = this.command(args);
     if (created.status !== 0) {
       throw new TmuxError(
         created.stderr.trim() || `Could not create tmux session: ${target}`,
-        ["new-session", "-d", "-s", target, "-c", cwd],
+        args,
         created,
       );
     }
+    return true;
   }
 
   public hasSession(target: string): boolean {
     return this.command(["has-session", "-t", target]).status === 0;
   }
 
-  public createSession(target: string, cwd: string): void {
-    const created = this.command(["new-session", "-d", "-s", target, "-c", resolveTmuxCwd(cwd)]);
+  public killSession(target: string): void {
+    this.require(["kill-session", "-t", target]);
+  }
+
+  public createSession(target: string, cwd: string, command?: string): void {
+    const args = ["new-session", "-d", "-s", target, "-c", resolveTmuxCwd(cwd)];
+    if (command) args.push(command);
+    const created = this.command(args);
     if (created.status !== 0) {
       throw new TmuxError(
         created.stderr.trim() || `Could not create tmux session: ${target}`,
-        ["new-session", "-d", "-s", target, "-c", cwd],
+        args,
         created,
       );
     }
+  }
+
+  public attachSession(target: string): number {
+    const result = spawnSync("tmux", [...this.commandPrefix, "attach-session", "-t", target], {
+      stdio: "inherit",
+      env: this.environment,
+    });
+    return result.status ?? 1;
   }
 
   public newWindow(sessionName: string, cwd: string, command?: string): string {
@@ -182,8 +243,45 @@ export class TmuxAdapter {
     this.require(["set-option", "-p", "-t", paneId, name, value]);
   }
 
-  public setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id", value: string): void {
+  public setSessionOption(sessionName: string, name: string, value: string): void {
+    this.require(["set-option", "-t", sessionName, name, value]);
+  }
+
+  public setSessionEnvironment(sessionName: string, name: string, value: string): void {
+    this.require(["set-environment", "-t", sessionName, name, value]);
+  }
+
+  public setAgentPaneMetadata(
+    paneId: string,
+    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id",
+    value: string,
+  ): void {
     this.setPaneOption(paneId, this.metadataKey(field), value);
+  }
+
+  public resetAgentPaneMetadata(paneId: string): void {
+    this.setAgentPaneMetadata(paneId, "kind", "shell");
+    this.setAgentPaneMetadata(paneId, "agent_id", "");
+    this.setAgentPaneMetadata(paneId, "run_id", "");
+    this.setAgentPaneMetadata(paneId, "pane_name", "shell");
+    this.setAgentPaneMetadata(paneId, "parent_run_id", "");
+  }
+
+  public setManagedSessionMetadata(sessionName: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
+    this.setSessionOption(sessionName, this.metadataKey(field), value);
+  }
+
+  public setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): void {
+    this.setPaneOption(paneId, stableAgentExecutionMetadataKey, executionId);
+    this.setPaneOption(paneId, stableAgentSessionMetadataKey, agentSessionId);
+  }
+
+  public clearAgentExecutionMetadata(paneId: string, expectedExecutionId = ""): boolean {
+    const current = this.command(["show-options", "-q", "-p", "-v", "-t", paneId, stableAgentExecutionMetadataKey]);
+    if (current.status !== 0 || current.stdout.trim() !== expectedExecutionId) return false;
+    this.require(["set-option", "-p", "-u", "-t", paneId, stableAgentExecutionMetadataKey]);
+    this.require(["set-option", "-p", "-u", "-t", paneId, stableAgentSessionMetadataKey]);
+    return true;
   }
 
   public capturePane(paneId: string, lines = 48): string {
@@ -206,6 +304,10 @@ export class TmuxAdapter {
   }
 
   public listPanes(): TmuxPane[] {
+    return this.listPanesSnapshot().panes;
+  }
+
+  public listPanesSnapshot(): TmuxLiveSnapshot {
     const separator = "\u001f";
     const args = [
       "list-panes",
@@ -217,6 +319,7 @@ export class TmuxAdapter {
         "#{session_name}",
         "#{window_name}",
         "#{window_index}",
+        "#{pane_index}",
         "#{pane_current_path}",
         "#{pane_current_command}",
         "#{pane_title}",
@@ -233,6 +336,13 @@ export class TmuxAdapter {
         this.metadataFormat("agent_id"),
         this.metadataFormat("run_id"),
         this.metadataFormat("workspace_id"),
+        this.metadataFormat("managed_session_id"),
+        this.metadataFormat("parent_run_id"),
+        `#{${stableAgentSessionMetadataKey}}`,
+        `#{${stableAgentExecutionMetadataKey}}`,
+        "#{pid}",
+        "#{start_time}",
+        "#{socket_path}",
       ].join(separator),
     ];
     const result = this.command(args);
@@ -240,7 +350,7 @@ export class TmuxAdapter {
       // tmux exits its server after the last session disappears. An empty
       // live snapshot is more useful to callers than treating that normal
       // lifecycle transition as an infrastructure failure.
-      if (isTmuxServerGone(result.stderr)) return [];
+      if (isTmuxServerGone(result.stderr)) return { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null };
       throw new TmuxError(
         result.stderr.trim() || `tmux ${args.join(" ")} failed`,
         args,
@@ -249,21 +359,25 @@ export class TmuxAdapter {
     }
     const output = result.stdout;
 
-    return output
+    const panes = output
       .split("\n")
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId] = line.split(separator);
-        if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
+        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId, agentdManagedSessionId, agentdParentRunId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = line.split(separator);
+        if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || paneIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
+        if (!serverPid || !serverStartTime || !socketPath) throw new Error(`Could not identify tmux server: ${line}`);
+        const tmuxServerScope = hashServerScope(socketPath);
         return {
           paneId,
           windowId,
           sessionName,
+          tmuxServerId: `${tmuxServerScope}:${serverPid}:${serverStartTime}`,
           windowName,
           windowIndex: parseDimension(windowIndex, "window index"),
+          paneIndex: parseDimension(paneIndex, "pane index"),
           cwd,
           command,
           title,
@@ -280,8 +394,19 @@ export class TmuxAdapter {
           agentdAgentId: nonEmpty(agentdAgentId),
           agentdRunId: nonEmpty(agentdRunId),
           agentdWorkspaceId: nonEmpty(agentdWorkspaceId),
+          agentdManagedSessionId: nonEmpty(agentdManagedSessionId),
+          agentdParentRunId: nonEmpty(agentdParentRunId),
+          agentdSessionId: nonEmpty(agentdSessionId),
+          agentdExecutionId: nonEmpty(agentdExecutionId),
         } satisfies TmuxPane;
       });
+
+    return {
+      panes,
+      available: true,
+      tmuxServerId: panes[0]?.tmuxServerId ?? null,
+      tmuxServerScope: panes[0]?.tmuxServerId?.split(":", 1)[0] ?? null,
+    };
   }
 
   public snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot {
@@ -474,11 +599,11 @@ export class TmuxAdapter {
     this.require(["set-hook", "-gu", `${name}[${index}]`]);
   }
 
-  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id"): string {
+  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id" | "managed" | "wrapper"): string {
     return `${this.metadataPrefix}${field}`;
   }
 
-  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id"): string {
+  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id"): string {
     return `#{${this.metadataKey(field)}}`;
   }
 
@@ -491,6 +616,32 @@ export class TmuxAdapter {
     if (!active?.[0]) throw new Error(`Could not resolve active tmux pane: ${windowId}`);
     return active[0];
   }
+}
+
+export function buildAgentShellCommand(
+  binary = resolveAgentCommand(),
+  environment: Record<string, string> = {},
+  command?: string,
+): string {
+  const prefix = Object.entries(environment)
+    .map(([name, value]) => `${name}=${shellQuote(value)}`)
+    .join(" ");
+  const wrapper = `${shellQuote(binary)} shell`;
+  return `${prefix ? `${prefix} ` : ""}${wrapper}${command ? ` -- ${command}` : ""}`;
+}
+
+export function configureManagedTmuxSession(
+  tmux: TmuxAdapter,
+  sessionName: string,
+  managedSessionId: string,
+  binary = resolveAgentCommand(),
+): void {
+  tmux.setSessionOption(sessionName, "default-command", buildAgentShellCommand(binary));
+  tmux.setSessionEnvironment(sessionName, "AGENTD_MANAGED_SESSION_ID", managedSessionId);
+  tmux.setSessionEnvironment(sessionName, "AGENTD_MANAGED_SESSION_NAME", sessionName);
+  tmux.setManagedSessionMetadata(sessionName, "managed_session_id", managedSessionId);
+  tmux.setManagedSessionMetadata(sessionName, "managed", "1");
+  tmux.setManagedSessionMetadata(sessionName, "wrapper", "agent-shell");
 }
 
 function sanitizeMetadataNamespace(value: string): string {
@@ -510,6 +661,10 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function resolveTmuxCwd(cwd: string): string {
   const expanded = cwd === "~" ? homedir() : cwd.startsWith("~/") ? `${homedir()}/${cwd.slice(2)}` : cwd;
   return resolve(expanded);
@@ -518,4 +673,8 @@ function resolveTmuxCwd(cwd: string): string {
 function isTmuxServerGone(stderr: string): boolean {
   const message = stderr.toLowerCase();
   return message.includes("no server running") || message.includes("no sessions") || message.includes("server exited");
+}
+
+function hashServerScope(socketPath: string): string {
+  return createHash("sha256").update(socketPath).digest("hex").slice(0, 16);
 }

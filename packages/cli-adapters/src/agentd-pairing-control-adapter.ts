@@ -100,6 +100,20 @@ export class AgentdPairingControlAdapter implements PairingControlPort {
     }
   }
 
+  public async adoptAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void> {
+    const response = await this.request({ type: "adopt_agent_session", ...input });
+    if (response.type !== "agent_session_adopted" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId) {
+      throw unexpectedResponse("agent_session_adopted", response.type);
+    }
+  }
+
+  public async releaseAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void> {
+    const response = await this.request({ type: "release_agent_session", ...input });
+    if (response.type !== "agent_session_released" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId) {
+      throw unexpectedResponse("agent_session_released", response.type);
+    }
+  }
+
   public close(): void {
     this.reader.close();
     this.socket.destroy();

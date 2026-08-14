@@ -14,6 +14,11 @@
       "types": "./dist/daemon.d.ts",
       "development": "./src/daemon.ts",
       "import": "./dist/daemon.js"
+    },
+    "./tmux": {
+      "types": "./dist/tmux.d.ts",
+      "development": "./src/tmux.ts",
+      "import": "./dist/tmux.js"
     }
   },
   "scripts": {

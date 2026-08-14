@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
+import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -41,6 +43,7 @@ export type AgentCommandOptions = {
   logLevel?: LogLevel;
   databaseFile?: string;
   repositoryRoot?: string;
+  tmux?: TmuxAdapter;
 };
 
 type WorkspaceContext = WorkspaceRecord;
@@ -126,6 +129,18 @@ type CodexMetaInspection = {
   rejection?: "read_error" | "metadata_too_large" | "invalid_json" | "not_session_meta";
 };
 
+type ShellOptions = {
+  shell?: string;
+  command: string[];
+  exitAfterCommand: boolean;
+};
+
+type TmuxNewSessionOptions = {
+  name: string;
+  cwd: string;
+  detached: boolean;
+};
+
 const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const defaultCodexProfile = "local-agent";
 
@@ -144,6 +159,7 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private readonly tmux: TmuxAdapter;
   private readonly logger: Logger;
   private readonly ownsLogger: boolean;
   private activeLogger: Logger | undefined;
@@ -168,6 +184,7 @@ export class AgentCommand {
     this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
     this.databaseFile = options.databaseFile ?? defaultAgentDatabaseFile(this.env);
+    this.tmux = options.tmux ?? new TmuxAdapter(this.env.AGENTD_TMUX_SOCKET, undefined, this.env);
   }
 
   public close(): void {
@@ -195,6 +212,17 @@ export class AgentCommand {
           status = await this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
           break;
         }
+        case "shell":
+          if (args.includes("-h") || args.includes("--help")) {
+            this.write("Usage: agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]\n");
+            status = 0;
+            break;
+          }
+          status = await this.runShell(this.parseShellOptions(args.slice(1)));
+          break;
+        case "tmux":
+          status = await this.runTmux(args.slice(1));
+          break;
         case "resume":
           if (args[1] === "-h" || args[1] === "--help") {
             this.write("Usage: agent resume [--global] NAME [-- BACKEND_ARGS...]\n");
@@ -345,6 +373,130 @@ export class AgentCommand {
     };
   }
 
+  private parseShellOptions(args: string[]): ShellOptions {
+    let shell: string | undefined;
+    let exitAfterCommand = false;
+    let command: string[] = [];
+
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index]!;
+      if (argument === "--") {
+        command = args.slice(index + 1);
+        break;
+      }
+      if (argument === "--shell") shell = requireOptionValue(argument, args[++index]);
+      else if (argument.startsWith("--shell=")) shell = argument.slice("--shell=".length);
+      else if (argument === "--exit-after-command") exitAfterCommand = true;
+      else throw new AgentCommandError(`unknown shell option: ${argument}`);
+    }
+
+    if (exitAfterCommand && command.length === 0) throw new AgentCommandError("--exit-after-command requires a command after --");
+    return { shell, command, exitAfterCommand };
+  }
+
+  private async runShell(options: ShellOptions): Promise<number> {
+    const shellRunId = this.env.AGENTD_SHELL_RUN_ID ?? randomUUID();
+    const paneName = this.env.AGENTD_PANE_NAME ?? this.env.AGENTD_MANAGED_SESSION_NAME ?? "shell";
+    const shellEnvironment: NodeJS.ProcessEnv = {
+      ...this.env,
+      AGENTD_SHELL_RUN_ID: shellRunId,
+      AGENTD_SHELL_PARENT_RUN_ID: this.env.AGENTD_PARENT_RUN_ID ?? "",
+      AGENTD_PARENT_RUN_ID: shellRunId,
+      AGENTD_WRAPPED_SHELL: "1",
+    };
+    const shellMetadataEnvironment: NodeJS.ProcessEnv = {
+      ...shellEnvironment,
+      AGENTD_PARENT_RUN_ID: shellEnvironment.AGENTD_SHELL_PARENT_RUN_ID,
+    };
+    this.markCurrentPane({ kind: "shell", agentId: null, runId: shellRunId, name: paneName }, shellMetadataEnvironment);
+
+    try {
+      if (options.command.length > 0) {
+        const result = await spawnAttached(options.command[0]!, options.command.slice(1), this.cwd, shellEnvironment);
+        if (options.exitAfterCommand) return result.code;
+      }
+
+      const shellBinary = resolveExecutable(options.shell ?? this.env.SHELL ?? "sh", this.env);
+      return await spawnAttached(shellBinary, ["-i"], this.cwd, shellEnvironment).then((result) => result.code);
+    } finally {
+      this.restoreCurrentPaneMetadata(shellMetadataEnvironment);
+    }
+  }
+
+  private async runTmux(args: string[]): Promise<number> {
+    const [subcommand = "", ...rest] = args;
+    if (subcommand === "" || subcommand === "-h" || subcommand === "--help") {
+      this.write("Usage: agent tmux new-session [-s NAME] [-c PATH] [--detached]\n");
+      return subcommand === "" ? 2 : 0;
+    }
+    if (subcommand !== "new-session") throw new AgentCommandError(`unknown tmux command: ${subcommand}`);
+    if (rest.includes("-h") || rest.includes("--help")) {
+      this.write("Usage: agent tmux new-session [-s NAME] [-c PATH] [--detached]\n");
+      return 0;
+    }
+
+    const options = parseTmuxNewSessionOptions(rest, this.cwd);
+    if (this.tmux.hasSession(options.name)) throw new AgentCommandError(`tmux session already exists: ${options.name}`);
+
+    const managedSessionId = randomUUID();
+    const binary = resolveAgentCommand(this.env);
+    const firstPaneCommand = buildAgentShellCommand(binary, {
+      AGENTD_MANAGED_SESSION_ID: managedSessionId,
+      AGENTD_MANAGED_SESSION_NAME: options.name,
+    });
+    let created = false;
+    try {
+      this.tmux.createSession(options.name, options.cwd, firstPaneCommand);
+      created = true;
+      configureManagedTmuxSession(this.tmux, options.name, managedSessionId, binary);
+    } catch (error) {
+      if (created) {
+        try {
+          this.tmux.killSession(options.name);
+        } catch {
+          // Preserve the original setup error; cleanup is best effort.
+        }
+      }
+      throw error;
+    }
+
+    this.write(`agent: created managed tmux session '${options.name}' (${managedSessionId})\n`);
+    if (options.detached) return 0;
+    return this.tmux.attachSession(options.name);
+  }
+
+  private markCurrentPane(
+    input: { kind: "shell" | "agent"; agentId: string | null; runId: string; name: string },
+    environment = this.env,
+  ): void {
+    const paneId = environment.TMUX_PANE;
+    if (!paneId) return;
+    try {
+      this.tmux.setAgentPaneMetadata(paneId, "kind", input.kind);
+      this.tmux.setAgentPaneMetadata(paneId, "agent_id", input.agentId ?? "");
+      this.tmux.setAgentPaneMetadata(paneId, "run_id", input.runId);
+      this.tmux.setAgentPaneMetadata(paneId, "pane_name", input.name);
+      this.tmux.setAgentPaneMetadata(paneId, "managed_session_id", environment.AGENTD_MANAGED_SESSION_ID ?? "");
+      const parentRunId = input.kind === "shell"
+        ? environment.AGENTD_SHELL_PARENT_RUN_ID ?? environment.AGENTD_PARENT_RUN_ID ?? ""
+        : environment.AGENTD_PARENT_RUN_ID ?? "";
+      this.tmux.setAgentPaneMetadata(paneId, "parent_run_id", parentRunId);
+    } catch {
+      // A shell can also run outside tmux or against a server that disappears
+      // while the wrapper is starting. The wrapper must remain usable there.
+    }
+  }
+
+  private restoreCurrentPaneMetadata(environment = this.env): void {
+    const shellRunId = environment.AGENTD_SHELL_RUN_ID;
+    this.markCurrentPane({
+      kind: "shell",
+      agentId: null,
+      runId: shellRunId ?? "",
+      name: environment.AGENTD_PANE_NAME ?? environment.AGENTD_MANAGED_SESSION_NAME ?? "shell",
+    }, environment);
+  }
+
   private parseResumeOptions(args: string[]): ResumeOptions {
     let global = false;
     let reference: string | undefined;
@@ -459,6 +611,7 @@ export class AgentCommand {
 
     const worktree = options.useWorktree ? this.createWorktree(workspace, name, options.worktreeRoot) : emptyWorktree();
     const now = timestamp();
+    const claudeBackendSessionId = backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : null;
     const session: AgentSessionRecord = {
       id: randomUUID(),
       name,
@@ -473,7 +626,10 @@ export class AgentCommand {
       cleanupHook,
       setupOutputFile: null,
       cleanupOutputFile: null,
-      backendSessionId: backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : null,
+      // A Claude session ID is generated locally for the launch command, but
+      // is persisted only after the backend process has actually spawned.
+      // This keeps setup-stage crashes from becoming falsely resumable.
+      backendSessionId: null,
       codexProfile: backend === "codex" ? options.codexProfile : null,
       codexRemote: backend === "codex" ? codexRemoteEndpoint(options.backendArgs, this.defaultCodexRemote) : null,
       setupRan: false,
@@ -481,6 +637,9 @@ export class AgentCommand {
       baselineStatus: null,
       codexSessionBaseline: null,
       lastExitStatus: null,
+      executionId: randomUUID(),
+      executionPid: process.pid,
+      executionStartedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -527,13 +686,25 @@ export class AgentCommand {
     }
     sessionLogger.debug("session.baseline_captured", { backend: current.backend });
     const startedAt = Math.floor(Date.now() / 1000);
-    current = updateSession(current, { status: "running" });
-    await this.sessions.update(current);
+    current = updateSession(current, { status: "running", backendSessionId: claudeBackendSessionId });
+    // Keep the generated Claude ID out of durable state until runBackend has
+    // observed a successful child spawn. Codex remains null until discovery.
+    await this.sessions.update(updateSession(current, { backendSessionId: null }));
     sessionLogger.debug("session.status_changed", { status: current.status });
     const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
     sessionLogger.debug("backend.command_ready", { argumentCount: command.length });
-    const result = await this.runBackend(current, command, runDir, startedAt);
-    return this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
+    await this.adoptSessionPane(current);
+    this.markCurrentPane({ kind: "agent", agentId: backend, runId: current.id, name: current.name });
+    let result: ProcessResult;
+    try {
+      result = await this.runBackend(current, command, runDir, startedAt);
+    } finally {
+      await this.releaseSessionPane(current);
+      this.restoreCurrentPaneMetadata();
+    }
+    const status = await this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
+    sessionLogger.debug("session.finished", { status, durationMs: Date.now() - startedAt * 1000 });
+    return status;
   }
 
   private async resumeSession(options: ResumeOptions): Promise<number> {
@@ -552,6 +723,9 @@ export class AgentCommand {
       backendArgumentCount: options.backendArgs.length,
     });
     if (session.status === "setup_failed") throw new AgentCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
+    if (session.status === "starting" || session.status === "setup" || session.status === "ready") {
+      throw new AgentCommandError(`session '${session.name}' has not started its backend; rerun it instead of resuming`);
+    }
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new AgentCommandError(`session working directory is missing: ${runDir}`);
     if (session.useWorktree && !this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
@@ -564,14 +738,74 @@ export class AgentCommand {
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env, logger);
     const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
     logger.debug("backend.command_ready", { argumentCount: command.length, resume: true });
-    const current = updateSession(session, { status: "resuming", resuming: true });
+    if (session.executionPid !== null && session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
+      throw new AgentCommandError(`session '${session.name}' is already running (pid ${session.executionPid})`);
+    }
+    const executionId = randomUUID();
+    const executionStartedAt = timestamp();
+    const claimed = await this.sessions.claimExecution(session.id, session.executionPid ?? null, executionId, process.pid, executionStartedAt);
+    if (!claimed) throw new AgentCommandError(`session '${session.name}' is already being resumed`);
+    const current = updateSession(session, { status: "resuming", resuming: true, executionId, executionPid: process.pid, executionStartedAt });
     await this.sessions.update(current);
-    logger.debug("session.status_changed", { status: current.status });
+    await this.adoptSessionPane(current);
     const startedAt = Math.floor(Date.now() / 1000);
-    const result = await this.runBackend(current, command, runDir, startedAt);
+    this.markCurrentPane({ kind: "agent", agentId: session.backend, runId: current.id, name: current.name });
+    let result: ProcessResult;
+    try {
+      result = await this.runBackend(current, command, runDir, startedAt);
+    } finally {
+      await this.releaseSessionPane(current);
+      this.restoreCurrentPaneMetadata();
+    }
     const status = await this.finalizeSession(current, result, startedAt, runDir, true);
     logger.debug("session.resume_finished", { status, durationMs: Date.now() - sessionStartedAt });
     return status;
+  }
+
+  private async adoptSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.adoptAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        setFallbackSessionMetadata(this.env, input);
+        return;
+      }
+      this.warn(`agentd could not adopt pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async releaseSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.releaseAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        if (clearFallbackSessionMetadata(this.env, input)) {
+          try {
+            this.tmux.resetAgentPaneMetadata(tmuxPaneId);
+          } catch {
+            // A disappearing tmux pane is already on its way out of the projection.
+          }
+        }
+        return;
+      }
+      this.warn(`agentd could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async listSessions(options: { global: boolean; names: boolean; json: boolean }): Promise<number> {
@@ -942,13 +1176,25 @@ export class AgentCommand {
     const nameWatcher = session.backend === "codex" && session.backendSessionId === null && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
     let result: ProcessResult;
     try {
-      result = await spawnAttached(command[0]!, command.slice(1), runDir, this.env, {
-        onStarted: (pid) => logger.debug("subprocess.started", {
+      result = await spawnAttached(command[0]!, command.slice(1), runDir, {
+        ...this.env,
+        AGENTD_RUN_ID: session.id,
+        AGENTD_AGENT_ID: session.backend,
+      }, {
+        onStarted: async (pid) => {
+          logger.debug("subprocess.started", {
           kind: "backend",
           executable: basename(command[0] ?? "unknown"),
           cwd: runDir,
           pid,
-        }),
+          });
+          if (session.backend !== "claude" || !session.backendSessionId) return;
+          try {
+            await this.sessions.update(session);
+          } catch (error) {
+            this.warn(`Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        },
         onError: (error) => logger.debug("subprocess.spawn_failed", {
           kind: "backend",
           executable: basename(command[0] ?? "unknown"),
@@ -996,9 +1242,19 @@ export class AgentCommand {
         // app-server transport may wait on a socket, so keep it off the
         // confirmation path; the live watcher handles that best-effort.
         if (session.codexRemote && this.env.AGENT_CODEX_NAME_BIN) await this.manageRemoteThread(session, "name");
-      } else this.reportCodexDiscoveryFailure(session, runDir, "finalize", discovery);
+      } else {
+        const persisted = await this.sessions.findById(session.id);
+        if (persisted?.backendSessionId) session = persisted;
+        else this.reportCodexDiscoveryFailure(session, runDir, "finalize", discovery);
+      }
     }
-    session = updateSession(session, { lastExitStatus: result.code, updatedAt: timestamp() });
+    session = updateSession(session, {
+      lastExitStatus: result.code,
+      executionId: null,
+      executionPid: null,
+      executionStartedAt: null,
+      updatedAt: timestamp(),
+    });
     logger.debug("session.backend_finished", {
       exitCode: result.code,
       interrupted: result.interrupted,
@@ -1243,7 +1499,8 @@ export class AgentCommand {
       });
       return session;
     }
-    const persisted = await this.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
+    await this.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
+    const persisted = await this.sessions.findById(session.id);
     if (!persisted?.backendSessionId) throw new AgentCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
     this.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
     return persisted;
@@ -1364,6 +1621,7 @@ export class AgentCommand {
         const discovery = await this.discoverCodexSessionId(startedAt, runDir, session.id);
         if (discovery.selectedId) {
           try {
+            await this.sessions.setBackendSessionIdIfMissing(session.id, discovery.selectedId);
             await this.manageRemoteThread({ ...session, backendSessionId: discovery.selectedId }, "name", controller.signal);
             return;
           } catch {
@@ -1476,6 +1734,8 @@ export class AgentCommand {
   private printUsage(): void {
     this.write(`Usage:
   agent [-v|--verbose] <command> [OPTIONS]
+  agent tmux new-session [-s NAME] [-c PATH] [--detached]
+  agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]
   agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
   agent resume [--global] NAME [-- BACKEND_ARGS...]
   agent list [--global] [--names|--json]
@@ -1597,6 +1857,62 @@ function timestamp(): string {
   return new Date().toISOString();
 }
 
+type SessionPaneAdoption = {
+  agentSessionId: string;
+  tmuxPaneId: string;
+  executionId: string;
+};
+
+function currentTmuxPane(env: NodeJS.ProcessEnv): string | undefined {
+  const pane = env.TMUX && env.TMUX_PANE ? env.TMUX_PANE.trim() : "";
+  return /^%[0-9]+$/.test(pane) ? pane : undefined;
+}
+
+function defaultControlSocket(env: NodeJS.ProcessEnv, databaseFile: string): string {
+  if (env.AGENTD_CONTROL_SOCKET) return env.AGENTD_CONTROL_SOCKET;
+  return `${databaseFile !== ":memory:" ? databaseFile : join(homedir(), ".local", "state", "mobile-agent", "agentd")}.control.sock`;
+}
+
+function isControlSocketUnavailable(error: unknown): boolean {
+  return error instanceof PairingControlError && error.code.startsWith("control_socket_");
+}
+
+function setFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): void {
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_execution_id", input.executionId]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_session_id", input.agentSessionId]);
+}
+
+function clearFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): boolean {
+  const current = runTmuxMetadataCommand(env, ["show-options", "-q", "-p", "-v", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  if (current.status !== 0 || current.stdout.trim() !== input.executionId) return false;
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_session_id"]);
+  return true;
+}
+
+function runTmuxMetadataCommand(env: NodeJS.ProcessEnv, args: string[]): { status: number | null; stdout: string } {
+  const socket = env.TMUX?.split(",", 1)[0] ?? env.AGENTD_TMUX_SOCKET;
+  try {
+    const result = spawnSync("tmux", [...(socket ? ["-S", socket] : []), ...args], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return { status: result.status, stdout: result.stdout ?? "" };
+  } catch {
+    return { status: null, stdout: "" };
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+}
+
 function localTimestamp(): string {
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -1606,6 +1922,30 @@ function localTimestamp(): string {
 function requireOptionValue(option: string, value: string | undefined): string {
   if (!value || value.startsWith("-")) throw new AgentCommandError(`${option} requires a value`);
   return value;
+}
+
+function parseTmuxNewSessionOptions(args: string[], defaultCwd: string): TmuxNewSessionOptions {
+  let name = "agentd";
+  let cwd = defaultCwd;
+  let detached = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "-s" || argument === "--name") name = requireOptionValue(argument, args[++index]);
+    else if (argument.startsWith("--name=")) name = argument.slice("--name=".length);
+    else if (argument === "-c" || argument === "--cwd") cwd = resolveFromRoot(requireOptionValue(argument, args[++index]), defaultCwd);
+    else if (argument.startsWith("--cwd=")) cwd = resolveFromRoot(argument.slice("--cwd=".length), defaultCwd);
+    else if (argument === "-d" || argument === "--detached") detached = true;
+    else throw new AgentCommandError(`unknown tmux new-session option: ${argument}`);
+  }
+
+  validateSessionName(name);
+  if (!existsSync(cwd)) throw new AgentCommandError(`tmux session cwd does not exist: ${cwd}`);
+  return { name, cwd: realpathSafe(cwd), detached };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function validateSessionName(name: string): void {
@@ -1761,7 +2101,7 @@ async function ensureCodexRemoteControl(
 }
 
 type SpawnHooks = {
-  onStarted?: (pid: number | undefined) => void;
+  onStarted?: (pid: number | undefined) => void | Promise<void>;
   onError?: (error: unknown) => void;
 };
 
@@ -1773,7 +2113,6 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
     hooks.onError?.(error);
     return { code: 127, interrupted: false };
   }
-  hooks.onStarted?.(child.pid);
   let interrupted = false;
   const onInterrupt = (signal: NodeJS.Signals) => {
     interrupted = true;
@@ -1781,7 +2120,11 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
   };
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onInterrupt);
-  const result = await new Promise<ProcessResult>((resolvePromise) => {
+  const started = new Promise<boolean>((resolvePromise) => {
+    child.once("spawn", () => resolvePromise(true));
+    child.once("error", () => resolvePromise(false));
+  });
+  const result = new Promise<ProcessResult>((resolvePromise) => {
     child.once("error", (error) => {
       hooks.onError?.(error);
       resolvePromise({ code: 127, interrupted, pid: child.pid, signal: null });
@@ -1793,9 +2136,13 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
       signal,
     }));
   });
-  process.off("SIGINT", onInterrupt);
-  process.off("SIGTERM", onInterrupt);
-  return result;
+  try {
+    if (await started) await hooks.onStarted?.(child.pid);
+    return await result;
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onInterrupt);
+  }
 }
 
 async function runAttachedProcess(

@@ -998,6 +998,15 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.pane-index-label {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.48rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .selected-label {
   flex: 0 0 auto;
   color: #689449;
@@ -1101,7 +1110,7 @@ kbd {
   }
 
   .pane-state:not(.pane-state-attention) {
-    font-size: 0;
+    font-size: 0.5rem;
   }
 }
 

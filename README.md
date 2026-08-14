@@ -128,6 +128,8 @@ agent list --json
 agent list --global
 agent cleanup review --force
 agent doctor --verbose
+agent tmux new-session -s project -c ~/work/project
+agent tmux new-session -s project -c ~/work/project --detached
 agent daemon start --host 127.0.0.1 --port 4317
 agent daemon status
 agent daemon restart
@@ -145,6 +147,8 @@ bun run build:agent
 ```
 
 With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured unmanaged files such as `.env` into the same relative paths, and then runs the registered workspace setup script when present. Copy patterns are relative and support `*` and `**`; missing matches are warnings. Cleanup scripts run before the worktree is removed. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
+
+`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
 
 `build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 

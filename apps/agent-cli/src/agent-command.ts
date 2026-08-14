@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, constants, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { homedir } from "node:os";
@@ -61,6 +61,61 @@ type ProcessResult = {
   interrupted: boolean;
 };
 
+type CodexSessionCandidate = {
+  id: string;
+  mtime: number;
+  rolloutIdMatches: boolean;
+};
+
+type CodexDiscoveryRejection =
+  | "stat_error"
+  | "read_error"
+  | "metadata_too_large"
+  | "invalid_json"
+  | "not_session_meta"
+  | "missing_session_id"
+  | "before_started_at"
+  | "cwd_mismatch"
+  | "unsupported_originator"
+  | "subagent"
+  | "baseline"
+  | "after_session_updated_at"
+  | "known_to_other_session"
+  | "competing_session";
+
+type CodexDiscoveryDiagnostics = {
+  rootExists: boolean;
+  filesScanned: number;
+  sessionMetaFiles: number;
+  payloadMetadataFiles: number;
+  flatMetadataFiles: number;
+  baselineEntries: number;
+  candidateFiles: number;
+  uniqueCandidates: number;
+  elapsedMs: number;
+  rejected: Partial<Record<CodexDiscoveryRejection, number>>;
+};
+
+type CodexDiscoveryResult = {
+  selectedId?: string;
+  candidates: CodexSessionCandidate[];
+  diagnostics: CodexDiscoveryDiagnostics;
+};
+
+type CodexMeta = {
+  session_id?: string;
+  id?: string;
+  cwd?: string;
+  originator?: string;
+  thread_source?: string;
+};
+
+type CodexMetaInspection = {
+  meta?: CodexMeta;
+  shape?: "payload" | "flat";
+  rejection?: "read_error" | "metadata_too_large" | "invalid_json" | "not_session_meta";
+};
+
 const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const defaultCodexProfile = "local-agent";
 
@@ -79,6 +134,7 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private remoteOperation: Promise<void> = Promise.resolve();
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
@@ -399,22 +455,13 @@ export class AgentCommand {
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new AgentCommandError(`session working directory is missing: ${runDir}`);
     if (session.useWorktree && !this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
-    let recoveredSessionId: string | undefined;
     if (!session.backendSessionId && session.backend === "codex") {
-      recoveredSessionId = await this.recoverCodexSessionId(session, runDir);
-      if (recoveredSessionId) session = updateSession(session, { backendSessionId: recoveredSessionId });
+      session = await this.repairCodexSessionId(session, runDir, "resume");
     }
     if (!session.backendSessionId) throw new AgentCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env);
-    let command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    if (recoveredSessionId) {
-      const persisted = await this.sessions.setBackendSessionIdIfMissing(session.id, recoveredSessionId);
-      if (!persisted?.backendSessionId) throw new AgentCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
-      session = persisted;
-      command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
-      if (session.backendSessionId === recoveredSessionId) this.info(`recovered Codex session ID for '${session.name}'`);
-    }
+    const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
     const current = updateSession(session, { status: "resuming", resuming: true });
     await this.sessions.update(current);
     const startedAt = Math.floor(Date.now() / 1000);
@@ -458,7 +505,10 @@ export class AgentCommand {
       return 0;
     }
     if (dirty) force = true;
-    if (!(await this.removeSessionRecord(session, force))) return 1;
+    if (!(await this.removeSessionRecord(session, force))) {
+      this.info(`session '${session.name}' retained because cleanup did not complete`);
+      return 1;
+    }
     this.info(`session '${session.name}' cleaned up`);
     return 0;
   }
@@ -686,9 +736,14 @@ export class AgentCommand {
 
   private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
     if (session.backend === "codex" && !session.backendSessionId && codexBaseline) {
-      const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-      if (id) session = updateSession(session, { backendSessionId: id });
-      else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
+      const discovery = await this.discoverCodexSessionId(startedAt, runDir, session.id);
+      if (discovery.selectedId) {
+        session = updateSession(session, { backendSessionId: discovery.selectedId });
+        // The explicit helper has a bounded child-process timeout. The native
+        // app-server transport may wait on a socket, so keep it off the
+        // confirmation path; the live watcher handles that best-effort.
+        if (session.codexRemote && this.env.AGENT_CODEX_NAME_BIN) await this.manageRemoteThread(session, "name");
+      } else this.reportCodexDiscoveryFailure(session, runDir, "finalize", discovery);
     }
     session = updateSession(session, { lastExitStatus: result.code, updatedAt: timestamp() });
     if (result.interrupted || result.code === 130 || result.code === 143) {
@@ -807,35 +862,107 @@ export class AgentCommand {
     return true;
   }
 
-  private async discoverCodexSessionId(startedAt: number, runDir: string, sessionId: string): Promise<string | undefined> {
+  private async discoverCodexSessionId(startedAt: number, runDir: string, sessionId: string, endedAt?: number): Promise<CodexDiscoveryResult> {
     const session = await this.sessions.findById(sessionId);
-    const endpoint = session?.codexRemote ?? "";
-    const attempts = endpoint ? 25 : 1;
     const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const candidates = this.codexSessionCandidates(await this.codexSessionFiles(), startedAt, runDir, baseline);
-      const preferred = candidates.find((candidate) => candidate.rolloutIdMatches);
-      if (preferred?.id ?? candidates[0]?.id) return preferred?.id ?? candidates[0]?.id;
-      if (attempt + 1 < attempts) await sleep(200);
-    }
-    return undefined;
+    const started = Date.now();
+    const root = this.codexSessionRoot();
+    const candidates = this.codexSessionCandidates(await this.codexSessionFiles(), startedAt, runDir, baseline, endedAt);
+    const safeCandidates = await this.filterCodexSessionCandidates(candidates.candidates, candidates.diagnostics, session, runDir);
+    return {
+      selectedId: preferredCodexSessionId(safeCandidates),
+      candidates: safeCandidates,
+      diagnostics: {
+        ...candidates.diagnostics,
+        rootExists: existsSync(root),
+        uniqueCandidates: safeCandidates.length,
+        elapsedMs: Date.now() - started,
+      },
+    };
   }
 
-  private async recoverCodexSessionId(session: AgentSessionRecord, runDir: string): Promise<string | undefined> {
+  private async filterCodexSessionCandidates(
+    candidates: CodexSessionCandidate[],
+    diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs">,
+    session: AgentSessionRecord | undefined,
+    runDir: string,
+  ): Promise<CodexSessionCandidate[]> {
+    if (!session) return candidates;
+    const sessions = await this.sessions.list(session.workspaceId);
+    const otherSessions = sessions.filter((candidate) => candidate.id !== session.id);
+    const unboundSameDirectory = otherSessions.some((candidate) =>
+      candidate.backend === "codex"
+      && !candidate.backendSessionId
+      && (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
+    );
+    const reject = (reason: CodexDiscoveryRejection): void => {
+      diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
+    };
+    return candidates.filter((candidate) => {
+      if (otherSessions.some((other) => other.backendSessionId === candidate.id)) {
+        reject("known_to_other_session");
+        return false;
+      }
+      if (unboundSameDirectory) {
+        reject("competing_session");
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private async recoverCodexSessionId(session: AgentSessionRecord, runDir: string): Promise<CodexDiscoveryResult> {
     const createdAt = Date.parse(session.createdAt);
-    if (!Number.isFinite(createdAt)) return undefined;
-    const baseline = new Set<string>(readCodexBaseline(session.codexSessionBaseline));
-    const candidates = this.codexSessionCandidates(
-      await this.codexSessionFiles(),
+    if (!Number.isFinite(createdAt)) {
+      return {
+        candidates: [],
+      diagnostics: emptyCodexDiscoveryDiagnostics(existsSync(this.codexSessionRoot())),
+      };
+    }
+    const updatedAt = session.lastExitStatus === null ? Number.NaN : Date.parse(session.updatedAt);
+    const result = await this.discoverCodexSessionId(
       Math.floor(createdAt / 1_000),
       runDir,
-      baseline,
+      session.id,
+      Number.isFinite(updatedAt) ? updatedAt / 1_000 : undefined,
     );
-    if (candidates.length === 1) return candidates[0]!.id;
-    if (candidates.length > 1) {
-      this.warn(`cannot safely recover Codex session ID for '${session.name}'; found ${candidates.length} matching rollouts`);
+    if (result.candidates.length === 1) return { ...result, selectedId: result.candidates[0]!.id };
+    const ownershipRejected = (result.diagnostics.rejected.known_to_other_session ?? 0) + (result.diagnostics.rejected.competing_session ?? 0);
+    if (result.candidates.length > 1 || ownershipRejected > 0) {
+      this.warn(`cannot safely recover Codex session ID for '${session.name}'; found ${result.diagnostics.candidateFiles} matching rollouts (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`);
+    } else {
+      this.warn(`cannot recover Codex session ID for '${session.name}' (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`);
     }
-    return undefined;
+    return { ...result, selectedId: undefined };
+  }
+
+  private async repairCodexSessionId(session: AgentSessionRecord, runDir: string, phase: "resume"): Promise<AgentSessionRecord> {
+    if (session.backend !== "codex" || session.backendSessionId) return session;
+    const result = await this.recoverCodexSessionId(session, runDir);
+    if (!result.selectedId) {
+      this.audit("agent_session.codex_session_id_recovery_failed", session.id, {
+        name: session.name,
+        phase,
+        runDir,
+        diagnostics: result.diagnostics,
+      });
+      return session;
+    }
+    const persisted = await this.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
+    if (!persisted?.backendSessionId) throw new AgentCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
+    this.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
+    return persisted;
+  }
+
+  private reportCodexDiscoveryFailure(session: AgentSessionRecord, runDir: string, phase: "finalize" | "resume", result: CodexDiscoveryResult): void {
+    const diagnostics = formatCodexDiscoveryDiagnostics(result.diagnostics);
+    this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired (${diagnostics})`);
+    this.audit("agent_session.codex_session_id_missing", session.id, {
+      name: session.name,
+      phase,
+      runDir,
+      diagnostics: result.diagnostics,
+    });
   }
 
   private codexSessionCandidates(
@@ -843,22 +970,73 @@ export class AgentCommand {
     startedAt: number,
     runDir: string,
     baseline: Set<string>,
-  ): Array<{ id: string; mtime: number; rolloutIdMatches: boolean }> {
-    const candidates = new Map<string, { id: string; mtime: number; rolloutIdMatches: boolean }>();
+    endedAt?: number,
+  ): { candidates: CodexSessionCandidate[]; diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs"> } {
+    const candidates = new Map<string, CodexSessionCandidate>();
+    const diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs"> = {
+      filesScanned: files.length,
+      sessionMetaFiles: 0,
+      payloadMetadataFiles: 0,
+      flatMetadataFiles: 0,
+      baselineEntries: baseline.size,
+      candidateFiles: 0,
+      uniqueCandidates: 0,
+      rejected: {},
+    };
+    const reject = (reason: CodexDiscoveryRejection): void => {
+      diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
+    };
     for (const file of files) {
       let stat;
       try {
         stat = statSync(file);
       } catch {
+        reject("stat_error");
         continue;
       }
-      const meta = codexMeta(file);
-      if (!meta || stat.mtimeMs / 1000 < startedAt || meta.cwd !== runDir || !["codex-tui", "codex_chatgpt_ios_remote"].includes(meta.originator ?? "") || meta.thread_source === "subagent" || !meta.session_id || baseline.has(meta.session_id)) continue;
+      const inspection = inspectCodexMeta(file);
+      if (!inspection.meta) {
+        reject(inspection.rejection ?? "read_error");
+        continue;
+      }
+      diagnostics.sessionMetaFiles += 1;
+      if (inspection.shape === "payload") diagnostics.payloadMetadataFiles += 1;
+      else diagnostics.flatMetadataFiles += 1;
+      const meta = inspection.meta;
+      if (!meta.session_id) {
+        reject("missing_session_id");
+        continue;
+      }
+      if (stat.mtimeMs / 1000 < startedAt) {
+        reject("before_started_at");
+        continue;
+      }
+      if (endedAt !== undefined && stat.mtimeMs / 1000 > endedAt) {
+        reject("after_session_updated_at");
+        continue;
+      }
+      if (meta.cwd !== runDir) {
+        reject("cwd_mismatch");
+        continue;
+      }
+      if (!["codex-tui", "codex_chatgpt_ios_remote"].includes(meta.originator ?? "")) {
+        reject("unsupported_originator");
+        continue;
+      }
+      if (meta.thread_source === "subagent") {
+        reject("subagent");
+        continue;
+      }
+      if (baseline.has(meta.session_id)) {
+        reject("baseline");
+        continue;
+      }
       const candidate = {
         id: meta.session_id,
         mtime: stat.mtimeMs,
         rolloutIdMatches: meta.session_id === meta.id,
       };
+      diagnostics.candidateFiles += 1;
       const previous = candidates.get(candidate.id);
       const isPreferred = candidate.rolloutIdMatches && !previous?.rolloutIdMatches;
       const isNewerSameKind = previous && candidate.rolloutIdMatches === previous.rolloutIdMatches && candidate.mtime > previous.mtime;
@@ -866,25 +1044,32 @@ export class AgentCommand {
         candidates.set(candidate.id, candidate);
       }
     }
-    return [...candidates.values()].sort((left, right) => {
+    const sorted = [...candidates.values()].sort((left, right) => {
       if (left.rolloutIdMatches !== right.rolloutIdMatches) return left.rolloutIdMatches ? -1 : 1;
       return right.mtime - left.mtime;
     });
+    diagnostics.uniqueCandidates = sorted.length;
+    return { candidates: sorted, diagnostics };
+  }
+
+  private codexSessionRoot(): string {
+    return join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions");
   }
 
   private async codexSessionFiles(): Promise<string[]> {
-    const root = join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions");
+    const root = this.codexSessionRoot();
     return existsSync(root) ? walkFiles(root).filter((file) => file.endsWith(".jsonl")) : [];
   }
 
   private watchCodexSessionName(session: AgentSessionRecord, startedAt: number, runDir: string): { stop: () => Promise<void> } {
     let stopped = false;
+    const controller = new AbortController();
     const run = async () => {
       while (!stopped) {
-        const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-        if (id) {
+        const discovery = await this.discoverCodexSessionId(startedAt, runDir, session.id);
+        if (discovery.selectedId) {
           try {
-            await this.manageRemoteThread({ ...session, backendSessionId: id }, "name");
+            await this.manageRemoteThread({ ...session, backendSessionId: discovery.selectedId }, "name", controller.signal);
             return;
           } catch {
             // The app-server may expose the rollout shortly after the JSONL file.
@@ -893,16 +1078,29 @@ export class AgentCommand {
         await sleep(200);
       }
     };
-    const promise = run();
+    const promise = run().catch(() => undefined);
     return {
       stop: async () => {
         stopped = true;
-        await Promise.race([promise, sleep(2_000)]);
+        controller.abort();
+        await Promise.race([promise, sleep(250)]);
       },
     };
   }
 
-  private async manageRemoteThread(session: AgentSessionRecord, operation: "name" | "archive" | "unarchive"): Promise<boolean> {
+  private async manageRemoteThread(session: AgentSessionRecord, operation: "name" | "archive" | "unarchive", signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) return false;
+    let result = false;
+    const queued = this.remoteOperation.then(async () => {
+      if (signal?.aborted) return;
+      result = await this.manageRemoteThreadNow(session, operation, signal);
+    });
+    this.remoteOperation = queued.catch(() => undefined);
+    await queued;
+    return result;
+  }
+
+  private async manageRemoteThreadNow(session: AgentSessionRecord, operation: "name" | "archive" | "unarchive", signal?: AbortSignal): Promise<boolean> {
     if (!session.codexRemote) return true;
     if (session.codexRemote !== "unix://") {
       this.warn(`cannot ${operation} Codex remote thread on unsupported endpoint: ${session.codexRemote}`);
@@ -918,8 +1116,8 @@ export class AgentCommand {
         const executable = resolveExecutable(helper, this.env);
         const args = ["--thread-id", session.backendSessionId, operation === "name" ? "--name" : `--${operation}`];
         if (operation === "name") args.push(session.name);
-        const result = spawnSync(executable, args, { stdio: "ignore", env: this.env });
-        if (result.status !== 0) throw new Error(`helper exited with ${result.status}`);
+        const status = await runCodexThreadHelper(executable, args, this.env, signal);
+        if (status !== 0) throw new Error(`helper exited with ${status}`);
       } else {
         await manageCodexThread({ threadId: session.backendSessionId, operation, name: operation === "name" ? session.name : undefined });
       }
@@ -1275,31 +1473,133 @@ function readCodexBaseline(value: string | null | undefined): string[] {
   }
 }
 
-function codexMeta(file: string): { session_id?: string; id?: string; cwd?: string; originator?: string; thread_source?: string } | undefined {
+function preferredCodexSessionId(candidates: CodexSessionCandidate[]): string | undefined {
+  return candidates.find((candidate) => candidate.rolloutIdMatches)?.id ?? candidates[0]?.id;
+}
+
+function emptyCodexDiscoveryDiagnostics(rootExists: boolean): CodexDiscoveryDiagnostics {
+  return {
+    rootExists,
+    filesScanned: 0,
+    sessionMetaFiles: 0,
+    payloadMetadataFiles: 0,
+    flatMetadataFiles: 0,
+    baselineEntries: 0,
+    candidateFiles: 0,
+    uniqueCandidates: 0,
+    elapsedMs: 0,
+    rejected: {},
+  };
+}
+
+function formatCodexDiscoveryDiagnostics(diagnostics: CodexDiscoveryDiagnostics): string {
+  const rejected = Object.entries(diagnostics.rejected)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(",") || "none";
+  return `rollout scan: root=${diagnostics.rootExists ? "present" : "missing"}, files=${diagnostics.filesScanned}, session_meta=${diagnostics.sessionMetaFiles}, payload=${diagnostics.payloadMetadataFiles}, flat=${diagnostics.flatMetadataFiles}, baseline_entries=${diagnostics.baselineEntries}, candidate_files=${diagnostics.candidateFiles}, unique_candidates=${diagnostics.uniqueCandidates}, rejected=${rejected}, scan_ms=${diagnostics.elapsedMs}`;
+}
+
+function codexMeta(file: string): CodexMeta | undefined {
+  return inspectCodexMeta(file).meta;
+}
+
+function inspectCodexMeta(file: string): CodexMetaInspection {
+  let firstLine: { line?: string; tooLarge: boolean };
   try {
-    const line = readFileSync(file, "utf8").split("\n", 1)[0];
-    const parsed = JSON.parse(line) as { type?: string; payload?: unknown } & Record<string, unknown>;
-    if (parsed.type !== "session_meta") return undefined;
+    firstLine = readFirstLine(file);
+  } catch {
+    return { rejection: "read_error" };
+  }
+  if (firstLine.tooLarge) return { rejection: "metadata_too_large" };
+  if (firstLine.line === undefined) return { rejection: "read_error" };
+  try {
+    const parsed = JSON.parse(firstLine.line) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { rejection: "invalid_json" };
+    const record = parsed as Record<string, unknown>;
+    if (record.type !== "session_meta") return { rejection: "not_session_meta" };
     // Codex 0.147.0 moved session metadata under `payload`, while older
     // rollouts kept these fields at the top level. Read both shapes so
     // persisted sessions remain resumable across Codex upgrades.
-    const metadata = parsed.payload && typeof parsed.payload === "object" && !Array.isArray(parsed.payload)
-      ? parsed.payload as Record<string, unknown>
-      : parsed;
+    const payload = record.payload;
+    const isPayload = payload && typeof payload === "object" && !Array.isArray(payload);
+    const metadata = isPayload ? payload as Record<string, unknown> : record;
     return {
-      session_id: stringValue(metadata.session_id),
-      id: stringValue(metadata.id),
-      cwd: stringValue(metadata.cwd),
-      originator: stringValue(metadata.originator),
-      thread_source: stringValue(metadata.thread_source),
+      shape: isPayload ? "payload" : "flat",
+      meta: {
+        session_id: stringValue(metadata.session_id),
+        id: stringValue(metadata.id),
+        cwd: stringValue(metadata.cwd),
+        originator: stringValue(metadata.originator),
+        thread_source: stringValue(metadata.thread_source),
+      },
     };
   } catch {
-    return undefined;
+    return { rejection: "invalid_json" };
+  }
+}
+
+function readFirstLine(file: string): { line?: string; tooLarge: boolean } {
+  const maximumBytes = 1_048_576;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(file, "r");
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    const buffer = Buffer.allocUnsafe(8_192);
+    while (totalBytes < maximumBytes) {
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      const newline = chunk.indexOf(0x0a);
+      if (newline >= 0) {
+        chunks.push(Buffer.from(chunk.subarray(0, newline)));
+        return { line: Buffer.concat(chunks).toString("utf8"), tooLarge: false };
+      }
+      chunks.push(Buffer.from(chunk));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes >= maximumBytes) return { tooLarge: true };
+    return { line: Buffer.concat(chunks).toString("utf8"), tooLarge: false };
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function runCodexThreadHelper(executable: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<number> {
+  return new Promise((resolvePromise) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let killTimeout: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    let child: ReturnType<typeof spawn> | undefined;
+    const terminate = (): void => {
+      child?.kill("SIGTERM");
+      killTimeout = setTimeout(() => child?.kill("SIGKILL"), 250);
+    };
+    const finish = (status: number): void => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (killTimeout) clearTimeout(killTimeout);
+      signal?.removeEventListener("abort", terminate);
+      resolvePromise(status);
+    };
+    try {
+      child = spawn(executable, args, { stdio: "ignore", env });
+    } catch {
+      finish(127);
+      return;
+    }
+    child.once("error", () => finish(127));
+    child.once("close", (status) => finish(status ?? 1));
+    signal?.addEventListener("abort", terminate, { once: true });
+    if (signal?.aborted) terminate();
+    timeout = setTimeout(terminate, 2_000);
+  });
 }
 
 function walkFiles(root: string): string[] {

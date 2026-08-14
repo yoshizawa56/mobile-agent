@@ -12,6 +12,10 @@
     "./daemon": {
       "types": "./src/daemon.ts",
       "default": "./src/daemon.ts"
+    },
+    "./tmux": {
+      "types": "./src/tmux.ts",
+      "default": "./src/tmux.ts"
     }
   },
   "scripts": {
@@ -25,6 +29,7 @@
     "@hono/node-server": "^2.0.12",
     "@mobile-agent/application": "workspace:*",
     "@mobile-agent/domain": "workspace:*",
+    "@mobile-agent/logging": "workspace:*",
     "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
     "hono": "^4.12.32",

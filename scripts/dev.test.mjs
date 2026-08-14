@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it } from "bun:test";
 import {
+  checkAgentdHealth,
   checkWebHealth,
   configureDevServe,
   createDevSupervisor,
@@ -204,6 +205,20 @@ describe("dev orchestration diagnostics", () => {
     assert.equal(result.ok, true);
     assert.deepEqual(runtime.httpRequests, ["/", "/api/capabilities"]);
     assert.deepEqual(runtime.websocketRequests, ["/terminal", "/events"]);
+  });
+
+  it("does not include health response bodies in readiness diagnostics", async () => {
+    const runtime = createFakeRuntime();
+    const result = await checkAgentdHealth(runtime.supervisor.config, async () => ({
+      statusCode: 500,
+      headers: { "content-type": "text/plain" },
+      body: "top-secret token=do-not-log",
+    }));
+
+    assert.equal(result.ok, false);
+    assert.match(result.detail, /HTTP 500/);
+    assert.match(result.detail, /bodyBytes=/);
+    assert.doesNotMatch(result.detail, /top-secret|do-not-log/);
   });
 
   it("probes WebSocket URLs through HTTP and accepts a 101 response event", async () => {

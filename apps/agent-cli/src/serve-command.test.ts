@@ -16,6 +16,17 @@ describe("agent serve command", () => {
     });
   });
 
+  it("parses the managed agentd logging options", () => {
+    expect(parseServeOptions([
+      "tailscale",
+      "--log-level", "debug",
+      "--log-file", "/private/tmp/mobile-agent-serve.log",
+    ])).toMatchObject({
+      logLevel: "debug",
+      logFile: "/private/tmp/mobile-agent-serve.log",
+    });
+  });
+
   it("ensures agentd and upserts the fixed Tailscale endpoint", async () => {
     const ensured: unknown[] = [];
     const calls: Array<{ command: string; args: string[] }> = [];
@@ -48,5 +59,17 @@ describe("agent serve command", () => {
 
   it("rejects a provider that is not implemented yet", () => {
     expect(() => parseServeOptions(["cloudflare"])).toThrow("unsupported serve provider");
+  });
+
+  it("documents automatic background startup in help", async () => {
+    let output = "";
+    await expect(runServeCommand(["tailscale", "--help"], {
+      out: (value) => {
+        output += value;
+      },
+    })).resolves.toBe(0);
+
+    expect(output).toContain("Ensures agentd is running in the background");
+    expect(output).toContain("Tailscale Serve with --bg");
   });
 });

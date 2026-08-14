@@ -6,6 +6,9 @@
   "type": "module",
   "scripts": {
     "build": "node ./node_modules/vite/bin/vite.js build",
+    "cap:sync": "bun run build && cap sync ios",
+    "cap:open": "cap open ios",
+    "cap:run": "cap run ios --scheme Local",
     "build-storybook": "node ./node_modules/storybook/dist/bin/dispatcher.js build",
     "dev": "node ./node_modules/vite/bin/vite.js",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
@@ -14,6 +17,9 @@
     "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@capacitor/app": "8.1.1",
+    "@capacitor/core": "8.4.2",
+    "@capacitor/ios": "8.4.2",
     "@mobile-agent/agentd-client": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
@@ -26,6 +32,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.4.2",
     "@storybook/react-vite": "^10.5.6",
     "@tanstack/router-plugin": "^1.168.23",
     "@types/react": "^19.2.18",

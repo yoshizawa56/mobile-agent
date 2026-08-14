@@ -1,4 +1,4 @@
-import type { TmuxPane } from "./tmux.js";
+import type { TmuxLiveSnapshot, TmuxPane } from "./tmux.js";
 
 export type TmuxPaneChangeReason = "pane_created" | "pane_deleted" | "pane_changed";
 
@@ -8,11 +8,19 @@ export type TmuxPaneChange = {
 };
 
 export type TmuxStateMonitorOptions = {
-  readPanes: () => TmuxPane[];
-  synchronize: (panes: TmuxPane[]) => Promise<void>;
+  readPanes: () => TmuxLiveSnapshot;
+  synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly string[]>;
+  cleanup?: (activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string) => Promise<void>;
   onChange: (changes: TmuxPaneChange[]) => void;
   intervalMs?: number;
+  cleanupIntervalMs?: number;
+  paneRetentionMs?: number;
+  now?: () => number;
 };
+
+export const defaultTmuxPollIntervalMs = 1_000;
+export const defaultPaneCleanupIntervalMs = 60_000;
+export const defaultPaneRetentionMs = 10 * 60_000;
 
 /**
  * Polls tmux as the live source of truth and reports coalesced changes.
@@ -27,9 +35,16 @@ export class TmuxStateMonitor {
   private timer: NodeJS.Timeout | undefined;
   private busy = false;
   private initialized = false;
+  private readonly cleanupIntervalMs: number;
+  private readonly paneRetentionMs: number;
+  private readonly now: () => number;
+  private lastCleanupAttemptAt = Number.NEGATIVE_INFINITY;
 
   public constructor(private readonly options: TmuxStateMonitorOptions) {
-    this.intervalMs = options.intervalMs ?? 1_000;
+    this.intervalMs = Math.max(1, options.intervalMs ?? defaultTmuxPollIntervalMs);
+    this.cleanupIntervalMs = Math.max(1, options.cleanupIntervalMs ?? defaultPaneCleanupIntervalMs);
+    this.paneRetentionMs = Math.max(0, options.paneRetentionMs ?? defaultPaneRetentionMs);
+    this.now = options.now ?? Date.now;
   }
 
   public start(): void {
@@ -50,22 +65,41 @@ export class TmuxStateMonitor {
     if (this.busy) return;
     this.busy = true;
     try {
-      const panes = this.options.readPanes();
-      await this.options.synchronize(panes);
-      const current = snapshot(panes);
+      const live = this.options.readPanes();
+      if (!live.available) return;
+      const activePaneIds = await this.options.synchronize(live);
+      const current = snapshot(live.panes);
       if (!this.initialized) {
         this.previous = current;
         this.initialized = true;
-        return;
+      } else {
+        const changes = diff(this.previous, current, live.panes);
+        this.previous = current;
+        if (changes.length) this.options.onChange(changes);
       }
-      const changes = diff(this.previous, current, panes);
-      this.previous = current;
-      if (changes.length) this.options.onChange(changes);
+
+      await this.cleanupIfDue(live, activePaneIds);
     } catch {
       // A tmux server can disappear between reads. Keep the previous snapshot
       // so a later successful read can still produce the appropriate change.
     } finally {
       this.busy = false;
+    }
+  }
+
+  private async cleanupIfDue(live: TmuxLiveSnapshot, activePaneIds: readonly string[]): Promise<void> {
+    if (!this.options.cleanup || !live.available || !live.tmuxServerId || !live.tmuxServerScope || live.panes.length === 0 || activePaneIds.length === 0) return;
+
+    const now = this.now();
+    if (now - this.lastCleanupAttemptAt < this.cleanupIntervalMs) return;
+    this.lastCleanupAttemptAt = now;
+
+    try {
+      const olderThan = new Date(now - this.paneRetentionMs).toISOString();
+      await this.options.cleanup(activePaneIds, olderThan, live.tmuxServerScope);
+    } catch {
+      // Cleanup is best effort. A database lock or transient SQLite failure
+      // must not stop live tmux reconciliation or event delivery.
     }
   }
 }
@@ -82,9 +116,13 @@ function snapshot(panes: TmuxPane[]): Map<string, PaneSnapshot> {
 function paneFingerprint(pane: TmuxPane): string {
   return JSON.stringify([
     pane.sessionName,
+    pane.tmuxServerId,
+    pane.agentdSessionId,
+    pane.agentdExecutionId,
     pane.windowId,
     pane.windowName,
     pane.windowIndex,
+    pane.paneIndex,
     pane.cwd,
     pane.command,
     pane.title,
@@ -100,6 +138,8 @@ function paneFingerprint(pane: TmuxPane): string {
     pane.agentdKind,
     pane.agentdAgentId,
     pane.agentdRunId,
+    pane.agentdManagedSessionId,
+    pane.agentdParentRunId,
   ]);
 }
 

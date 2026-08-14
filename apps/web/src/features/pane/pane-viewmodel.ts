@@ -10,8 +10,10 @@ import {
 import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import { getAgentdWebSocketEndpoint, openAgentdTerminal } from "../api/agentd-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
+import { mobileAgentBridge } from "../../platform/mobile-bridge";
 import { installTerminalFlickInput } from "./terminal-flick";
 import { installTerminalSelectionGesture } from "./terminal-selection";
+import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./terminal-font";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -159,6 +161,10 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     }
   }, [showSelectionNotice]);
 
+  useEffect(() => mobileAgentBridge.onAppStateChange((state) => {
+    if (state === "active" && !terminalClosedRef.current) reconnect();
+  }), [reconnect]);
+
   useEffect(() => {
     // The terminal surface is mounted by the control-room route. The hook lives
     // above that route, so the DOM ref is the reliable lifecycle signal here;
@@ -167,10 +173,11 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     if (!target || !terminalContainer) return;
 
     const container = terminalContainer;
+    const fontSize = terminalFontSize();
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: '"SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, monospace',
-      fontSize: terminalFontSize(),
+      fontFamily: TERMINAL_FONT_FAMILY,
+      fontSize,
       lineHeight: 1.05,
       letterSpacing: 0,
       scrollback: 10_000,
@@ -206,6 +213,12 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     let resizeFrame: number | null = null;
     let retryScheduled = false;
     let socketGeneration = 0;
+
+    void waitForTerminalFont(fontSize).then(() => {
+      if (disposed) return;
+      terminal.refresh(0, terminal.rows - 1);
+      fitAddon.fit();
+    });
 
     const scheduleReconnect = () => {
       if (disposed || terminalClosedRef.current || retryScheduled || retryCountRef.current >= 8) return;
@@ -364,6 +377,26 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       setStatus("closed");
     };
 
+    let scrollRemainder = 0;
+    const scrollTerminal = (deltaY: number) => {
+      const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
+      const rect = screen.getBoundingClientRect();
+      const cellHeight = terminal.rows > 0 && rect.height > 0 ? rect.height / terminal.rows : 0;
+      if (!cellHeight) return;
+
+      scrollRemainder += -deltaY / cellHeight;
+      const lineDelta = scrollRemainder > 0 ? Math.floor(scrollRemainder) : Math.ceil(scrollRemainder);
+      if (!lineDelta) return;
+      scrollRemainder -= lineDelta;
+      terminal.scrollLines(lineDelta);
+    };
+    const flickOptions = {
+      onGestureStart: () => {
+        scrollRemainder = 0;
+      },
+      onScroll: scrollTerminal,
+    };
+
     if (isMockMode()) {
       setStatus("connected");
       setViewportReason("attached");
@@ -375,7 +408,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       sendResize();
       const flickCleanup = installTerminalFlickInput(container, () => {
         // The mock is intentionally read-only. Real input is wired to agentd below.
-      });
+      }, flickOptions);
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
       });
@@ -408,10 +441,14 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
     });
-    const flickCleanup = installTerminalFlickInput(container, (data) => {
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
-    });
+    const flickCleanup = installTerminalFlickInput(
+      container,
+      (data) => {
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+      },
+      flickOptions,
+    );
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
     });

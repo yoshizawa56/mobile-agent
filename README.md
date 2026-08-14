@@ -128,10 +128,16 @@ agent list --json
 agent list --global
 agent cleanup review --force
 agent doctor --verbose
+agent tmux new-session -s project -c ~/work/project
+agent tmux new-session -s project -c ~/work/project --detached
 agent daemon start --host 127.0.0.1 --port 4317
 agent daemon status
 agent daemon restart
 ```
+
+### Logging
+
+`-v` / `--verbose` controls detailed diagnostics written to the attached terminal. It does not change a background `agentd` process. Configure the daemon with `--log-level LEVEL` and `--log-file PATH`; background logs are JSONL and default to `~/.local/state/mobile-agent/agentd.log` with bounded rotation. `AGENT_LOG_LEVEL` and `AGENT_LOG_FILE` provide the corresponding `agentd` environment defaults.
 
 The unified `agent` binary includes the lifecycle CLI and the long-running `agentd` daemon. Build it with Bun's standalone executable target and run the daemon from the same file:
 
@@ -142,11 +148,13 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured unmanaged files such as `.env` into the same relative paths, and then runs the registered workspace setup script when present. Copy patterns are relative and support `*` and `**`; missing matches are warnings. Cleanup scripts run before the worktree is removed. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
+`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
+
 `build:agent` compiles the agent CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 
 ### Running multiple agentd instances
 
-`agent daemon start` is intentionally a foreground process so launchd, systemd, or another process supervisor can own its lifecycle. When multiple agentd processes share the normal tmux server, give every process a distinct `AGENTD_INSTANCE_DIR`, HTTP port, and `AGENT_WORKTREE_ID`. The instance directory contains the SQLite database, hook output, PID file, and control socket. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
+`agent daemon start` starts agentd in a detached process, waits for its health endpoint, and returns to the shell. Use `agent daemon status`, `agent daemon restart`, and `agent daemon stop` for its lifecycle. If launchd, systemd, or another process supervisor needs to own the foreground process directly, use `agent daemon start --foreground` (or the `apps/agentd` package entrypoint). When multiple agentd processes share the normal tmux server, give every process a distinct `AGENTD_INSTANCE_DIR`, HTTP port, and `AGENT_WORKTREE_ID`. The instance directory contains the SQLite database, hook output, PID file, and control socket. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
 
 ```sh
 # profile-a.env and profile-b.env are local files and are not committed.
@@ -165,7 +173,7 @@ agent daemon restart
 agent daemon stop
 ```
 
-`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running agentd process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should be used for boot-time startup and crash recovery.
+`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running agentd process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should invoke the explicit `--foreground` mode for boot-time startup and crash recovery.
 
 ### Releases
 

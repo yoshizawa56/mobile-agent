@@ -1,5 +1,13 @@
 export type TerminalFlickDirection = "up" | "down" | "left" | "right";
 
+export type TerminalFlickInputOptions = {
+  onGestureStart?: () => void;
+  onScroll?: (deltaY: number) => void;
+};
+
+const TERMINAL_FLICK_MOVE_TOLERANCE_PX = 12;
+const TERMINAL_FLICK_SCROLL_DECISION_MS = 220;
+
 const ARROW_INPUT: Record<TerminalFlickDirection, string> = {
   up: "\u001b[A",
   down: "\u001b[B",
@@ -23,56 +31,126 @@ export function terminalInputForFlick(direction: TerminalFlickDirection): string
   return ARROW_INPUT[direction];
 }
 
-export function installTerminalFlickInput(container: HTMLElement, onInput: (data: string) => void): () => void {
-  let start: { pointerId: number; x: number; y: number; startedAt: number } | null = null;
-  let activeTouchPointers = 0;
+export function installTerminalFlickInput(
+  container: HTMLElement,
+  onInput: (data: string) => void,
+  options: TerminalFlickInputOptions = {},
+): () => void {
+  let gesture: {
+    pointerId: number;
+    x: number;
+    y: number;
+    lastY: number;
+    startedAt: number;
+    didScroll: boolean;
+  } | null = null;
+  const activeTouchPointers = new Set<number>();
 
-  const reset = () => {
-    start = null;
-    activeTouchPointers = 0;
+  const clearGesture = () => {
+    gesture = null;
+  };
+
+  const capturePointer = (event: PointerEvent) => {
+    try {
+      container.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is unavailable in a few embedded webviews. The
+      // pointer lifecycle still works while the finger remains on the view.
+    }
+  };
+
+  const sendFlickIfApplicable = (state: NonNullable<typeof gesture>, x: number, y: number, durationMs: number, event?: Event) => {
+    if (state.didScroll) return;
+    const direction = classifyTerminalFlick({
+      dx: x - state.x,
+      dy: y - state.y,
+      durationMs,
+    });
+    if (!direction) return;
+
+    event?.preventDefault();
+    onInput(terminalInputForFlick(direction));
   };
 
   const onPointerDown = (event: PointerEvent) => {
     if (event.pointerType === "mouse") return;
-    activeTouchPointers += 1;
-    if (activeTouchPointers > 1 || start) {
+    activeTouchPointers.add(event.pointerId);
+    if (activeTouchPointers.size > 1 || gesture) {
       // A pinch must never finish the first finger's pending flick and send
       // an arrow key to the terminal.
-      start = null;
+      clearGesture();
       return;
     }
-    start = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startedAt: performance.now() };
+    const startedAt = performance.now();
+    gesture = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      lastY: event.clientY,
+      startedAt,
+      didScroll: false,
+    };
+    options.onGestureStart?.();
+    capturePointer(event);
+  };
+
+  const onPointerMove = (event: PointerEvent) => {
+    if (event.pointerType === "mouse") return;
+    const state = gesture;
+    if (!state || state.pointerId !== event.pointerId || activeTouchPointers.size !== 1) return;
+
+    const now = performance.now();
+    const previousY = state.lastY;
+    const totalDx = event.clientX - state.x;
+    const totalDy = event.clientY - state.y;
+    const totalDistance = Math.hypot(totalDx, totalDy);
+    const isVerticalDrag = Math.abs(totalDy) > Math.abs(totalDx) && totalDistance > TERMINAL_FLICK_MOVE_TOLERANCE_PX;
+
+    if (options.onScroll && isVerticalDrag) {
+      const flick = classifyTerminalFlick({ dx: totalDx, dy: totalDy, durationMs: now - state.startedAt });
+      if (state.didScroll || now - state.startedAt > TERMINAL_FLICK_SCROLL_DECISION_MS || !flick) {
+        const wasScrolling = state.didScroll;
+        state.didScroll = true;
+        event.preventDefault();
+        options.onScroll(event.clientY - (wasScrolling ? previousY : state.y));
+      }
+    }
+
+    state.lastY = event.clientY;
   };
 
   const onPointerUp = (event: PointerEvent) => {
     if (event.pointerType === "mouse") return;
-    if (activeTouchPointers > 1 || !start || event.pointerId !== start.pointerId) {
-      activeTouchPointers = Math.max(activeTouchPointers - 1, 0);
-      if (activeTouchPointers === 0) start = null;
+    activeTouchPointers.delete(event.pointerId);
+    const state = gesture;
+    if (!state || state.pointerId !== event.pointerId || activeTouchPointers.size !== 0) {
+      if (activeTouchPointers.size === 0) clearGesture();
       return;
     }
 
-    const direction = classifyTerminalFlick({
-      dx: event.clientX - start.x,
-      dy: event.clientY - start.y,
-      durationMs: performance.now() - start.startedAt,
-    });
-    reset();
-    if (!direction) return;
+    clearGesture();
+    sendFlickIfApplicable(state, event.clientX, event.clientY, performance.now() - state.startedAt, event);
+  };
 
-    event.preventDefault();
-    onInput(terminalInputForFlick(direction));
+  const onPointerCancel = (event: PointerEvent) => {
+    if (event.pointerType === "mouse") return;
+    activeTouchPointers.delete(event.pointerId);
+    // A cancel can mean backgrounding, rotation, palm rejection, or an OS
+    // gesture taking ownership. It is never a completed terminal input.
+    if (activeTouchPointers.size === 0) clearGesture();
   };
 
   container.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
+  container.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   container.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
-  container.addEventListener("pointercancel", reset, { capture: true });
-  container.addEventListener("pointerleave", reset, { capture: true });
+  container.addEventListener("pointercancel", onPointerCancel, { capture: true, passive: false });
 
   return () => {
     container.removeEventListener("pointerdown", onPointerDown, true);
+    container.removeEventListener("pointermove", onPointerMove, true);
     container.removeEventListener("pointerup", onPointerUp, true);
-    container.removeEventListener("pointercancel", reset, true);
-    container.removeEventListener("pointerleave", reset, true);
+    container.removeEventListener("pointercancel", onPointerCancel, true);
+    activeTouchPointers.clear();
+    clearGesture();
   };
 }

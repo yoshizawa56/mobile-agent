@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel } from "@mobile-agent/logging";
 import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import { createAgentdServer } from "./server.js";
 
@@ -11,6 +12,8 @@ export type AgentdCliOptions = {
   controlSocket?: string;
   webOrigin?: string;
   agentdBaseUrl?: string;
+  logLevel?: LogLevel;
+  logFile?: string;
 };
 
 type AgentdCommand = "start" | "status" | "stop" | "restart" | "ensure";
@@ -20,6 +23,11 @@ type AgentdPidRecord = {
   host: string;
   port: number;
   startedAt: string;
+};
+
+type ParsedAgentdOptions = {
+  options: AgentdCliOptions;
+  foreground: boolean;
 };
 
 const healthTimeoutMs = 500;
@@ -32,10 +40,13 @@ export async function runAgentdCommand(args: string[] = []): Promise<ReturnType<
     return undefined;
   }
 
-  const options = parseAgentdOptions(rest);
+  const parsed = parseAgentdOptions(rest);
+  const options = parsed.options;
   switch (command) {
     case "start":
-      return startAgentd(options);
+      if (parsed.foreground) return startAgentd(options);
+      process.exitCode = await ensureAgentd(options);
+      return undefined;
     case "status":
       process.exitCode = await statusAgentd(options);
       return undefined;
@@ -52,8 +63,16 @@ export async function runAgentdCommand(args: string[] = []): Promise<ReturnType<
 }
 
 export async function startAgentd(args: string[] | AgentdCliOptions = []): Promise<ReturnType<typeof createAgentdServer> | undefined> {
-  const options = Array.isArray(args) ? parseAgentdOptions(normalizeStartCommand(args)) : args;
-  const app = createAgentdServer(options);
+  const options = Array.isArray(args) ? parseAgentdOptions(normalizeStartCommand(args)).options : args;
+  const logger = createLogger({
+    service: "agentd",
+    mode: options.logFile ? "background" : "attached",
+    level: options.logLevel ?? "info",
+    logFile: options.logFile,
+    output: process.stderr,
+    showStack: options.logLevel === "debug",
+  });
+  const app = createAgentdServer({ ...options, logger });
 
   try {
     await app.start();
@@ -64,7 +83,12 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
       startedAt: new Date().toISOString(),
     });
   } catch (error) {
+    logger.error("process.unhandled_error", {
+      message: `unexpected error: ${errorMessage(error)}`,
+      ...errorFields(error),
+    });
     app.stop();
+    logger.close();
     throw error;
   }
 
@@ -74,6 +98,7 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
     stopped = true;
     removePidRecord(options.pidFile, process.pid);
     app.stop();
+    logger.close();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
@@ -98,7 +123,7 @@ function isAgentdCommand(value: string): value is AgentdCommand {
   return value === "start" || value === "status" || value === "stop" || value === "restart" || value === "ensure";
 }
 
-function parseAgentdOptions(args: string[]): AgentdCliOptions {
+function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   let host = process.env.AGENTD_HOST ?? "127.0.0.1";
   let port = Number(process.env.AGENTD_PORT ?? 4317);
   const paths = resolveAgentdPaths(process.env);
@@ -106,10 +131,14 @@ function parseAgentdOptions(args: string[]): AgentdCliOptions {
   let controlSocket = paths.controlSocket;
   let webOrigin = process.env.AGENTD_WEB_ORIGIN;
   let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
+  let logLevel = parseLogLevel(process.env.AGENT_LOG_LEVEL, "info");
+  let logFile = process.env.AGENT_LOG_FILE;
+  let foreground = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
-    if (argument === "--host") host = requireValue(argument, args[++index]);
+    if (argument === "--foreground") foreground = true;
+    else if (argument === "--host") host = requireValue(argument, args[++index]);
     else if (argument.startsWith("--host=")) host = argument.slice("--host=".length);
     else if (argument === "--port") port = parsePort(argument, requireValue(argument, args[++index]));
     else if (argument.startsWith("--port=")) port = parsePort("--port", argument.slice("--port=".length));
@@ -121,11 +150,15 @@ function parseAgentdOptions(args: string[]): AgentdCliOptions {
     else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
+    else if (argument === "--log-level") logLevel = parseRequiredLogLevel(argument, requireValue(argument, args[++index]));
+    else if (argument.startsWith("--log-level=")) logLevel = parseRequiredLogLevel("--log-level", argument.slice("--log-level=".length));
+    else if (argument === "--log-file") logFile = resolve(requireValue(argument, args[++index]));
+    else if (argument.startsWith("--log-file=")) logFile = resolve(argument.slice("--log-file=".length));
     else throw new Error(`unknown agent daemon option: ${argument}`);
   }
 
   validateAgentdControlSocketPath(controlSocket);
-  return { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl };
+  return { options: { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl, logLevel, logFile }, foreground };
 }
 
 async function statusAgentd(options: AgentdCliOptions): Promise<number> {
@@ -223,14 +256,19 @@ async function ensureAgentd(options: AgentdCliOptions): Promise<number> {
   return 0;
 }
 
-function spawnCurrentDaemon(options: AgentdCliOptions) {
-  const entry = process.argv[1];
+export function buildDaemonSpawnArgs(options: AgentdCliOptions, entry = process.argv[1]): string[] {
   const sourceEntry = entry && /\.(?:[cm]?js|ts)$/.test(entry) && existsSync(entry);
-  const args = sourceEntry ? [entry, "daemon", "start"] : ["daemon", "start"];
+  const args = sourceEntry ? [entry, "daemon", "start", "--foreground"] : ["daemon", "start", "--foreground"];
   args.push("--host", options.host, "--port", String(options.port), "--pid-file", options.pidFile);
   if (options.controlSocket) args.push("--control-socket", options.controlSocket);
   if (options.webOrigin) args.push("--web-origin", options.webOrigin);
   if (options.agentdBaseUrl) args.push("--agentd-base-url", options.agentdBaseUrl);
+  args.push("--log-level", options.logLevel ?? "info", "--log-file", options.logFile ?? defaultLogFile());
+  return args;
+}
+
+function spawnCurrentDaemon(options: AgentdCliOptions) {
+  const args = buildDaemonSpawnArgs(options);
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
     detached: true,
@@ -304,6 +342,13 @@ function requireValue(option: string, value: string | undefined): string {
   return value;
 }
 
+function parseRequiredLogLevel(option: string, value: string): LogLevel {
+  if (value !== "error" && value !== "warn" && value !== "info" && value !== "debug") {
+    throw new Error(`${option} must be one of error, warn, info, or debug`);
+  }
+  return value;
+}
+
 function parsePort(option: string, value: string): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`${option} must be between 1 and 65535`);
@@ -318,7 +363,12 @@ function displayHost(host: string): string {
 
 function printUsage(command: AgentdCommand): void {
   const usage = command === "start"
-    ? "Usage: agent daemon start [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL]"
-    : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH]`;
-  process.stdout.write(`${usage}\n\nCommands: start, status, stop, restart, ensure\n`);
+    ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL] [--log-level LEVEL] [--log-file PATH]"
+    : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
+  const behavior = command === "start"
+    ? "Starts agentd in the background and waits until it is healthy by default. Use --foreground when a service manager should own the agentd process."
+    : command === "restart"
+      ? "Stops agentd and starts it in the background, unless a service manager takes over the replacement process."
+      : undefined;
+  process.stdout.write(`${usage}\n${behavior ? `\n${behavior}\n` : ""}\nCommands: start, status, stop, restart, ensure\n`);
 }

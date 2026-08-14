@@ -29,7 +29,9 @@ export interface PaneRepository {
   list(filter?: PaneFilter): Promise<PaneRecord[]>;
   findById(id: PaneId): Promise<PaneRecord | undefined>;
   findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined>;
+  findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined>;
   upsert(record: PaneRecord): Promise<void>;
+  pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string): Promise<number>;
 }
 
 export interface RunRepository {
@@ -50,6 +52,8 @@ export interface AgentSessionRepository {
   list(workspaceId?: string): Promise<AgentSessionRecord[]>;
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
+  claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean>;
+  setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean>;
   delete(id: string): Promise<void>;
 }
 

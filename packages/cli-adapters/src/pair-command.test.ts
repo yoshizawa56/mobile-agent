@@ -1,5 +1,5 @@
 import { Writable, Readable } from "node:stream";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PairDevice } from "@mobile-agent/application";
 import { PairCommand, parsePairCommandOptions, type PairDeviceRuntime } from "./pair-command.js";
@@ -20,8 +20,10 @@ describe("agent pair CLI adapter", () => {
   });
 
   it("normalizes a relative control socket override", () => {
-    expect(parsePairCommandOptions(["--control-socket", "run/agentd.sock"], {}).controlSocket)
-      .toBe(resolve("run/agentd.sock"));
+    const expected = "/tmp/mobile-agent-agentd.sock";
+    const relativeSocket = relative(process.cwd(), expected);
+    expect(parsePairCommandOptions(["--control-socket", relativeSocket], {}).controlSocket)
+      .toBe(expected);
   });
 
   it("maps command options into the injected use case and result code", async () => {
@@ -48,7 +50,7 @@ describe("agent pair CLI adapter", () => {
 
     await expect(command.execute(["--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"])).resolves.toBe(0);
     expect(received).toEqual({ webOrigin: "https://web.example", agentdBaseUrl: "https://agentd.example" });
-    expect(out.value).toContain("承認しました。deviceId: device-1");
+    expect(out.value).toContain("Approved. deviceId: device-1");
     expect(closed).toBe(true);
   });
 

@@ -50,7 +50,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
                   {pane.kind === "shell" ? "⌁" : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
                 </span>
                 <span className="pane-list-main">
-                  <span className="pane-list-title"><strong>{pane.name}</strong>{selected ? <span className="selected-label">OPEN</span> : null}</span>
+                  <span className="pane-list-title"><strong>{pane.name}</strong><span className="pane-index-label">PANE {pane.paneIndex ?? "?"}</span>{selected ? <span className="selected-label">OPEN</span> : null}</span>
                   <small>{pane.agentId ?? pane.title ?? "shell"} <span>·</span> {pane.cwd}</small>
                 </span>
                 <span className={`pane-state pane-state-${pane.state}${needsAttention ? " pane-state-attention" : ""}`}>

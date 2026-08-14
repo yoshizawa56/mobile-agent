@@ -1,0 +1,17 @@
+{
+  "appId": "com.mobileagent.app",
+  "appName": "Mobile Agent",
+  "webDir": "dist",
+  "server": {
+    "hostname": "localhost",
+    "iosScheme": "capacitor"
+  },
+  "ios": {
+    "backgroundColor": "#071309",
+    "contentInset": "never",
+    "loggingBehavior": "production",
+    "preferredContentMode": "mobile",
+    "scrollEnabled": false,
+    "zoomEnabled": false
+  }
+}

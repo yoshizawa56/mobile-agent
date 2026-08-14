@@ -54,10 +54,10 @@ export class PairCommand {
         agentdBaseUrl: parsed.agentdBaseUrl,
       });
       if (result.status === "approved") {
-        this.write(`承認しました。deviceId: ${result.deviceId}\n`);
+        this.write(`Approved. deviceId: ${result.deviceId}\n`);
         return 0;
       }
-      this.write("ペアリングを拒否しました。\n");
+      this.write("Pairing was rejected.\n");
       return 1;
     } finally {
       runtime.close();

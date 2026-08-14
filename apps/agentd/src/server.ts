@@ -5,10 +5,11 @@ import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer, type WebSocket } from "ws";
+import { WorkspaceCrud } from "@mobile-agent/application";
 import { paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, resolveAgentdPaths } from "@mobile-agent/persistence";
+import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveAgentdPaths } from "@mobile-agent/persistence";
 import { AgentdControlServer } from "./auth/control.js";
 import { AuthService, type AuthContext } from "./auth/service.js";
 import { AgentdEventHub } from "./events.js";
@@ -67,6 +68,11 @@ export function createAgentdServer(options: AgentdOptions) {
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
+  const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
+    audit: {
+      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+    },
+  });
   const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
@@ -114,14 +120,28 @@ export function createAgentdServer(options: AgentdOptions) {
     corsOrigin,
     hookToken,
     getTerminal: getLocalTerminal,
-    listWorkspaceDirectories: async () => (await workspaceRepository.list()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
+    listWorkspaceDirectories: async () => (await workspaceCrud.list.execute()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
     browseWorkspaceDirectories: (parentPath) => workspaceCatalog.browseDirectories(parentPath),
     registerWorkspace: async (input) => {
-      const candidate = workspaceCatalog.registerWorkspace(input);
-      const existing = await workspaceRepository.findById(candidate.id);
-      const workspace = workspaceCatalog.registerWorkspace(input, existing);
-      await workspaceRepository.upsert(workspace);
+      const workspace = await workspaceCrud.register.execute({
+        directory: input.directory,
+        name: input.name,
+        setupHook: input.setupScriptPath,
+        cleanupHook: input.cleanupScriptPath,
+        worktreeCopyPatterns: input.worktreeCopyPatterns,
+      });
       return workspaceCatalog.toDirectoryOption(workspace);
+    },
+    updateWorkspace: async (workspaceId, input) => workspaceCatalog.toDirectoryOption(await workspaceCrud.update.execute(workspaceId, {
+      name: input.name,
+      setupHook: input.setupScriptPath,
+      cleanupHook: input.cleanupScriptPath,
+      worktreeCopyPatterns: input.worktreeCopyPatterns,
+      appendCopyPatterns: input.appendWorktreeCopyPatterns,
+      clearCopyPatterns: input.clearWorktreeCopyPatterns,
+    })),
+    deleteWorkspace: async (workspaceId) => {
+      await workspaceCrud.delete.execute(workspaceId);
     },
     resolveWorkspaceDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId, (id) => workspaceRepository.findById(id)),
     resolveWorkspaceSelection: (selection) => workspaceCatalog.resolveSelection(selection, (id) => workspaceRepository.findById(id)),

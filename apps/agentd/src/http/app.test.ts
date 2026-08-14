@@ -153,6 +153,44 @@ const cases: TableCase[] = [
     assert: [(ctx) => expect(ctx.body).toMatchObject({ workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/agent/setup", worktreeCopyPatterns: [".env", "config/*.local.json"] } })],
   },
   {
+    name: "updates a workspace through the transport adapter",
+    given: (ctx) => {
+      ctx.app = createTestApp(ctx.events, {
+        updateWorkspace: async (workspaceId, input) => ({
+          ...workspace,
+          id: workspaceId,
+          name: input.name ?? workspace.name,
+          setupScriptPath: input.setupScriptPath ?? null,
+          worktreeCopyPatterns: input.worktreeCopyPatterns ?? workspace.worktreeCopyPatterns,
+        }),
+      });
+      ctx.request = new Request("http://agentd.local/api/workspaces/workspace-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] }),
+      });
+    },
+    when: async (ctx) => {
+      ctx.response = await ctx.app!.request(ctx.request);
+      ctx.body = await ctx.response.json();
+    },
+    check: [(ctx) => expect(ctx.response?.status).toBe(200)],
+    assert: [(ctx) => expect(ctx.body).toMatchObject({ workspace: { id: workspace.id, name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] } })],
+  },
+  {
+    name: "deletes a workspace through the transport adapter",
+    given: (ctx) => {
+      ctx.app = createTestApp(ctx.events);
+      ctx.request = new Request("http://agentd.local/api/workspaces/workspace-1", { method: "DELETE" });
+    },
+    when: async (ctx) => {
+      ctx.response = await ctx.app!.request(ctx.request);
+      ctx.body = await ctx.response.text();
+    },
+    check: [(ctx) => expect(ctx.response?.status).toBe(204)],
+    assert: [(ctx) => expect(ctx.body).toBe("")],
+  },
+  {
     name: "filters panes with the session query",
     given: (ctx) => {
       ctx.app = createTestApp(ctx.events);
@@ -317,6 +355,8 @@ function createTestApp(
     listWorkspaceDirectories: async () => [workspace],
     browseWorkspaceDirectories: async () => [workspace],
     registerWorkspace: async () => workspace,
+    updateWorkspace: async () => workspace,
+    deleteWorkspace: async () => undefined,
     resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
     resolveWorkspaceSelection: async (selection) => ({
       id: selection.workspaceId,

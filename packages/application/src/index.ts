@@ -19,6 +19,26 @@ export {
   type PairingPresenterPort,
 } from "./pair-device.js";
 
+export {
+  DeleteWorkspace,
+  InvalidWorkspaceCopyPatternError,
+  InvalidWorkspaceNameError,
+  ListWorkspaces,
+  RegisterWorkspace,
+  UpdateWorkspace,
+  WorkspaceAlreadyRegisteredError,
+  WorkspaceCrud,
+  WorkspaceNotFoundError,
+  WorkspaceRecordFactory,
+  WorkspaceUpdateEmptyError,
+  WorkspaceUseCaseError,
+  type RegisterWorkspaceInput,
+  type UpdateWorkspaceInput,
+  type WorkspaceAuditPort,
+  type WorkspaceDirectoryInfo,
+  type WorkspaceDirectoryPort,
+} from "./workspace.js";
+
 export type PaneFilter = {
   state?: RunState;
   kind?: PaneRecord["kind"];
@@ -42,6 +62,7 @@ export interface RunRepository {
 export interface WorkspaceRepository {
   findById(id: string): Promise<WorkspaceRecord | undefined>;
   list(): Promise<WorkspaceRecord[]>;
+  insert(record: WorkspaceRecord): Promise<boolean>;
   upsert(record: WorkspaceRecord): Promise<void>;
   delete(id: string): Promise<void>;
 }

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AllowedRootPolicy, InvalidWorkspaceCopyPatternError, InvalidWorkspaceDirectoryError, InvalidWorkspaceHookError, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
+import { AllowedRootPolicy, InvalidWorkspaceDirectoryError, InvalidWorkspaceHookError, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
 
 const temporaryRoots: string[] = [];
 
@@ -75,7 +75,7 @@ describe("allowed workspace root policy", () => {
 });
 
 describe("workspace selection catalog", () => {
-  it("browses directories, registers a workspace, and resolves a worktree selection", async () => {
+  it("browses directories, resolves a directory, and resolves a worktree selection", async () => {
     const root = mkdtempTracked("mobile-agent-catalog-");
     const repository = mkdirAndReturn(join(root, "mobile-agent"));
     execFileSync("git", ["init", "-q", repository]);
@@ -87,9 +87,17 @@ describe("workspace selection catalog", () => {
     const workspaces = await catalog.browseDirectories(root);
     const selected = workspaces.find((workspace) => workspace.name === "mobile-agent");
     expect(selected).toMatchObject({ name: "mobile-agent", isGit: true });
-    const registered = catalog.registerWorkspace({ directory: repository, setupScriptPath: setup, worktreeCopyPatterns: [".env", "config/**/*.local.json"] });
+    const resolved = catalog.resolveDirectory(repository);
+    const registered = {
+      ...resolved,
+      setupScriptPath: catalog.resolveHook(setup, resolved.rootPath),
+      cleanupScriptPath: null,
+      worktreeCopyPatterns: [".env", "config/**/*.local.json"],
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    };
     await expect(catalog.resolveSelection({ workspaceId: registered.id, mode: "worktree" }, async () => registered)).resolves.toMatchObject({
-      id: registered.id,
+      id: resolved.id,
       rootPath: realpathSync(repository),
       setupScriptPath: realpathSync(setup),
       worktreeCopyPatterns: [".env", "config/**/*.local.json"],
@@ -103,23 +111,12 @@ describe("workspace selection catalog", () => {
     await expect(catalog.resolveSelection({ workspaceId: "missing", mode: "workspace" }, async () => undefined)).rejects.toMatchObject({ code: "invalid_directory" });
   });
 
-  it("rejects a non-executable hook during registration", () => {
+  it("rejects a non-executable hook through the directory port", () => {
     const root = mkdtempTracked("mobile-agent-hook-");
     const workspace = mkdirAndReturn(join(root, "repository"));
     const hook = join(root, "setup");
     writeFileSync(hook, "#!/bin/sh\n");
-    expect(() => new WorkspaceSelectionCatalog([root]).registerWorkspace({ directory: workspace, setupScriptPath: hook })).toThrowError(InvalidWorkspaceHookError);
-  });
-
-  it.each([
-    "/absolute/.env",
-    "../outside.env",
-    "config/../../outside.env",
-    "config\\local.env",
-  ])("rejects an unsafe worktree copy pattern: %s", (pattern) => {
-    const root = mkdtempTracked("mobile-agent-copy-pattern-");
-    const workspace = mkdirAndReturn(join(root, "repository"));
-    expect(() => new WorkspaceSelectionCatalog([root]).registerWorkspace({ directory: workspace, worktreeCopyPatterns: [pattern] })).toThrowError(InvalidWorkspaceCopyPatternError);
+    expect(() => new WorkspaceSelectionCatalog([root]).resolveHook(hook, workspace)).toThrowError(InvalidWorkspaceHookError);
   });
 });
 

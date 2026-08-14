@@ -1,8 +1,8 @@
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import type { WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
-import type { CreatePaneRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@mobile-agent/protocol";
-import { agentdCapabilitiesSchema, agentdHealthSchema, authChallengeRequestSchema, authChallengeResponseSchema, authInfoSchema, authSessionRequestSchema, authSessionResponseSchema, createPaneRequestSchema, createSessionRequestSchema, pairingClaimRequestSchema, pairingClaimResponseSchema, pairingStatusSchema, paneResponseSchema, registerWorkspaceRequestSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, workspaceResponseSchema, wsTicketRequestSchema, wsTicketResponseSchema } from "@mobile-agent/protocol";
+import type { CreatePaneRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, UpdateWorkspaceRequest, WorkspaceDirectory } from "@mobile-agent/protocol";
+import { agentdCapabilitiesSchema, agentdHealthSchema, authChallengeRequestSchema, authChallengeResponseSchema, authInfoSchema, authSessionRequestSchema, authSessionResponseSchema, createPaneRequestSchema, createSessionRequestSchema, pairingClaimRequestSchema, pairingClaimResponseSchema, pairingStatusSchema, paneResponseSchema, registerWorkspaceRequestSchema, updateWorkspaceRequestSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, workspaceResponseSchema, wsTicketRequestSchema, wsTicketResponseSchema } from "@mobile-agent/protocol";
 import { AuthStoreError } from "@mobile-agent/persistence";
 import type { AuthContext } from "../auth/service.js";
 import { AuthService } from "../auth/service.js";
@@ -26,6 +26,8 @@ export type AgentdHttpDependencies = {
   listWorkspaceDirectories: () => Promise<WorkspaceDirectory[]>;
   browseWorkspaceDirectories: (parentPath?: string) => Promise<WorkspaceDirectory[]>;
   registerWorkspace: (input: RegisterWorkspaceRequest) => Promise<WorkspaceDirectory>;
+  updateWorkspace: (workspaceId: string, input: UpdateWorkspaceRequest) => Promise<WorkspaceDirectory>;
+  deleteWorkspace: (workspaceId: string) => Promise<void>;
   resolveWorkspaceDirectory: (workspaceId: string) => Promise<WorkspaceRecord>;
   resolveWorkspaceSelection: (selection: WorkspaceSelection) => Promise<WorkspaceRecord>;
   listSessions: () => Promise<TmuxSession[]>;
@@ -58,7 +60,7 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       "/auth/v1/*",
       cors({
         origin: deps.auth ? (origin) => deps.corsOrigin === "*" || deps.auth!.allowsWebOrigin(origin) ? origin : "" : deps.corsOrigin,
-        allowMethods: ["GET", "POST", "OPTIONS"],
+        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allowHeaders: ["content-type", "authorization"],
       }),
     )
@@ -66,7 +68,7 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       "/api/*",
       cors({
         origin: deps.auth ? (origin) => deps.corsOrigin === "*" || deps.auth!.allowsWebOrigin(origin) ? origin : "" : deps.corsOrigin,
-        allowMethods: ["GET", "POST", "OPTIONS"],
+        allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allowHeaders: ["content-type", "authorization"],
       }),
     )
@@ -219,6 +221,34 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
         return c.json(toUnavailableError(error), 503);
       }
     })
+    .patch("/api/workspaces/:workspaceId", async (c) => {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json({ error: "invalid_request", message: "Request body must be valid JSON" }, 400);
+      }
+
+      const parsed = updateWorkspaceRequestSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: "invalid_request", message: parsed.error.message }, 400);
+      try {
+        return c.json(workspaceResponseSchema.parse({ workspace: await deps.updateWorkspace(c.req.param("workspaceId"), parsed.data) }), 200);
+      } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
+    .delete("/api/workspaces/:workspaceId", async (c) => {
+      try {
+        await deps.deleteWorkspace(c.req.param("workspaceId"));
+        return c.body(null, 204);
+      } catch (error) {
+        const httpError = toHttpError(error);
+        if (httpError) return c.json(errorResponse(httpError), httpError.status);
+        return c.json(toUnavailableError(error), 503);
+      }
+    })
     .get("/api/terminals", async (c) => {
       try {
         return c.json({ terminals: [await deps.getTerminal()] });
@@ -341,7 +371,8 @@ function toHttpError(error: unknown): AgentdHttpError | undefined {
       const details = "details" in error && error.details && typeof error.details === "object"
         ? error.details as Record<string, unknown>
         : undefined;
-      return new AgentdHttpError(400, code, message, details);
+      const status = code === "workspace_not_found" ? 404 : code === "workspace_already_registered" ? 409 : 400;
+      return new AgentdHttpError(status, code, message, details);
     }
   }
   return undefined;

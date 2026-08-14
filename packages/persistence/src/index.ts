@@ -301,6 +301,16 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
     return this.database.select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspaceRecord);
   }
 
+  public async insert(record: WorkspaceRecord): Promise<boolean> {
+    const inserted = this.database
+      .insert(workspaces)
+      .values(toWorkspaceRow(record, new Date().toISOString()))
+      .onConflictDoNothing({ target: workspaces.id })
+      .returning({ id: workspaces.id })
+      .all();
+    return inserted.length > 0;
+  }
+
   public async upsert(record: WorkspaceRecord): Promise<void> {
     const now = new Date().toISOString();
     this.database

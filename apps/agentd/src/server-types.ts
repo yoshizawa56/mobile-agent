@@ -14,6 +14,7 @@ import type {
   PairingStatus,
   PaneSummary,
   RegisterWorkspaceRequest,
+  UpdateWorkspaceRequest,
   TerminalEndpoint,
   TmuxSession,
   WorkspaceDirectory,
@@ -82,6 +83,10 @@ type AgentdRoutes = {
   "/api/workspaces": {
     $get: JsonEndpoint<{ workspaces: WorkspaceDirectory[] } | ApiError, {}, 200 | 401 | 503>;
     $post: JsonEndpoint<{ workspace: WorkspaceDirectory } | ApiError, { json: RegisterWorkspaceRequest }, 201 | 400 | 401 | 503>;
+  };
+  "/api/workspaces/:workspaceId": {
+    $patch: JsonEndpoint<{ workspace: WorkspaceDirectory } | ApiError, { param: { workspaceId: string }; json: UpdateWorkspaceRequest }, 200 | 400 | 401 | 404 | 503>;
+    $delete: JsonEndpoint<never, { param: { workspaceId: string } }, 204 | 400 | 401 | 404 | 503>;
   };
   "/api/workspace-directories": {
     $get: JsonEndpoint<{ directories: WorkspaceDirectory[] } | ApiError, { query?: { path?: string } }, 200 | 400 | 401 | 503>;

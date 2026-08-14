@@ -93,6 +93,46 @@ describe("agentd RPC client", () => {
     expect(pane).toMatchObject({ name: "review", agentId: "codex" });
   });
 
+  it("updates a workspace through the typed RPC path", async () => {
+    const requests: Request[] = [];
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return new Response(JSON.stringify({
+        workspace: {
+          id: "workspace-1",
+          name: "renamed",
+          directory: "/work/mobile-agent",
+          isGit: true,
+          setupScriptPath: null,
+          cleanupScriptPath: null,
+          worktreeCopyPatterns: [],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const client = createAgentdClient({ httpBaseUrl: "http://agentd.local", websocketUrl: "ws://agentd.local/terminal" });
+    const workspace = await client.updateWorkspace("workspace-1", { name: "renamed" });
+
+    expect(requests[0]?.method).toBe("PATCH");
+    expect(requests[0]?.url).toContain("/api/workspaces/workspace-1");
+    expect(await requests[0]?.json()).toEqual({ name: "renamed" });
+    expect(workspace).toMatchObject({ id: "workspace-1", name: "renamed" });
+  });
+
+  it("deletes a workspace through the typed RPC path", async () => {
+    let request: Request | undefined;
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return new Response(null, { status: 204 });
+    };
+
+    const client = createAgentdClient({ httpBaseUrl: "http://agentd.local", websocketUrl: "ws://agentd.local/terminal" });
+    await expect(client.deleteWorkspace("workspace-1")).resolves.toBeUndefined();
+
+    expect(request?.method).toBe("DELETE");
+    expect(request?.url).toContain("/api/workspaces/workspace-1");
+  });
+
   it("preserves structured directory errors from agentd", async () => {
     globalThis.fetch = async () => new Response(JSON.stringify({
       error: "invalid_directory",

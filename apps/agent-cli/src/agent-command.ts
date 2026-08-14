@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -354,6 +355,9 @@ export class AgentCommand {
       baselineStatus: null,
       codexSessionBaseline: null,
       lastExitStatus: null,
+      executionId: randomUUID(),
+      executionPid: process.pid,
+      executionStartedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -387,8 +391,14 @@ export class AgentCommand {
     const startedAt = Math.floor(Date.now() / 1000);
     current = updateSession(current, { status: "running" });
     await this.sessions.update(current);
-    const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    const result = await this.runBackend(current, command, runDir, startedAt);
+    await this.adoptSessionPane(current);
+    let result: ProcessResult;
+    try {
+      const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
+      result = await this.runBackend(current, command, runDir, startedAt);
+    } finally {
+      await this.releaseSessionPane(current);
+    }
     return this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
   }
 
@@ -403,11 +413,64 @@ export class AgentCommand {
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env);
     const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    const current = updateSession(session, { status: "resuming", resuming: true });
+    if (session.executionPid !== null && session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
+      throw new AgentCommandError(`session '${session.name}' is already running (pid ${session.executionPid})`);
+    }
+    const executionId = randomUUID();
+    const executionStartedAt = timestamp();
+    const claimed = await this.sessions.claimExecution(session.id, session.executionPid ?? null, executionId, process.pid, executionStartedAt);
+    if (!claimed) throw new AgentCommandError(`session '${session.name}' is already being resumed`);
+    const current = updateSession(session, { status: "resuming", resuming: true, executionId, executionPid: process.pid, executionStartedAt });
     await this.sessions.update(current);
+    await this.adoptSessionPane(current);
     const startedAt = Math.floor(Date.now() / 1000);
-    const result = await this.runBackend(current, command, runDir, startedAt);
+    let result: ProcessResult;
+    try {
+      result = await this.runBackend(current, command, runDir, startedAt);
+    } finally {
+      await this.releaseSessionPane(current);
+    }
     return this.finalizeSession(current, result, startedAt, runDir, true);
+  }
+
+  private async adoptSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.adoptAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        setFallbackSessionMetadata(this.env, input);
+        return;
+      }
+      this.warn(`agentd could not adopt pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async releaseSessionPane(session: AgentSessionRecord): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    const input = { agentSessionId: session.id, tmuxPaneId, executionId: session.executionId };
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.releaseAgentSession(input);
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) {
+        clearFallbackSessionMetadata(this.env, input);
+        return;
+      }
+      this.warn(`agentd could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async listSessions(options: { global: boolean; names: boolean; json: boolean }): Promise<number> {
@@ -675,10 +738,26 @@ export class AgentCommand {
   private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
     if (session.backend === "codex" && !session.backendSessionId && codexBaseline) {
       const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-      if (id) session = updateSession(session, { backendSessionId: id });
-      else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
+      if (id) {
+        session = updateSession(session, { backendSessionId: id });
+        await this.manageRemoteThread(session, "name");
+      }
+      else {
+        const persisted = await this.sessions.findById(session.id);
+        if (persisted?.backendSessionId) {
+          session = persisted;
+          await this.manageRemoteThread(session, "name");
+        }
+        else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
+      }
     }
-    session = updateSession(session, { lastExitStatus: result.code, updatedAt: timestamp() });
+    session = updateSession(session, {
+      lastExitStatus: result.code,
+      executionId: null,
+      executionPid: null,
+      executionStartedAt: null,
+      updatedAt: timestamp(),
+    });
     if (result.interrupted || result.code === 130 || result.code === 143) {
       session = updateSession(session, { status: "interrupted" });
       await this.sessions.update(session);
@@ -831,6 +910,7 @@ export class AgentCommand {
         const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
         if (id) {
           try {
+            await this.sessions.setBackendSessionIdIfMissing(session.id, id);
             await this.manageRemoteThread({ ...session, backendSessionId: id }, "name");
             return;
           } catch {
@@ -1027,6 +1107,61 @@ function realpathAfterMkdir(path: string): string {
 
 function timestamp(): string {
   return new Date().toISOString();
+}
+
+type SessionPaneAdoption = {
+  agentSessionId: string;
+  tmuxPaneId: string;
+  executionId: string;
+};
+
+function currentTmuxPane(env: NodeJS.ProcessEnv): string | undefined {
+  const pane = env.TMUX && env.TMUX_PANE ? env.TMUX_PANE.trim() : "";
+  return /^%[0-9]+$/.test(pane) ? pane : undefined;
+}
+
+function defaultControlSocket(env: NodeJS.ProcessEnv, databaseFile: string): string {
+  if (env.AGENTD_CONTROL_SOCKET) return env.AGENTD_CONTROL_SOCKET;
+  return `${databaseFile !== ":memory:" ? databaseFile : join(homedir(), ".local", "state", "mobile-agent", "agentd")}.control.sock`;
+}
+
+function isControlSocketUnavailable(error: unknown): boolean {
+  return error instanceof PairingControlError && error.code.startsWith("control_socket_");
+}
+
+function setFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): void {
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_execution_id", input.executionId]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@agentd.agent_session_id", input.agentSessionId]);
+}
+
+function clearFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): void {
+  const current = runTmuxMetadataCommand(env, ["show-options", "-q", "-p", "-v", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  if (current.status !== 0 || current.stdout.trim() !== input.executionId) return;
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_execution_id"]);
+  runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@agentd.agent_session_id"]);
+}
+
+function runTmuxMetadataCommand(env: NodeJS.ProcessEnv, args: string[]): { status: number | null; stdout: string } {
+  const socket = env.TMUX?.split(",", 1)[0] ?? env.AGENTD_TMUX_SOCKET;
+  try {
+    const result = spawnSync("tmux", [...(socket ? ["-S", socket] : []), ...args], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return { status: result.status, stdout: result.stdout ?? "" };
+  } catch {
+    return { status: null, stdout: "" };
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
 }
 
 function localTimestamp(): string {

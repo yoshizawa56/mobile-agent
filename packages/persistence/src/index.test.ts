@@ -122,7 +122,90 @@ describe("sqlite persistence", () => {
         codexSessionBaseline: session.codexSessionBaseline,
       });
       expect(database.db.select().from(databaseTable(database)).all()).toHaveLength(1);
-      expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
+      expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(4);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps tmux server generations distinct and prunes only stale rows", async () => {
+    const database = createAgentDatabase();
+    try {
+      const panes = new DrizzlePaneRepository(database.db);
+      const oldPane = {
+        ...pane,
+        id: "pane-old",
+        tmuxPaneId: "%0",
+        tmuxServerId: "scope-current:server-old",
+        lastSeenAt: "2026-08-01T00:00:00.000Z",
+      } satisfies PaneRecord;
+      const currentPane = {
+        ...pane,
+        id: "pane-current",
+        tmuxPaneId: "%0",
+        tmuxServerId: "scope-current:server-current",
+        lastSeenAt: "2026-08-10T00:00:00.000Z",
+      } satisfies PaneRecord;
+
+      await panes.upsert(oldPane);
+      await panes.upsert(currentPane);
+      await expect(panes.findByTmuxPaneIdentity("scope-current:server-old", "%0")).resolves.toMatchObject({ id: "pane-old" });
+      await expect(panes.findByTmuxPaneIdentity("scope-current:server-current", "%0")).resolves.toMatchObject({ id: "pane-current" });
+
+      await expect(panes.pruneStalePanes([currentPane.id], "2026-08-09T00:00:00.000Z", "scope-current")).resolves.toBe(1);
+      await expect(panes.findById(oldPane.id)).resolves.toBeUndefined();
+      await expect(panes.findById(currentPane.id)).resolves.toMatchObject({ id: currentPane.id });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("upserts concurrently discovered rows by tmux identity without changing the stored id", async () => {
+    const database = createAgentDatabase();
+    try {
+      const panes = new DrizzlePaneRepository(database.db);
+      await panes.upsert({ ...pane, id: "first", tmuxServerId: "server-1" });
+      await panes.upsert({ ...pane, id: "second", tmuxServerId: "server-1", name: "updated" });
+
+      await expect(panes.findByTmuxPaneIdentity("server-1", pane.tmuxPaneId)).resolves.toMatchObject({ id: "first", name: "updated" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("round-trips the live agent session association separately from pane identity", async () => {
+    const database = createAgentDatabase();
+    try {
+      const panes = new DrizzlePaneRepository(database.db);
+      const adoptedPane = {
+        ...pane,
+        agentSessionId: session.id,
+        agentExecutionId: "execution-id-123456",
+      } satisfies PaneRecord;
+
+      await panes.upsert(adoptedPane);
+
+      await expect(panes.findById(adoptedPane.id)).resolves.toEqual(adoptedPane);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("claims one agent execution and persists a discovered backend session ID atomically", async () => {
+    const database = createAgentDatabase();
+    try {
+      const sessions = new DrizzleAgentSessionRepository(database.db);
+      await sessions.insert({ ...session, backendSessionId: null });
+
+      await expect(sessions.claimExecution(session.id, null, "execution-1", 1001, "2026-08-14T12:00:00.000Z")).resolves.toBe(true);
+      await expect(sessions.claimExecution(session.id, null, "execution-2", 1002, "2026-08-14T12:01:00.000Z")).resolves.toBe(false);
+      await expect(sessions.setBackendSessionIdIfMissing(session.id, "codex-discovered")).resolves.toBe(true);
+      await expect(sessions.setBackendSessionIdIfMissing(session.id, "codex-other")).resolves.toBe(false);
+      await expect(sessions.findById(session.id)).resolves.toMatchObject({
+        executionId: "execution-1",
+        executionPid: 1001,
+        backendSessionId: "codex-discovered",
+      });
     } finally {
       database.close();
     }
@@ -134,7 +217,7 @@ describe("sqlite persistence", () => {
     const initial = createAgentDatabase(file);
     try {
       await new DrizzlePaneRepository(initial.db).upsert(pane);
-      initial.sqlite.exec('ALTER TABLE workspaces DROP COLUMN worktree_copy_patterns; DROP TABLE "__drizzle_migrations"');
+      initial.sqlite.exec('ALTER TABLE workspaces DROP COLUMN worktree_copy_patterns; DROP INDEX panes_agent_session_index; ALTER TABLE panes DROP COLUMN agent_session_id; ALTER TABLE panes DROP COLUMN agent_execution_id; DROP INDEX panes_tmux_server_pane_id_index; ALTER TABLE panes DROP COLUMN tmux_server_id; CREATE UNIQUE INDEX panes_tmux_pane_id_index ON panes (tmux_pane_id); ALTER TABLE agent_sessions DROP COLUMN execution_id; ALTER TABLE agent_sessions DROP COLUMN execution_pid; ALTER TABLE agent_sessions DROP COLUMN execution_started_at; DROP TABLE "__drizzle_migrations"');
     } finally {
       initial.close();
     }
@@ -143,7 +226,7 @@ describe("sqlite persistence", () => {
       const migrated = createAgentDatabase(file);
       try {
         await expect(new DrizzlePaneRepository(migrated.db).findById(pane.id)).resolves.toEqual(pane);
-        expect(migrated.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(2);
+        expect(migrated.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(4);
       } finally {
         migrated.close();
       }
@@ -178,7 +261,7 @@ describe("sqlite persistence", () => {
           .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe'")
           .all() as Array<{ name: string }>;
         expect(probe).toEqual([{ name: "migration_probe" }]);
-        expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(3);
+        expect(database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all()).toHaveLength(5);
       } finally {
         database.close();
       }

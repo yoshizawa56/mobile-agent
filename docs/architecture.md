@@ -1,6 +1,6 @@
 # Mobile Agent / agentd Architecture and Specification
 
-Last updated: 2026-08-10
+Last updated: 2026-08-14
 
 Status: implementation baseline and ongoing design
 
@@ -610,6 +610,53 @@ connect and reconnect, and the host-side monitor remains the source of truth.
 agentd currently discovers changes with a short tmux reconciliation poll. This
 also observes panes created directly from a desktop tmux client, without
 requiring that client to use the Mobile Agent CLI.
+
+The same monitor periodically reconciles the SQLite `panes` table. By default,
+it polls tmux every 1 second, attempts orphan cleanup every 60 seconds, and
+retains rows that have not been seen for 10 minutes. Cleanup is scoped to the
+current tmux socket and is protected by the live pane IDs, so an active pane is
+never removed merely because its metadata is old. The upsert is keyed by the
+tmux server generation and pane ID; this prevents a pane ID reused after a
+tmux-server restart from inheriting stale metadata.
+
+An unavailable tmux server is not treated as an authoritative empty snapshot:
+it advances neither the reconciliation baseline nor cleanup. This avoids
+treating a temporary tmux outage as proof that every pane was deleted. A
+healthy snapshot with no panes is authoritative for change detection but still
+does not run cleanup; normal retention cleanup resumes once a healthy snapshot
+with at least one pane is available. The intervals and retention window can be
+overridden with `AGENTD_TMUX_POLL_INTERVAL_MS`,
+`AGENTD_PANE_CLEANUP_INTERVAL_MS`, and `AGENTD_PANE_RETENTION_MS`.
+
+### 9.1 Starting and resuming from an unmanaged shell
+
+`agent run` and `agent resume` can be invoked from an arbitrary shell inside a
+tmux pane; the pane does not need to have been created by agentd. The CLI
+persists the logical `agent_sessions` record first, then uses the private
+agentd Unix control socket to adopt the current `TMUX_PANE`. agentd validates
+the session's current `executionId`, confirms that the pane exists in its tmux
+server, writes stable tmux pane options, and immediately reconciles the pane
+into SQLite. The CLI falls back to writing those options through the current
+tmux socket only when the control socket is unavailable; agentd still validates
+the association when it next polls. Outside tmux, the agent session remains
+managed in SQLite but has no pane association.
+
+The durable `agent_sessions` row and the live `panes.agent_session_id` link have
+different lifetimes:
+
+- normal completion, interruption, or a failed launch releases the active pane
+  metadata, while the session record remains available for `resume` according
+  to its normal lifecycle rules;
+- a crash can leave tmux metadata behind, but reconciliation requires the
+  metadata execution ID to match the current SQLite execution and requires an
+  agent command; stale metadata on a returned shell is cleared;
+- `resume` claims the execution with an atomic SQLite update, so concurrent
+  resumes allow only one owner to proceed. The backend session ID and managed
+  worktree remain the recovery source even if the original tmux pane has gone
+  away;
+- periodic pane cleanup removes only stale `panes` projections. It never
+  deletes `agent_sessions`, so losing a tmux pane does not by itself destroy
+  resumability.
 
 POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 

@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { PanePlacement } from "@mobile-agent/protocol";
+
+const stableAgentSessionMetadataKey = "@agentd.agent_session_id";
+const stableAgentExecutionMetadataKey = "@agentd.agent_execution_id";
 
 export type TmuxWindowSize = "largest" | "smallest" | "manual" | "latest";
 
@@ -12,6 +16,9 @@ export type TmuxPaneRef = {
 };
 
 export type TmuxPane = TmuxPaneRef & {
+  tmuxServerId?: string;
+  agentdSessionId?: string;
+  agentdExecutionId?: string;
   windowName: string;
   windowIndex: number;
   cwd: string;
@@ -30,6 +37,14 @@ export type TmuxPane = TmuxPaneRef & {
   agentdAgentId?: string;
   agentdRunId?: string;
   agentdWorkspaceId?: string;
+};
+
+export type TmuxLiveSnapshot = {
+  panes: TmuxPane[];
+  /** False means the adapter could not obtain an authoritative tmux snapshot. */
+  available: boolean;
+  tmuxServerId: string | null;
+  tmuxServerScope: string | null;
 };
 
 export type TmuxWindowSnapshot = TmuxPaneRef & {
@@ -186,6 +201,19 @@ export class TmuxAdapter {
     this.setPaneOption(paneId, this.metadataKey(field), value);
   }
 
+  public setAgentSessionMetadata(paneId: string, agentSessionId: string, executionId: string): void {
+    this.setPaneOption(paneId, stableAgentExecutionMetadataKey, executionId);
+    this.setPaneOption(paneId, stableAgentSessionMetadataKey, agentSessionId);
+  }
+
+  public clearAgentSessionMetadata(paneId: string, expectedExecutionId = ""): boolean {
+    const current = this.command(["show-options", "-q", "-p", "-v", "-t", paneId, stableAgentExecutionMetadataKey]);
+    if (current.status !== 0 || current.stdout.trim() !== expectedExecutionId) return false;
+    this.require(["set-option", "-p", "-u", "-t", paneId, stableAgentExecutionMetadataKey]);
+    this.require(["set-option", "-p", "-u", "-t", paneId, stableAgentSessionMetadataKey]);
+    return true;
+  }
+
   public capturePane(paneId: string, lines = 48): string {
     return this.require(["capture-pane", "-p", "-e", "-S", String(-Math.abs(lines)), "-t", paneId]);
   }
@@ -206,6 +234,10 @@ export class TmuxAdapter {
   }
 
   public listPanes(): TmuxPane[] {
+    return this.listPanesSnapshot().panes;
+  }
+
+  public listPanesSnapshot(): TmuxLiveSnapshot {
     const separator = "\u001f";
     const args = [
       "list-panes",
@@ -233,6 +265,11 @@ export class TmuxAdapter {
         this.metadataFormat("agent_id"),
         this.metadataFormat("run_id"),
         this.metadataFormat("workspace_id"),
+        `#{${stableAgentSessionMetadataKey}}`,
+        `#{${stableAgentExecutionMetadataKey}}`,
+        "#{pid}",
+        "#{start_time}",
+        "#{socket_path}",
       ].join(separator),
     ];
     const result = this.command(args);
@@ -240,7 +277,7 @@ export class TmuxAdapter {
       // tmux exits its server after the last session disappears. An empty
       // live snapshot is more useful to callers than treating that normal
       // lifecycle transition as an infrastructure failure.
-      if (isTmuxServerGone(result.stderr)) return [];
+      if (isTmuxServerGone(result.stderr)) return { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null };
       throw new TmuxError(
         result.stderr.trim() || `tmux ${args.join(" ")} failed`,
         args,
@@ -249,19 +286,22 @@ export class TmuxAdapter {
     }
     const output = result.stdout;
 
-    return output
+    const panes = output
       .split("\n")
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId] = line.split(separator);
+        const [paneId, windowId, sessionName, windowName, windowIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = line.split(separator);
         if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
+        if (!serverPid || !serverStartTime || !socketPath) throw new Error(`Could not identify tmux server: ${line}`);
+        const tmuxServerScope = hashServerScope(socketPath);
         return {
           paneId,
           windowId,
           sessionName,
+          tmuxServerId: `${tmuxServerScope}:${serverPid}:${serverStartTime}`,
           windowName,
           windowIndex: parseDimension(windowIndex, "window index"),
           cwd,
@@ -280,8 +320,17 @@ export class TmuxAdapter {
           agentdAgentId: nonEmpty(agentdAgentId),
           agentdRunId: nonEmpty(agentdRunId),
           agentdWorkspaceId: nonEmpty(agentdWorkspaceId),
+          agentdSessionId: nonEmpty(agentdSessionId),
+          agentdExecutionId: nonEmpty(agentdExecutionId),
         } satisfies TmuxPane;
       });
+
+    return {
+      panes,
+      available: true,
+      tmuxServerId: panes[0]?.tmuxServerId ?? null,
+      tmuxServerScope: panes[0]?.tmuxServerId?.split(":", 1)[0] ?? null,
+    };
   }
 
   public snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot {
@@ -518,4 +567,8 @@ function resolveTmuxCwd(cwd: string): string {
 function isTmuxServerGone(stderr: string): boolean {
   const message = stderr.toLowerCase();
   return message.includes("no server running") || message.includes("no sessions") || message.includes("server exited");
+}
+
+function hashServerScope(socketPath: string): string {
+  return createHash("sha256").update(socketPath).digest("hex").slice(0, 16);
 }

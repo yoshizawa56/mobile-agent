@@ -147,6 +147,14 @@ describe("agentd pairing control protocol", () => {
   it("rejects an unrecognized control response", () => {
     expect(agentdControlResponseSchema.safeParse({ type: "unexpected" }).success).toBe(false);
   });
+
+  it("accepts agent session adoption and release control frames", () => {
+    const common = { agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" };
+    expect(agentdControlRequestSchema.safeParse({ type: "adopt_agent_session", ...common }).success).toBe(true);
+    expect(agentdControlRequestSchema.safeParse({ type: "release_agent_session", ...common }).success).toBe(true);
+    expect(agentdControlResponseSchema.safeParse({ type: "agent_session_adopted", ...common }).success).toBe(true);
+    expect(agentdControlResponseSchema.safeParse({ type: "agent_session_released", ...common }).success).toBe(true);
+  });
 });
 
 describe("pane board protocol", () => {

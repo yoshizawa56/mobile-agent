@@ -1809,6 +1809,17 @@ kbd {
   background-size: 100% 16px;
 }
 
+.tmux-window-panes-compact {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  align-content: stretch;
+  overflow: auto;
+}
+
+.tmux-window-panes-compact .tmux-layout-pane {
+  position: relative;
+  min-height: 56px;
+}
+
 .tmux-layout-pane-real {
   position: absolute;
   min-width: 0;
@@ -4125,6 +4136,18 @@ kbd {
   }
 }
 
+.pane-layout-overlay .tmux-window-panes-compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane-layout-overlay .tmux-window-panes-compact .tmux-layout-pane {
+  position: relative;
+  min-height: 56px;
+}
+
 /* --------------------------------------------------------------------------
    Mobile app interaction contract
 
@@ -4270,8 +4293,10 @@ textarea:focus-visible,
     padding: 12px;
   }
 
-  .tmux-layout-pane-real {
+  .app-shell-terminal .pane-layout-overlay-ghost .tmux-window-panes-compact .tmux-layout-pane {
+    position: relative;
     min-height: 44px;
+    padding: 9px;
   }
 
   .session-overview-add-pane,
@@ -4429,13 +4454,10 @@ textarea:focus-visible,
   position: relative;
 }
 
-.app-shell-terminal .terminal-container-selection-mode {
-  touch-action: none;
-}
-
 .app-shell-terminal .terminal-container,
 .app-shell-terminal .terminal-container .xterm,
-.app-shell-terminal .terminal-container .xterm * {
+.app-shell-terminal .terminal-container .xterm-viewport {
+  touch-action: none;
   -webkit-touch-callout: none;
 }
 

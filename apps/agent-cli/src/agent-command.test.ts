@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSessionRecord } from "@mobile-agent/domain";
+import { createLogger, type LogRecord } from "@mobile-agent/logging";
 import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentCommand, buildResumeCommand, buildRunCommand } from "./agent-command.js";
 
@@ -29,6 +30,55 @@ describe("agent command migration", () => {
     expect(buildResumeCommand(session, ["--", "inspect"], "unix://", "codex")).toEqual([
       "codex", "--profile", "local-agent", "--remote", "unix://", "--cd", "/workspace", "resume", "codex-session", "--", "inspect",
     ]);
+  });
+
+  it("keeps daemon log-level configuration out of attached CLI verbosity", async () => {
+    const output = captureOutput();
+    const command = new AgentCommand({
+      env: { AGENT_LOG_LEVEL: "debug" },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["help"])).resolves.toBe(0);
+    command.close();
+
+    expect(output.value()).not.toContain("command.started");
+  });
+
+  it("emits detailed lifecycle diagnostics at debug level without logging backend arguments", async () => {
+    const fixture = createFixture();
+    const records: LogRecord[] = [];
+    const logger = createLogger({
+      service: "agent-cli",
+      mode: "attached",
+      level: "debug",
+      sink: { write: (record) => records.push(record) },
+    });
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: fixture.env,
+      logger,
+      io: { out: captureOutput(), err: captureOutput() },
+    });
+
+    try {
+      await expect(command.execute(["run", "claude", "--no-worktree", "--", "--prompt", "sensitive prompt"])).resolves.toBe(0);
+    } finally {
+      command.close();
+      logger.close();
+    }
+
+    const events = records.map((record) => record.event);
+    expect(events).toContain("command.started");
+    expect(events).toContain("database.opened");
+    expect(events).toContain("session.created");
+    expect(events).toContain("subprocess.started");
+    expect(events).toContain("subprocess.finished");
+    expect(events).toContain("session.finished");
+    expect(JSON.stringify(records)).not.toContain("sensitive prompt");
+    expect(records.find((record) => record.event === "subprocess.finished")).toMatchObject({
+      fields: { kind: "backend", exitCode: 0 },
+    });
   });
 
   it("runs registered workspace hooks, creates a worktree, and cleans it up through SQLite state", async () => {

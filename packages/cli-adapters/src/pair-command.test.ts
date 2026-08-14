@@ -37,7 +37,7 @@ describe("agent pair CLI adapter", () => {
 
     await expect(command.execute(["--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"])).resolves.toBe(0);
     expect(received).toEqual({ webOrigin: "https://web.example", agentdBaseUrl: "https://agentd.example" });
-    expect(out.value).toContain("承認しました。deviceId: device-1");
+    expect(out.value).toContain("Approved. deviceId: device-1");
     expect(closed).toBe(true);
   });
 

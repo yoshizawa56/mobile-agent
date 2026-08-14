@@ -16,6 +16,17 @@ describe("agent serve command", () => {
     });
   });
 
+  it("parses the managed agentd logging options", () => {
+    expect(parseServeOptions([
+      "tailscale",
+      "--log-level", "debug",
+      "--log-file", "/private/tmp/mobile-agent-serve.log",
+    ])).toMatchObject({
+      logLevel: "debug",
+      logFile: "/private/tmp/mobile-agent-serve.log",
+    });
+  });
+
   it("ensures agentd and upserts the fixed Tailscale endpoint", async () => {
     const ensured: unknown[] = [];
     const calls: Array<{ command: string; args: string[] }> = [];

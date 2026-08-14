@@ -18,6 +18,7 @@
     "@mobile-agent/application": "workspace:*",
     "@mobile-agent/cli-adapters": "workspace:*",
     "@mobile-agent/domain": "workspace:*",
+    "@mobile-agent/logging": "workspace:*",
     "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/tailscale": "workspace:*"
   },

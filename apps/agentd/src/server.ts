@@ -11,7 +11,7 @@ import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, D
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
-import { buildAgentShellCommand, configureManagedTmuxSession, TmuxAdapter, type TmuxPane } from "./tmux.js";
+import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
 import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
@@ -209,7 +209,7 @@ async function createSession(
   const managedSessionId = randomUUID();
   let created = false;
   try {
-    const binary = process.env.AGENTD_AGENT_COMMAND ?? "agent";
+    const binary = resolveAgentCommand();
     tmux.createSession(input.name, cwd, buildAgentShellCommand(binary, {
       AGENTD_MANAGED_SESSION_ID: managedSessionId,
       AGENTD_MANAGED_SESSION_NAME: input.name,
@@ -288,7 +288,7 @@ async function createPane(
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
   const command = buildAgentShellCommand(
-    process.env.AGENTD_AGENT_COMMAND ?? "agent",
+    resolveAgentCommand(),
     { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: input.name },
     input.kind === "agent" ? agentCommand(input, workspace) : undefined,
   );
@@ -433,7 +433,7 @@ function executableName(command: string): string | null {
 }
 
 function agentCommand(input: CreatePaneRequest, workspace?: WorkspaceRecord): string {
-  const binary = process.env.AGENTD_AGENT_COMMAND ?? "agent";
+  const binary = resolveAgentCommand();
   const args = [binary, "run", input.agentId!, "--no-worktree", "--name", input.name];
   if (input.useWorktree) {
     args.splice(3, 1, "--worktree");

@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { buildAgentShellCommand, configureManagedTmuxSession, TmuxAdapter } from "@mobile-agent/agentd/tmux";
+import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -324,7 +324,7 @@ export class AgentCommand {
     if (this.tmux.hasSession(options.name)) throw new AgentCommandError(`tmux session already exists: ${options.name}`);
 
     const managedSessionId = randomUUID();
-    const binary = this.env.AGENTD_AGENT_COMMAND ?? "agent";
+    const binary = resolveAgentCommand(this.env);
     const firstPaneCommand = buildAgentShellCommand(binary, {
       AGENTD_MANAGED_SESSION_ID: managedSessionId,
       AGENTD_MANAGED_SESSION_NAME: options.name,

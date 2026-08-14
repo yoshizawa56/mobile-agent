@@ -1,7 +1,13 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { PanePlacement } from "@mobile-agent/protocol";
+
+type AgentRuntime = {
+  argv: readonly string[];
+  execPath: string;
+};
 
 export type TmuxWindowSize = "largest" | "smallest" | "manual" | "latest";
 
@@ -73,6 +79,18 @@ export class TmuxError extends Error {
     super(message);
     this.name = "TmuxError";
   }
+}
+
+export function resolveAgentCommand(
+  environment: NodeJS.ProcessEnv = process.env,
+  runtime: AgentRuntime = process,
+): string {
+  const configured = environment.AGENTD_AGENT_COMMAND;
+  if (configured) return configured;
+
+  const entry = runtime.argv[1];
+  const sourceEntry = entry && /\.(?:[cm]?js|ts)$/.test(entry) && existsSync(entry);
+  return sourceEntry ? "agent" : runtime.execPath;
 }
 
 export class TmuxAdapter {
@@ -538,7 +556,7 @@ export class TmuxAdapter {
 }
 
 export function buildAgentShellCommand(
-  binary = process.env.AGENTD_AGENT_COMMAND ?? "agent",
+  binary = resolveAgentCommand(),
   environment: Record<string, string> = {},
   command?: string,
 ): string {
@@ -553,7 +571,7 @@ export function configureManagedTmuxSession(
   tmux: TmuxAdapter,
   sessionName: string,
   managedSessionId: string,
-  binary = process.env.AGENTD_AGENT_COMMAND ?? "agent",
+  binary = resolveAgentCommand(),
 ): void {
   tmux.setSessionOption(sessionName, "default-command", buildAgentShellCommand(binary));
   tmux.setSessionEnvironment(sessionName, "AGENTD_MANAGED_SESSION_ID", managedSessionId);

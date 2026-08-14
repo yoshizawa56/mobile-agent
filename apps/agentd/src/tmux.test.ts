@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TmuxAdapter } from "./tmux.js";
+import { fileURLToPath } from "node:url";
+import { resolveAgentCommand, TmuxAdapter } from "./tmux.js";
 
 describe("tmux adapter split behavior", () => {
   it.each([
@@ -36,6 +37,29 @@ describe("tmux adapter managed session setup", () => {
 
     adapter.setSessionEnvironment("work", "AGENTD_MANAGED_SESSION_ID", "session-1");
     expect(adapter.lastArgs).toEqual(["set-environment", "-t", "work", "AGENTD_MANAGED_SESSION_ID", "session-1"]);
+  });
+});
+
+describe("agent command resolution", () => {
+  it("uses the explicit launcher override", () => {
+    expect(resolveAgentCommand(
+      { AGENTD_AGENT_COMMAND: "/opt/mobile-agent/agent" },
+      { argv: ["bun", "compiled"], execPath: "/opt/bun" },
+    )).toBe("/opt/mobile-agent/agent");
+  });
+
+  it("uses the current executable for a compiled launcher", () => {
+    expect(resolveAgentCommand(
+      {},
+      { argv: ["/opt/mobile-agent/agent", "tmux"], execPath: "/opt/mobile-agent/agent" },
+    )).toBe("/opt/mobile-agent/agent");
+  });
+
+  it("keeps the source-mode launcher name", () => {
+    expect(resolveAgentCommand(
+      {},
+      { argv: ["/opt/bun", fileURLToPath(import.meta.url)], execPath: "/opt/bun" },
+    )).toBe("agent");
   });
 });
 

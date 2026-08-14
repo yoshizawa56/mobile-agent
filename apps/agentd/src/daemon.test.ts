@@ -11,6 +11,8 @@ describe("agentd daemon lifecycle", () => {
       controlSocket: "/private/tmp/mobile-agent-daemon-test.sock",
       webOrigin: "http://localhost:5227",
       agentdBaseUrl: "http://127.0.0.1:49819",
+      logLevel: "debug",
+      logFile: "/private/tmp/mobile-agent-daemon-test.log",
     };
 
     const sourceEntry = fileURLToPath(import.meta.url);
@@ -25,6 +27,8 @@ describe("agentd daemon lifecycle", () => {
       "--control-socket", "/private/tmp/mobile-agent-daemon-test.sock",
       "--web-origin", "http://localhost:5227",
       "--agentd-base-url", "http://127.0.0.1:49819",
+      "--log-level", "debug",
+      "--log-file", "/private/tmp/mobile-agent-daemon-test.log",
     ]);
   });
 });

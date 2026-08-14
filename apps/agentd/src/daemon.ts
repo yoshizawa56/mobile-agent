@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel } from "@mobile-agent/logging";
 import { defaultAgentDatabaseFile } from "@mobile-agent/persistence";
 import { createAgentdServer } from "./server.js";
 
@@ -12,6 +13,8 @@ export type AgentdCliOptions = {
   controlSocket?: string;
   webOrigin?: string;
   agentdBaseUrl?: string;
+  logLevel?: LogLevel;
+  logFile?: string;
 };
 
 type AgentdCommand = "start" | "status" | "stop" | "restart" | "ensure";
@@ -62,7 +65,15 @@ export async function runAgentdCommand(args: string[] = []): Promise<ReturnType<
 
 export async function startAgentd(args: string[] | AgentdCliOptions = []): Promise<ReturnType<typeof createAgentdServer> | undefined> {
   const options = Array.isArray(args) ? parseAgentdOptions(normalizeStartCommand(args)).options : args;
-  const app = createAgentdServer(options);
+  const logger = createLogger({
+    service: "agentd",
+    mode: options.logFile ? "background" : "attached",
+    level: options.logLevel ?? "info",
+    logFile: options.logFile,
+    output: process.stderr,
+    showStack: options.logLevel === "debug",
+  });
+  const app = createAgentdServer({ ...options, logger });
 
   try {
     await app.start();
@@ -73,7 +84,12 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
       startedAt: new Date().toISOString(),
     });
   } catch (error) {
+    logger.error("process.unhandled_error", {
+      message: `unexpected error: ${errorMessage(error)}`,
+      ...errorFields(error),
+    });
     app.stop();
+    logger.close();
     throw error;
   }
 
@@ -83,6 +99,7 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
     stopped = true;
     removePidRecord(options.pidFile, process.pid);
     app.stop();
+    logger.close();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
@@ -114,6 +131,8 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   let controlSocket = process.env.AGENTD_CONTROL_SOCKET;
   let webOrigin = process.env.AGENTD_WEB_ORIGIN;
   let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
+  let logLevel = parseLogLevel(process.env.AGENT_LOG_LEVEL, "info");
+  let logFile = process.env.AGENT_LOG_FILE;
   let foreground = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -131,10 +150,14 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
     else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
+    else if (argument === "--log-level") logLevel = parseRequiredLogLevel(argument, requireValue(argument, args[++index]));
+    else if (argument.startsWith("--log-level=")) logLevel = parseRequiredLogLevel("--log-level", argument.slice("--log-level=".length));
+    else if (argument === "--log-file") logFile = resolve(requireValue(argument, args[++index]));
+    else if (argument.startsWith("--log-file=")) logFile = resolve(argument.slice("--log-file=".length));
     else throw new Error(`unknown agent daemon option: ${argument}`);
   }
 
-  return { options: { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl }, foreground };
+  return { options: { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl, logLevel, logFile }, foreground };
 }
 
 function defaultAgentdPidFile(environment: NodeJS.ProcessEnv): string {
@@ -248,6 +271,7 @@ export function buildDaemonSpawnArgs(options: AgentdCliOptions, entry = process.
   if (options.controlSocket) args.push("--control-socket", options.controlSocket);
   if (options.webOrigin) args.push("--web-origin", options.webOrigin);
   if (options.agentdBaseUrl) args.push("--agentd-base-url", options.agentdBaseUrl);
+  args.push("--log-level", options.logLevel ?? "info", "--log-file", options.logFile ?? defaultLogFile());
   return args;
 }
 
@@ -326,6 +350,13 @@ function requireValue(option: string, value: string | undefined): string {
   return value;
 }
 
+function parseRequiredLogLevel(option: string, value: string): LogLevel {
+  if (value !== "error" && value !== "warn" && value !== "info" && value !== "debug") {
+    throw new Error(`${option} must be one of error, warn, info, or debug`);
+  }
+  return value;
+}
+
 function parsePort(option: string, value: string): number {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`${option} must be between 1 and 65535`);
@@ -340,8 +371,8 @@ function displayHost(host: string): string {
 
 function printUsage(command: AgentdCommand): void {
   const usage = command === "start"
-    ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL]"
-    : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH]`;
+    ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL] [--log-level LEVEL] [--log-file PATH]"
+    : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
   const behavior = command === "start"
     ? "Starts agentd in the background and waits until it is healthy by default. Use --foreground when a service manager should own the agentd process."
     : command === "restart"

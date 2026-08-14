@@ -133,6 +133,10 @@ agent daemon status
 agent daemon restart
 ```
 
+### Logging
+
+`-v` / `--verbose` controls detailed diagnostics written to the attached terminal. It does not change a background `agentd` process. Configure the daemon with `--log-level LEVEL` and `--log-file PATH`; background logs are JSONL and default to `~/.local/state/mobile-agent/agentd.log` with bounded rotation. `AGENT_LOG_LEVEL` and `AGENT_LOG_FILE` provide the corresponding `agentd` environment defaults.
+
 The unified `agent` binary includes the lifecycle CLI and the long-running `agentd` daemon. Build it with Bun's standalone executable target and run the daemon from the same file:
 
 ```sh

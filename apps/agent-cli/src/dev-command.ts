@@ -2,8 +2,20 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { errorFields, type Logger } from "@mobile-agent/logging";
 
-export async function runDevCommand(args: string[], environment: NodeJS.ProcessEnv = process.env): Promise<number> {
+export type DevCommandOptions = {
+  verbose?: boolean;
+  logger?: Logger;
+};
+
+export async function runDevCommand(
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+  options: DevCommandOptions = {},
+): Promise<number> {
+  const logger = options.logger;
+  const startedAt = Date.now();
   const serveProvider = parseDevServeProvider(args);
   const repositoryRoot = findRepositoryRoot(environment.AGENT_REPOSITORY_ROOT ?? process.cwd());
   if (!repositoryRoot) {
@@ -13,17 +25,25 @@ export async function runDevCommand(args: string[], environment: NodeJS.ProcessE
   const childEnvironment = {
     ...environment,
     ...(serveProvider ? { AGENT_DEV_SERVE_PROVIDER: serveProvider } : {}),
+    ...(options.verbose ? { AGENT_DEV_VERBOSE: "1" } : {}),
   };
   const child = spawn(environment.AGENT_BUN_BIN ?? "bun", ["scripts/dev.mjs"], {
     cwd: repositoryRoot,
     env: childEnvironment,
     stdio: "inherit",
   });
+  logger?.debug("dev.supervisor_started", {
+    pid: child.pid,
+    repositoryRoot,
+    serveProvider: serveProvider ?? "none",
+    verbose: Boolean(options.verbose),
+  });
 
   let forwarding = false;
   const forwardSignal = (signal: NodeJS.Signals) => {
     if (forwarding) return;
     forwarding = true;
+    logger?.debug("dev.supervisor_signal_forwarded", { pid: child.pid, signal });
     child.kill(signal);
   };
   process.once("SIGINT", forwardSignal);
@@ -31,8 +51,21 @@ export async function runDevCommand(args: string[], environment: NodeJS.ProcessE
 
   try {
     return await new Promise<number>((resolvePromise, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, signal) => resolvePromise(code ?? signalExitCode(signal)));
+      child.once("error", (error) => {
+        logger?.debug("dev.supervisor_failed", { pid: child.pid, ...errorFields(error) });
+        reject(error);
+      });
+      child.once("exit", (code, signal) => {
+        const status = code ?? signalExitCode(signal);
+        logger?.debug("dev.supervisor_finished", {
+          pid: child.pid,
+          exitCode: code,
+          signal,
+          status,
+          durationMs: Date.now() - startedAt,
+        });
+        resolvePromise(status);
+      });
     });
   } finally {
     process.off("SIGINT", forwardSignal);

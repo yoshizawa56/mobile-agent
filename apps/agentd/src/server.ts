@@ -6,6 +6,7 @@ import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer, type WebSocket } from "ws";
 import { paneKindForCommand, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
+import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
 import { AuthStore, createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentdControlServer } from "./auth/control.js";
@@ -27,12 +28,24 @@ export type AgentdOptions = {
   controlSocket?: string;
   webOrigin?: string;
   agentdBaseUrl?: string;
+  logger?: Logger;
+  logLevel?: LogLevel;
+  logFile?: string;
 };
 
 export type { AgentdApp } from "./http/app.js";
 export { AgentdHttpError, createAgentdApp } from "./http/app.js";
 
 export function createAgentdServer(options: AgentdOptions) {
+  const ownsLogger = !options.logger;
+  const logger = options.logger ?? createLogger({
+    service: "agentd",
+    mode: options.logFile ? "background" : "attached",
+    level: options.logLevel ?? "info",
+    logFile: options.logFile,
+    output: process.stderr,
+    showStack: options.logLevel === "debug",
+  });
   const tmux = new TmuxAdapter();
   const viewportManager = new TmuxViewportManager(tmux);
   const databaseFile = options.databaseFile ?? defaultDatabaseFile();
@@ -92,7 +105,24 @@ export function createAgentdServer(options: AgentdOptions) {
     handleTmuxHook: (event, client) => viewportManager.handleTmuxHook(event, client),
   });
 
-  const httpServer = createServer(getRequestListener(app.fetch));
+  const requestListener = getRequestListener(app.fetch);
+  const httpServer = createServer((request, response) => {
+    const startedAt = Date.now();
+    const pathname = request.url ? safeRequestPath(request.url) : "/";
+    logger.debug("http.request_started", {
+      method: request.method ?? "GET",
+      path: pathname,
+    });
+    response.once("finish", () => {
+      logger.debug("http.request_finished", {
+        method: request.method ?? "GET",
+        path: pathname,
+        statusCode: response.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+    requestListener(request, response);
+  });
   const webSocketServer = new WebSocketServer({ noServer: true });
   const eventWebSocketServer = new WebSocketServer({ noServer: true });
   const terminalSessions = new TerminalSessionRegistry();
@@ -152,6 +182,7 @@ export function createAgentdServer(options: AgentdOptions) {
       return new Promise((resolveStart, rejectStart) => {
         const onError = (error: Error) => {
           httpServer.removeListener("listening", onListening);
+          logger.error("daemon.start_failed", errorFields(error));
           rejectStart(error);
         };
         const onListening = () => {
@@ -159,7 +190,7 @@ export function createAgentdServer(options: AgentdOptions) {
           tmuxStateMonitor.start();
           viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
           controlServer.start();
-          console.log(`agentd listening on http://${options.host}:${options.port}`);
+          logger.info("daemon.listening", { host: options.host, port: options.port });
           resolveStart();
         };
 
@@ -169,13 +200,14 @@ export function createAgentdServer(options: AgentdOptions) {
         try {
           tmux.ensureSession(defaultTarget, process.cwd());
         } catch (error) {
-          console.warn(`agentd could not prepare default tmux session: ${error instanceof Error ? error.message : String(error)}`);
+          logger.warn("tmux.default_session_failed", errorFields(error));
         }
 
         httpServer.listen(options.port, options.host);
       });
     },
     stop() {
+      logger.info("daemon.stopping");
       tmuxStateMonitor.stop();
       terminalSessions.closeAll();
       viewportManager.dispose();
@@ -185,6 +217,7 @@ export function createAgentdServer(options: AgentdOptions) {
       controlServer.stop();
       if (httpServer.listening) httpServer.close();
       database.close();
+      if (ownsLogger) logger.close();
     },
   };
 }
@@ -424,6 +457,14 @@ function displayCwd(cwd: string): string {
 
 function displayHostName(host: string): string {
   return host.split(".")[0] || host;
+}
+
+function safeRequestPath(url: string): string {
+  try {
+    return new URL(url, "http://agentd.local").pathname;
+  } catch {
+    return "<invalid>";
+  }
 }
 
 function rejectUpgrade(socket: NodeJS.WritableStream & { destroy: () => void; write: (chunk: string) => boolean }): void {

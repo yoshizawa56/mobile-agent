@@ -13,6 +13,12 @@ import type {
 } from "@mobile-agent/domain";
 import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
 import {
+  createLogger,
+  errorFields,
+  type Logger,
+  type LogLevel,
+} from "@mobile-agent/logging";
+import {
   defaultAgentDatabaseFile,
   createAgentDatabase,
   DrizzleAgentSessionRepository,
@@ -31,6 +37,8 @@ export type AgentCommandOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   io?: AgentCommandIO;
+  logger?: Logger;
+  logLevel?: LogLevel;
   databaseFile?: string;
   repositoryRoot?: string;
 };
@@ -59,6 +67,8 @@ type ResumeOptions = {
 type ProcessResult = {
   code: number;
   interrupted: boolean;
+  pid?: number;
+  signal?: NodeJS.Signals | null;
 };
 
 const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -79,6 +89,9 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private readonly logger: Logger;
+  private readonly ownsLogger: boolean;
+  private activeLogger: Logger | undefined;
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
@@ -87,6 +100,14 @@ export class AgentCommand {
     this.cwd = realpathSafe(options.cwd ?? process.cwd());
     this.env = { ...process.env, ...options.env };
     this.io = options.io ?? { out: process.stdout, err: process.stderr };
+    this.ownsLogger = !options.logger;
+    this.logger = options.logger ?? createLogger({
+      service: "agent-cli",
+      mode: "attached",
+      level: options.logLevel ?? "warn",
+      output: this.io.err,
+      showStack: options.logLevel === "debug",
+    });
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
@@ -95,51 +116,85 @@ export class AgentCommand {
 
   public close(): void {
     this.database?.close();
+    if (this.ownsLogger) this.logger.close();
+  }
+
+  private get currentLogger(): Logger {
+    return this.activeLogger ?? this.logger;
   }
 
   public async execute(args: string[]): Promise<number> {
     const [command = ""] = args;
-    switch (command) {
-      case "run": {
-        const backend = args[1];
-        if (backend !== "codex" && backend !== "claude") throw new AgentCommandError("run requires codex or claude");
-        return this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
+    const logger = this.logger.child({ invocationId: randomUUID(), command: command || "help" });
+    const startedAt = Date.now();
+    logger.debug("command.started", { argumentCount: args.length });
+    const previousLogger = this.activeLogger;
+    this.activeLogger = logger;
+    try {
+      let status: number;
+      switch (command) {
+        case "run": {
+          const backend = args[1];
+          if (backend !== "codex" && backend !== "claude") throw new AgentCommandError("run requires codex or claude");
+          status = await this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
+          break;
+        }
+        case "resume":
+          if (args[1] === "-h" || args[1] === "--help") {
+            this.write("Usage: agent resume [--global] NAME [-- BACKEND_ARGS...]\n");
+            status = 0;
+            break;
+          }
+          this.ensureDatabase();
+          status = await this.resumeSession(this.parseResumeOptions(args.slice(1)));
+          break;
+        case "list":
+          if (args.includes("-h") || args.includes("--help")) {
+            this.write("Usage: agent list [--global] [--names|--json]\n");
+            status = 0;
+            break;
+          }
+          this.ensureDatabase();
+          status = await this.listSessions(this.parseListOptions(args.slice(1)));
+          break;
+        case "cleanup":
+          if (args.includes("-h") || args.includes("--help")) {
+            this.write("Usage: agent cleanup [--global] [--force] NAME\n");
+            status = 0;
+            break;
+          }
+          this.ensureDatabase();
+          status = await this.cleanupSession(this.parseCleanupOptions(args.slice(1)));
+          break;
+        case "doctor":
+          if (args.includes("-h") || args.includes("--help")) {
+            this.write("Usage: agent doctor [--verbose]\n");
+            status = 0;
+            break;
+          }
+          status = await this.doctor(this.parseDoctorOptions(args.slice(1)));
+          break;
+        case "help":
+        case "--help":
+        case "-h":
+          this.printUsage();
+          status = 0;
+          break;
+        default:
+          this.printUsage();
+          status = 2;
+          break;
       }
-      case "resume":
-        if (args[1] === "-h" || args[1] === "--help") {
-          this.write("Usage: agent resume [--global] NAME [-- BACKEND_ARGS...]\n");
-          return 0;
-        }
-        this.ensureDatabase();
-        return this.resumeSession(this.parseResumeOptions(args.slice(1)));
-      case "list":
-        if (args.includes("-h") || args.includes("--help")) {
-          this.write("Usage: agent list [--global] [--names|--json]\n");
-          return 0;
-        }
-        this.ensureDatabase();
-        return this.listSessions(this.parseListOptions(args.slice(1)));
-      case "cleanup":
-        if (args.includes("-h") || args.includes("--help")) {
-          this.write("Usage: agent cleanup [--global] [--force] NAME\n");
-          return 0;
-        }
-        this.ensureDatabase();
-        return this.cleanupSession(this.parseCleanupOptions(args.slice(1)));
-      case "doctor":
-        if (args.includes("-h") || args.includes("--help")) {
-          this.write("Usage: agent doctor [--verbose]\n");
-          return 0;
-        }
-        return this.doctor(this.parseDoctorOptions(args.slice(1)));
-      case "help":
-      case "--help":
-      case "-h":
-        this.printUsage();
-        return 0;
-      default:
-        this.printUsage();
-        return 2;
+      logger.debug("command.finished", { status, durationMs: Date.now() - startedAt });
+      return status;
+    } catch (error) {
+      logger.debug("command.failed", {
+        durationMs: Date.now() - startedAt,
+        ...errorFields(error),
+      });
+      throw error;
+    } finally {
+      this.activeLogger = previousLogger;
     }
   }
 
@@ -308,17 +363,33 @@ export class AgentCommand {
   }
 
   private async runSession(backend: AgentBackend, options: RunOptions): Promise<number> {
+    const logger = this.currentLogger.child({ command: "run", backend });
+    const sessionStartedAt = Date.now();
+    logger.debug("session.starting", {
+      useWorktree: options.useWorktree,
+      backendArgumentCount: options.backendArgs.length,
+    });
     const backendBinary = resolveBackendCommand(backend, this.env);
+    logger.debug("backend.resolved", {
+      executable: basename(backendBinary),
+    });
     if (hasOption("--help", options.backendArgs) || hasOption("-h", options.backendArgs)) {
       const helpArgs = backend === "codex" && !hasOption("--profile", options.backendArgs) && !hasOption("-p", options.backendArgs)
         ? ["--profile", options.codexProfile, ...options.backendArgs]
         : options.backendArgs;
-      return runAttachedProcess(backendBinary, helpArgs, this.cwd, this.env);
+      logger.debug("backend.help_started", { argumentCount: helpArgs.length });
+      const status = await runAttachedProcess(backendBinary, helpArgs, this.cwd, this.env, logger, "backend_help");
+      logger.debug("backend.help_finished", { status, durationMs: Date.now() - sessionStartedAt });
+      return status;
     }
 
     this.ensureDatabase();
-    await ensureCodexRemoteControl(backend, options.backendArgs, backendBinary, this.defaultCodexRemote, this.env);
+    await ensureCodexRemoteControl(backend, options.backendArgs, backendBinary, this.defaultCodexRemote, this.env, logger);
     const workspace = await this.resolveWorkspace();
+    logger.debug("workspace.resolved", {
+      workspaceId: workspace.id,
+      isGit: workspace.isGit,
+    });
     const setupHook = options.setupHookExplicit
       ? (options.setupHook ? this.resolveHookPath(options.setupHook, workspace.rootPath) : null)
       : options.useWorktree ? this.resolveStoredHook(workspace.setupScriptPath) : null;
@@ -359,35 +430,52 @@ export class AgentCommand {
     };
     await this.sessions.insert(session);
     this.audit("agent_session.created", session.id, { name, backend, workspace: workspace.rootPath });
+    const sessionLogger = logger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      workspaceId: session.workspaceId,
+    });
+    sessionLogger.debug("session.created", {
+      useWorktree: session.useWorktree,
+      worktreePath: session.worktreePath,
+    });
 
     let current = updateSession(session, { status: "setup" });
     await this.sessions.update(current);
+    sessionLogger.debug("session.status_changed", { status: current.status });
     if (!(await this.copyWorktreeFiles(current, workspace.worktreeCopyPatterns))) {
       current = updateSession(current, { status: "setup_failed" });
       await this.sessions.update(current);
+      sessionLogger.debug("session.setup_failed", { stage: "worktree_copy" });
       throw new AgentCommandError(`worktree file copy failed; mapping retained as '${name}'`);
     }
     if (!(await this.runHook(current, "setup"))) {
       current = updateSession(current, { status: "setup_failed" });
       await this.sessions.update(current);
+      sessionLogger.debug("session.setup_failed", { stage: "setup_hook" });
       throw new AgentCommandError(`setup hook failed; mapping retained as '${name}'`);
     }
     current = updateSession(current, { setupRan: Boolean(current.setupHook) });
     if (current.useWorktree) current = updateSession(current, { baselineStatus: this.gitStatus(current.worktreePath!) });
     current = updateSession(current, { status: "ready" });
     await this.sessions.update(current);
+    sessionLogger.debug("session.status_changed", { status: current.status });
 
     const runDir = current.worktreePath ?? current.workspaceRoot;
     const codexBaseline = await this.captureCodexSessionBaseline(current);
     if (!codexBaseline) {
       current = updateSession(current, { status: "setup_failed" });
       await this.sessions.update(current);
+      sessionLogger.debug("session.setup_failed", { stage: "codex_baseline" });
       throw new AgentCommandError("Codex rollout baseline capture failed; mapping retained");
     }
+    sessionLogger.debug("session.baseline_captured", { backend: current.backend });
     const startedAt = Math.floor(Date.now() / 1000);
     current = updateSession(current, { status: "running" });
     await this.sessions.update(current);
+    sessionLogger.debug("session.status_changed", { status: current.status });
     const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    sessionLogger.debug("backend.command_ready", { argumentCount: command.length });
     const result = await this.runBackend(current, command, runDir, startedAt);
     return this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
   }
@@ -395,66 +483,117 @@ export class AgentCommand {
   private async resumeSession(options: ResumeOptions): Promise<number> {
     if (!options.reference) return 0;
     const session = await this.locateSession(options.reference, options.global);
+    const logger = this.currentLogger.child({
+      command: "resume",
+      sessionId: session.id,
+      sessionName: session.name,
+      workspaceId: session.workspaceId,
+      backend: session.backend,
+    });
+    const sessionStartedAt = Date.now();
+    logger.debug("session.resume_starting", {
+      global: options.global,
+      backendArgumentCount: options.backendArgs.length,
+    });
     if (session.status === "setup_failed") throw new AgentCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
     if (!session.backendSessionId) throw new AgentCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new AgentCommandError(`session working directory is missing: ${runDir}`);
     if (session.useWorktree && !this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
     const backendBinary = resolveBackendCommand(session.backend, this.env);
-    await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env);
+    logger.debug("backend.resolved", { executable: basename(backendBinary) });
+    await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env, logger);
     const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    logger.debug("backend.command_ready", { argumentCount: command.length, resume: true });
     const current = updateSession(session, { status: "resuming", resuming: true });
     await this.sessions.update(current);
+    logger.debug("session.status_changed", { status: current.status });
     const startedAt = Math.floor(Date.now() / 1000);
     const result = await this.runBackend(current, command, runDir, startedAt);
-    return this.finalizeSession(current, result, startedAt, runDir, true);
+    const status = await this.finalizeSession(current, result, startedAt, runDir, true);
+    logger.debug("session.resume_finished", { status, durationMs: Date.now() - sessionStartedAt });
+    return status;
   }
 
   private async listSessions(options: { global: boolean; names: boolean; json: boolean }): Promise<number> {
+    const logger = this.currentLogger.child({ command: "list" });
+    const startedAt = Date.now();
+    logger.debug("session.list_started", {
+      global: options.global,
+      names: options.names,
+      json: options.json,
+    });
     const workspace = options.global ? undefined : (await this.resolveWorkspace()).id;
     const sessions = await this.sessions.list(workspace);
+    const finish = (status: number): number => {
+      logger.debug("session.list_finished", {
+        status,
+        count: sessions.length,
+        durationMs: Date.now() - startedAt,
+      });
+      return status;
+    };
     if (options.names) {
       for (const session of sessions) this.write(`${options.global ? `${session.workspaceName}/` : ""}${session.name}\n`);
-      return 0;
+      return finish(0);
     }
     if (options.json) {
       for (const session of sessions) this.write(`${JSON.stringify(toSessionJson(session))}\n`);
-      return 0;
+      return finish(0);
     }
     if (options.global) this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "BRANCH", "WORKTREE"]));
     else this.write(padHeader(["NAME", "BACKEND", "STATUS", "BRANCH", "WORKTREE"]));
     if (sessions.length === 0) {
       this.info("no managed sessions");
-      return 0;
+      return finish(0);
     }
     for (const session of sessions) {
       const values = [session.name, session.backend, session.status, session.branch ?? "-", session.worktreePath ?? "-"];
       this.write(options.global ? padRow([session.workspaceName, ...values]) : padRow(values));
     }
-    return 0;
+    return finish(0);
   }
 
   private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
+    const logger = this.currentLogger.child({ command: "cleanup" });
+    const startedAt = Date.now();
+    logger.debug("session.cleanup_requested", { global: options.global, force: options.force });
     const session = await this.locateSession(options.reference, options.global);
+    const sessionLogger = logger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      workspaceId: session.workspaceId,
+      backend: session.backend,
+    });
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
       if (!this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`);
     }
     const dirty = session.useWorktree && session.worktreePath ? this.worktreeHasAgentChanges(session) : false;
     let force = options.force;
+    sessionLogger.debug("session.cleanup_decision_started", { dirty, force });
     if (session.useWorktree && !force && !(await this.confirmCleanup(session, dirty))) {
+      sessionLogger.debug("session.cleanup_declined", { dirty });
       this.info(`cleanup cancelled; session '${session.name}' was kept`);
       return 0;
     }
     if (dirty) force = true;
-    if (!(await this.removeSessionRecord(session, force))) return 1;
+    if (!(await this.removeSessionRecord(session, force))) {
+      sessionLogger.debug("session.cleanup_failed", { dirty, force, durationMs: Date.now() - startedAt });
+      return 1;
+    }
+    sessionLogger.debug("session.cleanup_finished", { dirty, force, durationMs: Date.now() - startedAt });
     this.info(`session '${session.name}' cleaned up`);
     return 0;
   }
 
   private async doctor(options: { verbose: boolean }): Promise<number> {
+    const logger = this.currentLogger.child({ command: "doctor" });
+    const startedAt = Date.now();
+    logger.debug("doctor.started", { verbose: options.verbose });
     let status = 0;
     for (const command of ["git", "zsh", "codex", "claude"]) {
       const path = commandPath(command, this.env);
+      logger.debug("doctor.command_checked", { command, available: Boolean(path) });
       if (path) this.write(`${command}: ${path}\n`);
       else {
         this.write(`${command}: missing\n`, true);
@@ -465,7 +604,16 @@ export class AgentCommand {
     if (existsSync(profilePath)) {
       this.write(`codex profile: ${profilePath}\n`);
       const codex = commandPath("codex", this.env);
-      if (codex && spawnSync(codex, ["--profile", this.env.AGENT_CODEX_PROFILE ?? defaultCodexProfile, "--strict-config", "--help"], { stdio: "ignore", env: this.env }).status !== 0) {
+      const validationStartedAt = Date.now();
+      const validation = codex
+        ? spawnSync(codex, ["--profile", this.env.AGENT_CODEX_PROFILE ?? defaultCodexProfile, "--strict-config", "--help"], { stdio: "ignore", env: this.env })
+        : undefined;
+      logger.debug("doctor.codex_profile_checked", {
+        available: Boolean(codex),
+        exitCode: validation?.status ?? null,
+        durationMs: Date.now() - validationStartedAt,
+      });
+      if (codex && validation?.status !== 0) {
         this.write("codex profile validation: failed\n", true);
         status = 1;
       } else this.write("codex profile validation: ok\n");
@@ -480,10 +628,13 @@ export class AgentCommand {
       this.write(`codex remote: ${this.defaultCodexRemote || "native local mode"}\n`);
       this.write(`worktree root pattern: <workspace-parent>/<workspace-name>.worktrees${this.env.AGENT_WORKTREE_ID ? `/${this.env.AGENT_WORKTREE_ID}` : ""}/<session-name>\n`);
     }
+    logger.debug("doctor.finished", { status, durationMs: Date.now() - startedAt });
     return status;
   }
 
   private async resolveWorkspace(): Promise<WorkspaceContext> {
+    const startedAt = Date.now();
+    this.currentLogger.debug("workspace.resolve_started", { cwd: this.cwd });
     const gitRoot = gitWorkspaceRoot(this.cwd);
     const root = gitRoot ?? this.cwd;
     const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
@@ -500,6 +651,11 @@ export class AgentCommand {
       updatedAt: timestamp(),
     };
     await this.workspaces.upsert(context);
+    this.currentLogger.debug("workspace.resolve_finished", {
+      workspaceId: context.id,
+      isGit: context.isGit,
+      durationMs: Date.now() - startedAt,
+    });
     return context;
   }
 
@@ -539,8 +695,14 @@ export class AgentCommand {
     }
     if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) throw new AgentCommandError(`agent branch already exists; choose another name or remove it manually: ${branch}`);
     if (existsSync(worktreePath)) throw new AgentCommandError(`worktree path already exists: ${worktreePath}`);
+    this.currentLogger.debug("worktree.create_started", {
+      workspaceId: workspace.id,
+      worktreePath,
+      branch,
+    });
     this.info(`creating worktree '${worktreePath}'`);
     gitRequired(workspace.rootPath, ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit], "git worktree creation failed");
+    this.currentLogger.debug("worktree.created", { workspaceId: workspace.id, worktreePath, branch });
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
 
@@ -550,10 +712,19 @@ export class AgentCommand {
   }
 
   private async copyWorktreeFiles(session: AgentSessionRecord, configuredPatterns: readonly string[]): Promise<boolean> {
-    if (!session.useWorktree || !session.worktreePath || !configuredPatterns.length) return true;
+    const logger = this.currentLogger.child({ sessionId: session.id, sessionName: session.name });
+    if (!session.useWorktree || !session.worktreePath || !configuredPatterns.length) {
+      logger.debug("worktree.copy_skipped", {
+        useWorktree: session.useWorktree,
+        configuredPatternCount: configuredPatterns.length,
+      });
+      return true;
+    }
 
     const patterns = normalizeWorktreeCopyPatterns(configuredPatterns);
+    logger.debug("worktree.copy_started", { patternCount: patterns.length });
     if (patterns.some((pattern) => !isValidWorktreeCopyPattern(pattern))) {
+      logger.debug("worktree.copy_failed", { stage: "validate_patterns" });
       this.warn("workspace contains an invalid worktree copy pattern");
       return false;
     }
@@ -566,36 +737,49 @@ export class AgentCommand {
       for (const file of matches) matchedFiles.add(file);
     }
 
+    this.currentLogger.child({ sessionId: session.id, sessionName: session.name }).debug("worktree.copy_candidates", {
+      patternCount: patterns.length,
+      sourceFileCount: sourceFiles.length,
+      matchedFileCount: matchedFiles.size,
+    });
+
     for (const relativePath of [...matchedFiles].sort()) {
       const sourcePath = resolve(session.workspaceRoot, relativePath);
       const targetPath = resolve(session.worktreePath, relativePath);
       if (!isPathWithin(session.workspaceRoot, sourcePath) || !isPathWithin(session.worktreePath, targetPath)) {
+        logger.debug("worktree.copy_failed", { stage: "validate_target", relativePath });
         this.warn(`refusing to copy a path outside the worktree: ${relativePath}`);
         return false;
       }
       try {
         const sourceStat = lstatSync(sourcePath);
         if (!sourceStat.isFile()) {
+          logger.debug("worktree.copy_failed", { stage: "validate_source", relativePath });
           this.warn(`refusing to copy a non-regular file: ${relativePath}`);
           return false;
         }
         if (!isPathWithin(session.workspaceRoot, realpathSafe(sourcePath))) {
+          logger.debug("worktree.copy_failed", { stage: "validate_source_path", relativePath });
           this.warn(`refusing to copy a source path outside the workspace: ${relativePath}`);
           return false;
         }
         mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
         if (!isPathWithin(session.worktreePath, realpathSafe(dirname(targetPath)))) {
+          logger.debug("worktree.copy_failed", { stage: "validate_target_directory", relativePath });
           this.warn(`refusing to copy through a worktree symlink: ${relativePath}`);
           return false;
         }
         copyFileSync(sourcePath, targetPath);
         chmodSync(targetPath, sourceStat.mode & 0o777);
+        logger.debug("worktree.file_copied", { relativePath });
         this.info(`copied unmanaged file '${relativePath}' into worktree`);
       } catch (error) {
+        logger.debug("worktree.copy_failed", { stage: "copy_file", relativePath, ...errorFields(error) });
         this.warn(`could not copy unmanaged file '${relativePath}': ${error instanceof Error ? error.message : String(error)}`);
         return false;
       }
     }
+    logger.debug("worktree.copy_finished", { matchedFileCount: matchedFiles.size });
     return true;
   }
 
@@ -608,6 +792,13 @@ export class AgentCommand {
       return false;
     }
     const outputFile = `${this.outputFileFor(session, kind)}.${randomUUID()}`;
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      hook: kind,
+    });
+    const startedAt = Date.now();
+    logger.debug("hook.started", { script: basename(hook), cwd: runDir });
     this.info(`running workspace hook '${hook}' (${kind})`);
     const args = [
       "--name", session.name,
@@ -635,13 +826,17 @@ export class AgentCommand {
       },
       stdio: ["ignore", "pipe", "inherit"],
     });
+    let spawnError: unknown;
     const output = createWriteStream(outputFile, { mode: 0o600 });
     child.stdout?.on("data", (chunk: Buffer) => {
       this.io.out.write(chunk);
       output.write(chunk);
     });
     const exitCode = await new Promise<number>((resolvePromise) => {
-      child.once("error", () => resolvePromise(127));
+      child.once("error", (error) => {
+        spawnError = error;
+        resolvePromise(127);
+      });
       child.once("close", (code) => resolvePromise(code ?? 1));
     });
     await new Promise<void>((resolvePromise, reject) => {
@@ -654,6 +849,13 @@ export class AgentCommand {
     const next = updateSession(session, kind === "setup" ? { setupOutputFile: finalOutput } : { cleanupOutputFile: finalOutput });
     Object.assign(session, next);
     await this.sessions.update(next);
+    logger.debug("hook.finished", {
+      pid: child.pid,
+      exitCode,
+      success: exitCode === 0,
+      durationMs: Date.now() - startedAt,
+      ...(spawnError ? errorFields(spawnError) : {}),
+    });
     return exitCode === 0;
   }
 
@@ -664,64 +866,142 @@ export class AgentCommand {
   }
 
   private async runBackend(session: AgentSessionRecord, command: string[], runDir: string, startedAt: number): Promise<ProcessResult> {
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      backend: session.backend,
+    });
+    const processStartedAt = Date.now();
+    logger.debug("subprocess.starting", {
+      kind: "backend",
+      executable: basename(command[0] ?? "unknown"),
+      cwd: runDir,
+      argumentCount: command.length - 1,
+    });
     this.setTerminalTitle(session.name);
     const nameWatcher = session.backend === "codex" && session.backendSessionId === null && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
-    const result = await spawnAttached(command[0]!, command.slice(1), runDir, this.env);
-    if (nameWatcher) await nameWatcher.stop();
-    this.restoreTerminalTitle();
+    let result: ProcessResult;
+    try {
+      result = await spawnAttached(command[0]!, command.slice(1), runDir, this.env, {
+        onStarted: (pid) => logger.debug("subprocess.started", {
+          kind: "backend",
+          executable: basename(command[0] ?? "unknown"),
+          cwd: runDir,
+          pid,
+        }),
+        onError: (error) => logger.debug("subprocess.spawn_failed", {
+          kind: "backend",
+          executable: basename(command[0] ?? "unknown"),
+          ...errorFields(error),
+        }),
+      });
+    } finally {
+      if (nameWatcher) {
+        try {
+          await nameWatcher.stop();
+        } catch (error) {
+          logger.debug("codex.session_name_watch_failed", { ...errorFields(error) });
+        }
+      }
+      this.restoreTerminalTitle();
+    }
+    logger.debug("subprocess.finished", {
+      kind: "backend",
+      pid: result.pid,
+      exitCode: result.code,
+      signal: result.signal,
+      interrupted: result.interrupted,
+      durationMs: Date.now() - processStartedAt,
+    });
     return result;
   }
 
   private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      backend: session.backend,
+    });
+    logger.debug("session.finalizing", {
+      exitCode: result.code,
+      signal: result.signal,
+      interrupted: result.interrupted,
+    });
     if (session.backend === "codex" && !session.backendSessionId && codexBaseline) {
       const id = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-      if (id) session = updateSession(session, { backendSessionId: id });
+      if (id) {
+        session = updateSession(session, { backendSessionId: id });
+        logger.debug("codex.session_id_discovered", { backendSessionIdPresent: true });
+      }
       else this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired`);
     }
     session = updateSession(session, { lastExitStatus: result.code, updatedAt: timestamp() });
+    logger.debug("session.backend_finished", {
+      exitCode: result.code,
+      interrupted: result.interrupted,
+    });
     if (result.interrupted || result.code === 130 || result.code === 143) {
       session = updateSession(session, { status: "interrupted" });
       await this.sessions.update(session);
+      logger.debug("session.interrupted", { status: session.status });
       this.info(`session '${session.name}' kept for resume after interruption`);
       return result.code;
     }
     session = updateSession(session, { status: "exited" });
     await this.sessions.update(session);
     if (!session.useWorktree) {
+      logger.debug("session.finished", { status: session.status, cleanup: "retained", durationMs: Date.now() - startedAt * 1000 });
       this.info(`session '${session.name}' mapping retained; use 'agent resume ${session.name}' or 'agent cleanup ${session.name}'`);
       return result.code;
     }
     const dirty = this.worktreeHasAgentChanges(session);
+    logger.debug("session.cleanup_decision", { dirty });
     if (!(await this.confirmCleanup(session, dirty))) {
+      logger.debug("session.cleanup_declined", { dirty });
       this.info(`cleanup declined; session '${session.name}' kept for resume`);
       return result.code;
     }
     if (!(await this.removeSessionRecord(session, dirty))) {
+      logger.debug("session.cleanup_failed", { dirty });
       this.info(`session '${session.name}' retained because cleanup did not complete`);
       return result.code === 0 ? 1 : result.code;
     }
+    logger.debug("session.finished", { status: session.status, cleanup: "completed", durationMs: Date.now() - startedAt * 1000 });
     this.info(`session '${session.name}' cleaned up`);
     return result.code;
   }
 
   private async removeSessionRecord(session: AgentSessionRecord, force: boolean): Promise<boolean> {
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      backend: session.backend,
+    });
+    const startedAt = Date.now();
+    logger.debug("session.cleanup_started", { force, useWorktree: session.useWorktree });
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath) && !this.worktreeIsRegistered(session)) {
+      logger.debug("session.cleanup_failed", { stage: "worktree_registration" });
       this.warn(`managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`);
       return false;
     }
     if (session.backend === "codex" && session.codexRemote) {
-      if (!(await this.manageRemoteThread(session, "archive"))) return false;
+      if (!(await this.manageRemoteThread(session, "archive"))) {
+        logger.debug("session.cleanup_failed", { stage: "codex_archive" });
+        return false;
+      }
     }
     if (!(await this.runHook(session, "cleanup"))) {
       if (session.backend === "codex" && session.codexRemote) await this.manageRemoteThread(session, "unarchive");
+      logger.debug("session.cleanup_failed", { stage: "cleanup_hook" });
       this.warn("cleanup hook failed; retaining session mapping");
       return false;
     }
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
       try {
         gitRequired(session.workspaceRoot, ["worktree", "remove", ...(force ? ["--force"] : []), "--", session.worktreePath], "git worktree removal failed");
-      } catch {
+      } catch (error) {
         if (session.backend === "codex" && session.codexRemote) await this.manageRemoteThread(session, "unarchive");
+        logger.debug("session.cleanup_failed", { stage: "worktree_remove", ...errorFields(error) });
         this.warn("git worktree removal failed; retaining session mapping");
         return false;
       }
@@ -738,6 +1018,7 @@ export class AgentCommand {
     }
     await this.sessions.delete(session.id);
     this.audit("agent_session.deleted", session.id, { name: session.name });
+    logger.debug("session.deleted", { force, durationMs: Date.now() - startedAt });
     this.removeHookOutputs(session);
     return true;
   }
@@ -786,12 +1067,20 @@ export class AgentCommand {
 
   private async captureCodexSessionBaseline(session: AgentSessionRecord): Promise<boolean> {
     if (session.backend !== "codex") return true;
+    const startedAt = Date.now();
+    const logger = this.currentLogger.child({ sessionId: session.id, sessionName: session.name, backend: session.backend });
+    logger.debug("codex.baseline_started");
     const files = await this.codexSessionFiles();
     const baseline = files.map((file) => codexMeta(file)?.session_id).filter((value): value is string => Boolean(value));
     // Baselines are persisted in the same database record as a newline list so
     // a restart never depends on an auxiliary state file.
     session.codexSessionBaseline = JSON.stringify({ codexSessions: baseline });
     await this.sessions.update(session);
+    logger.debug("codex.baseline_finished", {
+      fileCount: files.length,
+      sessionCount: baseline.length,
+      durationMs: Date.now() - startedAt,
+    });
     return true;
   }
 
@@ -799,6 +1088,9 @@ export class AgentCommand {
     const session = await this.sessions.findById(sessionId);
     const endpoint = session?.codexRemote ?? "";
     const attempts = endpoint ? 25 : 1;
+    const logger = this.currentLogger.child({ sessionId, backend: "codex" });
+    const discoveryStartedAt = Date.now();
+    logger.debug("codex.session_id_discovery_started", { attempts, remote: Boolean(endpoint) });
     const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const files = await this.codexSessionFiles();
@@ -813,9 +1105,21 @@ export class AgentCommand {
           if (!best || candidate.mtime > best.mtime) best = candidate;
         } else if (!fallback || candidate.mtime > fallback.mtime) fallback = candidate;
       }
-      if (best?.id ?? fallback?.id) return best?.id ?? fallback?.id;
+      if (best?.id ?? fallback?.id) {
+        logger.debug("codex.session_id_discovery_finished", {
+          found: true,
+          attempt: attempt + 1,
+          durationMs: Date.now() - discoveryStartedAt,
+        });
+        return best?.id ?? fallback?.id;
+      }
       if (attempt + 1 < attempts) await sleep(200);
     }
+    logger.debug("codex.session_id_discovery_finished", {
+      found: false,
+      attempts,
+      durationMs: Date.now() - discoveryStartedAt,
+    });
     return undefined;
   }
 
@@ -859,6 +1163,14 @@ export class AgentCommand {
       this.warn(`cannot ${operation} Codex remote thread; session ID is missing`);
       return false;
     }
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      backend: session.backend,
+      operation,
+    });
+    const startedAt = Date.now();
+    logger.debug("codex.remote_started", { transport: session.codexRemote });
     try {
       const helper = this.env.AGENT_CODEX_NAME_BIN;
       if (helper) {
@@ -870,8 +1182,10 @@ export class AgentCommand {
       } else {
         await manageCodexThread({ threadId: session.backendSessionId, operation, name: operation === "name" ? session.name : undefined });
       }
+      logger.debug("codex.remote_finished", { success: true, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
+      logger.debug("codex.remote_failed", { success: false, ...errorFields(error), durationMs: Date.now() - startedAt });
       this.warn(`could not ${operation} Codex remote thread '${session.backendSessionId}': ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
@@ -908,25 +1222,31 @@ export class AgentCommand {
 
   private ensureDatabase(): void {
     if (this.database) return;
+    this.currentLogger.debug("database.opening", { databaseFile: this.databaseFile });
     this.database = createAgentDatabase(this.databaseFile, {
       migrationsFolder: this.env.AGENTD_MIGRATIONS_DIR ?? this.env.AGENT_MIGRATIONS_DIR,
     });
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
+    this.currentLogger.debug("database.opened", { databaseFile: this.databaseFile });
   }
 
   private printUsage(): void {
     this.write(`Usage:
+  agent [-v|--verbose] <command> [OPTIONS]
   agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
   agent resume [--global] NAME [-- BACKEND_ARGS...]
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
   agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
-  agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH]
-  agent daemon <status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH]
-  agent serve tailscale [--port PORT] [--agentd-port PORT]
+  agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
+  agent daemon <status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
+  agent serve tailscale [--port PORT] [--agentd-port PORT] [--log-level LEVEL] [--log-file PATH]
   agent dev [serve tailscale]
+
+Global options:
+  -v, --verbose           Show detailed diagnostics on the attached terminal.
 
 Lifecycle behavior:
   agent daemon start backgrounds agentd by default; use --foreground for a service manager.
@@ -1159,16 +1479,59 @@ function resolveExecutable(value: string, env: NodeJS.ProcessEnv): string {
   return path;
 }
 
-async function ensureCodexRemoteControl(backend: AgentBackend, args: string[], binary: string, defaultRemote: string, env: NodeJS.ProcessEnv): Promise<void> {
+async function ensureCodexRemoteControl(
+  backend: AgentBackend,
+  args: string[],
+  binary: string,
+  defaultRemote: string,
+  env: NodeJS.ProcessEnv,
+  logger?: Logger,
+): Promise<void> {
   if (backend !== "codex" || !codexRemoteEndpoint(args, defaultRemote)) return;
+  logger?.debug("codex.remote_control_starting", {
+    executable: basename(binary),
+    remoteConfigured: true,
+  });
   for (const command of [["app-server", "daemon", "enable-remote-control"], ["app-server", "daemon", "start"]]) {
+    const startedAt = Date.now();
+    logger?.debug("codex.remote_control_command_started", {
+      executable: basename(binary),
+      operation: command.join("."),
+    });
     const result = spawnSync(binary, command, { stdio: "ignore", env });
-    if (result.status !== 0) throw new AgentCommandError(`could not run Codex app-server command: ${command.join(" ")}`);
+    logger?.debug("codex.remote_control_command_finished", {
+      executable: basename(binary),
+      operation: command.join("."),
+      exitCode: result.status,
+      signal: result.signal,
+      durationMs: Date.now() - startedAt,
+    });
+    if (result.status !== 0) {
+      logger?.debug("codex.remote_control_failed", {
+        executable: basename(binary),
+        operation: command.join("."),
+        exitCode: result.status,
+      });
+      throw new AgentCommandError(`could not run Codex app-server command: ${command.join(" ")}`);
+    }
   }
+  logger?.debug("codex.remote_control_finished", { executable: basename(binary) });
 }
 
-async function spawnAttached(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<ProcessResult> {
-  const child = spawn(binary, args, { cwd, env, stdio: "inherit" });
+type SpawnHooks = {
+  onStarted?: (pid: number | undefined) => void;
+  onError?: (error: unknown) => void;
+};
+
+async function spawnAttached(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, hooks: SpawnHooks = {}): Promise<ProcessResult> {
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(binary, args, { cwd, env, stdio: "inherit" });
+  } catch (error) {
+    hooks.onError?.(error);
+    return { code: 127, interrupted: false };
+  }
+  hooks.onStarted?.(child.pid);
   let interrupted = false;
   const onInterrupt = (signal: NodeJS.Signals) => {
     interrupted = true;
@@ -1177,16 +1540,59 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onInterrupt);
   const result = await new Promise<ProcessResult>((resolvePromise) => {
-    child.once("error", () => resolvePromise({ code: 127, interrupted }));
-    child.once("close", (code, signal) => resolvePromise({ code: code ?? signalExitCode(signal), interrupted }));
+    child.once("error", (error) => {
+      hooks.onError?.(error);
+      resolvePromise({ code: 127, interrupted, pid: child.pid, signal: null });
+    });
+    child.once("close", (code, signal) => resolvePromise({
+      code: code ?? signalExitCode(signal),
+      interrupted,
+      pid: child.pid,
+      signal,
+    }));
   });
   process.off("SIGINT", onInterrupt);
   process.off("SIGTERM", onInterrupt);
   return result;
 }
 
-async function runAttachedProcess(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<number> {
-  return (await spawnAttached(binary, args, cwd, env)).code;
+async function runAttachedProcess(
+  binary: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  logger?: Logger,
+  kind = "attached",
+): Promise<number> {
+  const startedAt = Date.now();
+  logger?.debug("subprocess.starting", {
+    kind,
+    executable: basename(binary),
+    cwd,
+    argumentCount: args.length,
+  });
+  const result = await spawnAttached(binary, args, cwd, env, {
+    onStarted: (pid) => logger?.debug("subprocess.started", {
+      kind,
+      executable: basename(binary),
+      pid,
+    }),
+    onError: (error) => logger?.debug("subprocess.spawn_failed", {
+      kind,
+      executable: basename(binary),
+      ...errorFields(error),
+    }),
+  });
+  logger?.debug("subprocess.finished", {
+    kind,
+    executable: basename(binary),
+    pid: result.pid,
+    exitCode: result.code,
+    signal: result.signal,
+    interrupted: result.interrupted,
+    durationMs: Date.now() - startedAt,
+  });
+  return result.code;
 }
 
 function signalExitCode(signal: NodeJS.Signals | null): number {

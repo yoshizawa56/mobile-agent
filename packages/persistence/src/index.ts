@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, like, lt, notInArray, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveAgentdPaths } from "./paths.js";
 import type {
   AgentSessionRepository,
   PaneFilter,
@@ -35,6 +36,8 @@ import {
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
+export { agentdControlSocketMaxBytes, defaultAgentdInstanceDirectory, resolveAgentdPaths, validateAgentdControlSocketPath } from "./paths.js";
+export type { AgentdInstancePaths, AgentdPathOverrides } from "./paths.js";
 export { AuthStore, AuthStoreError } from "./auth.js";
 export type {
   AuthDeviceRecord,
@@ -57,15 +60,30 @@ export type AgentDatabase = {
 
 export type AgentDatabaseOptions = {
   migrationsFolder?: string;
+  instanceDirectory?: string;
 };
 
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENTD_DB_FILE ?? env.AGENT_DATABASE_FILE ?? joinHomeStatePath(env);
+  return resolveAgentdPaths(env).databaseFile;
 }
 
-export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memory:", options: AgentDatabaseOptions = {}): AgentDatabase {
-  if (file !== ":memory:") mkdirSync(dirname(resolve(file)), { recursive: true, mode: 0o700 });
-  const sqlite = new Database(file);
+export function createAgentDatabase(file: string | undefined = undefined, options: AgentDatabaseOptions = {}): AgentDatabase {
+  const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
+  const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
+  const configuredInstanceDirectory = file === undefined && process.env.AGENTD_INSTANCE_DIR?.trim()
+    ? resolveAgentdPaths(process.env).instanceDirectory
+    : undefined;
+  const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
+  if (databasePath !== ":memory:") {
+    if (instanceDirectory) {
+      const resolvedInstanceDirectory = resolve(instanceDirectory);
+      mkdirSync(resolvedInstanceDirectory, { recursive: true, mode: 0o700 });
+      chmodSync(resolvedInstanceDirectory, 0o700);
+    }
+    mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+  }
+  const sqlite = new Database(databasePath);
+  secureDatabaseFiles(databasePath);
   sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
   baselineLegacyDatabase(sqlite, migrationsFolder);
@@ -77,12 +95,26 @@ export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memor
     throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   ensureAuthSchema(sqlite);
+  secureDatabaseFiles(databasePath);
 
   return {
     db,
     sqlite,
     close: () => sqlite.close(),
   };
+}
+
+function secureDatabaseFiles(databasePath: string): void {
+  if (databasePath === ":memory:") return;
+  for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    if (existsSync(path)) chmodSync(path, 0o600);
+  }
+}
+
+function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
+  const configured = [env.AGENTD_INSTANCE_DIR, env.AGENTD_DB_FILE, env.AGENT_DATABASE_FILE].some((value) => Boolean(value?.trim()));
+  if (!configured) return ":memory:";
+  return resolveAgentdPaths(env).databaseFile;
 }
 
 export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
@@ -153,20 +185,68 @@ export class DrizzlePaneRepository implements PaneRepository {
   }
 
   public async findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined> {
-    const row = this.database.select().from(panes).where(eq(panes.tmuxPaneId, tmuxPaneId)).get();
+    const row = this.database
+      .select()
+      .from(panes)
+      .where(eq(panes.tmuxPaneId, tmuxPaneId))
+      .orderBy(desc(panes.updatedAt))
+      .get();
+    return row ? toPaneRecord(row) : undefined;
+  }
+
+  public async findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined> {
+    const row = this.database
+      .select()
+      .from(panes)
+      .where(and(eq(panes.tmuxServerId, tmuxServerId), eq(panes.tmuxPaneId, tmuxPaneId)))
+      .get();
     return row ? toPaneRecord(row) : undefined;
   }
 
   public async upsert(record: PaneRecord): Promise<void> {
     const now = new Date().toISOString();
+    const row = toPaneRow(record, now);
     this.database
       .insert(panes)
-      .values(toPaneRow(record, now))
+      .values(row)
       .onConflictDoUpdate({
-        target: panes.id,
-        set: toPaneRow(record, now),
+        target: [panes.tmuxServerId, panes.tmuxPaneId],
+        set: {
+          tmuxPaneId: row.tmuxPaneId,
+          tmuxServerId: row.tmuxServerId,
+          agentSessionId: row.agentSessionId,
+          agentExecutionId: row.agentExecutionId,
+          sessionName: row.sessionName,
+          windowId: row.windowId,
+          kind: row.kind,
+          name: row.name,
+          cwd: row.cwd,
+          workspaceId: row.workspaceId,
+          agentId: row.agentId,
+          runId: row.runId,
+          state: row.state,
+          title: row.title,
+          lastSeenAt: row.lastSeenAt,
+          updatedAt: row.updatedAt,
+        },
       })
       .run();
+  }
+
+  public async pruneStalePanes(activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string): Promise<number> {
+    // An empty live set is deliberately not treated as authoritative. tmux
+    // exits its server after the last session disappears, so deleting all old
+    // rows here would turn a temporary tmux outage into data loss.
+    if (activePaneIds.length === 0) return 0;
+
+    const condition = and(
+      lt(panes.lastSeenAt, olderThan),
+      notInArray(panes.id, [...activePaneIds]),
+      or(eq(panes.tmuxServerId, "legacy"), like(panes.tmuxServerId, `${tmuxServerScope}:%`)),
+    );
+    const candidates = this.database.select({ id: panes.id }).from(panes).where(condition).all();
+    this.database.delete(panes).where(condition).run();
+    return candidates.length;
   }
 }
 
@@ -303,19 +383,36 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
         baselineStatus: record.baselineStatus,
         codexSessionBaseline: record.codexSessionBaseline,
         lastExitStatus: record.lastExitStatus,
+        executionId: record.executionId ?? null,
+        executionPid: record.executionPid ?? null,
+        executionStartedAt: record.executionStartedAt ?? null,
         updatedAt: now,
       })
       .where(eq(agentSessions.id, record.id))
       .run();
   }
 
-  public async setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<AgentSessionRecord | undefined> {
-    this.database
+  public async claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean> {
+    const predicate = expectedExecutionPid === null
+      ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
+      : and(eq(agentSessions.id, id), eq(agentSessions.executionPid, expectedExecutionPid));
+    const result = this.database
+      .update(agentSessions)
+      .set({ executionId, executionPid, executionStartedAt, status: "resuming", resuming: true, updatedAt: new Date().toISOString() })
+      .where(predicate)
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
+  }
+
+  public async setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean> {
+    const result = this.database
       .update(agentSessions)
       .set({ backendSessionId, updatedAt: new Date().toISOString() })
       .where(and(eq(agentSessions.id, id), isNull(agentSessions.backendSessionId)))
-      .run();
-    return this.findById(id);
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
   }
 
   public async delete(id: string): Promise<void> {
@@ -434,15 +531,13 @@ function ensureColumn(sqlite: Database, table: string, column: string, definitio
   if (!columns.some((entry) => entry.name === column)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-function joinHomeStatePath(env: NodeJS.ProcessEnv): string {
-  const home = env.HOME ?? homedir();
-  return `${home}/.local/state/mobile-agent/agentd.sqlite`;
-}
-
 function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
   return {
     id: record.id,
     tmuxPaneId: record.tmuxPaneId,
+    tmuxServerId: record.tmuxServerId ?? "legacy",
+    agentSessionId: record.agentSessionId ?? null,
+    agentExecutionId: record.agentExecutionId ?? null,
     sessionName: record.sessionName,
     windowId: record.windowId,
     kind: record.kind,
@@ -463,6 +558,9 @@ function toPaneRecord(row: PaneRow): PaneRecord {
   return {
     id: row.id,
     tmuxPaneId: row.tmuxPaneId,
+    ...(row.tmuxServerId === "legacy" ? {} : { tmuxServerId: row.tmuxServerId }),
+    ...(row.agentSessionId ? { agentSessionId: row.agentSessionId } : {}),
+    ...(row.agentExecutionId ? { agentExecutionId: row.agentExecutionId } : {}),
     sessionName: row.sessionName,
     windowId: row.windowId,
     kind: row.kind,
@@ -552,6 +650,9 @@ function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agen
     baselineStatus: record.baselineStatus,
     codexSessionBaseline: record.codexSessionBaseline,
     lastExitStatus: record.lastExitStatus,
+    executionId: record.executionId ?? null,
+    executionPid: record.executionPid ?? null,
+    executionStartedAt: record.executionStartedAt ?? null,
     createdAt: record.createdAt || now,
     updatedAt: now,
   };
@@ -583,6 +684,9 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     baselineStatus: row.baselineStatus,
     codexSessionBaseline: row.codexSessionBaseline,
     lastExitStatus: row.lastExitStatus,
+    ...(row.executionId ? { executionId: row.executionId } : {}),
+    ...(row.executionPid === null ? {} : { executionPid: row.executionPid }),
+    ...(row.executionStartedAt ? { executionStartedAt: row.executionStartedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -630,8 +630,8 @@ class DevSupervisor {
     if (this.state !== "created") return this;
     this.state = "starting";
     this.log("info", "[dev] starting local stack (Tailscale Serve is opt-in)");
-    this.log("info", `[dev] profile=${this.config.baseEnvironment.AGENT_PROFILE ?? "dev"} worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
-    this.log("info", `[dev] database=${this.config.baseEnvironment.AGENTD_DB_FILE ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
+    this.log("info", `[dev] worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
+    this.log("info", `[dev] instance=${this.config.baseEnvironment.AGENTD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
     this.log("info", `[dev] agentd target: ${this.services.agentd.url}`);
     this.log("info", `[dev] web target: ${this.services.web.url} (proxy ${this.config.agentdProxyTarget})`);
 

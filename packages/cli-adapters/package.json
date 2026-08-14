@@ -6,9 +6,8 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "development": "./src/index.ts",
-      "import": "./dist/index.js"
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
     }
   },
   "scripts": {
@@ -18,6 +17,7 @@
   },
   "dependencies": {
     "@mobile-agent/application": "workspace:*",
+    "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
     "qrcode": "^1.5.4"
   },

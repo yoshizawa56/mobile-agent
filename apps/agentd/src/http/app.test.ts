@@ -73,6 +73,19 @@ const cases: TableCase[] = [
     assert: [(ctx) => expect(ctx.body).toMatchObject({ service: "agentd", protocolVersion: 1 })],
   },
   {
+    name: "does not report health before the control server is ready",
+    given: (ctx) => {
+      ctx.app = createTestApp(ctx.events, { isReady: () => false });
+      ctx.request = new Request("http://agentd.local/health");
+    },
+    when: async (ctx) => {
+      ctx.response = await ctx.app!.request(ctx.request);
+      ctx.body = await ctx.response.json();
+    },
+    check: [(ctx) => expect(ctx.response?.status).toBe(503)],
+    assert: [(ctx) => expect(ctx.body).toEqual({ error: "agentd_unavailable", message: "agentd is still starting" })],
+  },
+  {
     name: "lists sessions through the injected use case",
     given: (ctx) => {
       ctx.app = createTestApp(ctx.events);

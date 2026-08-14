@@ -1,3 +1,5 @@
+/// <reference path="./qrcode.d.ts" />
+
 import QRCode from "qrcode";
 
 export interface QrRendererPort {

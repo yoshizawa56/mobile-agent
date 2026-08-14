@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import {
   agentdControlRequestSchema,
   agentdControlResponseSchema,
@@ -12,6 +13,8 @@ import { AuthService, pairingPayloadUrl } from "./service.js";
 export type AgentdControlServerOptions = {
   socketPath: string;
   auth: AuthService;
+  adoptAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
+  releaseAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
 };
 
 export class AgentdControlServer {
@@ -24,13 +27,32 @@ export class AgentdControlServer {
     this.options.auth.setPairingClaimListener((notification) => this.notifyClaim(notification));
   }
 
-  public start(): void {
+  public start(): Promise<void> {
     ensureSocketPathIsSafe(this.options.socketPath);
     mkdirSync(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
     this.server = createServer((socket) => this.handleConnection(socket));
-    this.server.listen(this.options.socketPath, () => {
-      chmodSync(this.options.socketPath, 0o600);
-      this.started = true;
+    return new Promise((resolve, reject) => {
+      const server = this.server!;
+      const onError = (error: Error) => {
+        server.removeListener("listening", onListening);
+        this.server = undefined;
+        if (server.listening) server.close();
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        try {
+          chmodSync(this.options.socketPath, 0o600);
+          this.started = true;
+          resolve();
+        } catch (error) {
+          onError(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(this.options.socketPath);
     });
   }
 
@@ -104,6 +126,20 @@ export class AgentdControlServer {
         this.send(socket, { type: "pairing_result", pairingId: request.pairingId, status: "rejected" });
         return;
       }
+      if (request.type === "adopt_agent_session") {
+        if (!this.options.adoptAgentSession) throw controlError("agent_session_adoption_unavailable", "agent session adoption is unavailable");
+        void this.options.adoptAgentSession(request)
+          .then(() => this.send(socket, { ...request, type: "agent_session_adopted" }))
+          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+        return;
+      }
+      if (request.type === "release_agent_session") {
+        if (!this.options.releaseAgentSession) throw controlError("agent_session_release_unavailable", "agent session release is unavailable");
+        void this.options.releaseAgentSession(request)
+          .then(() => this.send(socket, { ...request, type: "agent_session_released" }))
+          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+        return;
+      }
       this.send(socket, { type: "error", code: "unknown_request", message: "unknown control request" });
     } catch (error) {
       this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) });
@@ -121,6 +157,7 @@ export class AgentdControlServer {
 }
 
 function ensureSocketPathIsSafe(path: string): void {
+  validateAgentdControlSocketPath(path);
   if (!path || path === "/" || path.endsWith("/")) throw new Error(`invalid agentd control socket path: ${path}`);
   if (existsSync(path) && !lstatSync(path).isSocket()) throw new Error(`agentd control socket path is not a socket: ${path}`);
 }
@@ -128,4 +165,10 @@ function ensureSocketPathIsSafe(path: string): void {
 function errorCode(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && typeof error.code === "string") return error.code;
   return "control_error";
+}
+
+function controlError(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
 }

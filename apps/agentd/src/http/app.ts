@@ -18,6 +18,8 @@ export type AgentdHttpDependencies = {
   auth?: AuthService;
   /** Explicit test/development escape hatch; production server always supplies auth. */
   allowUnauthenticated?: boolean;
+  /** Production server keeps health non-ready until its control socket is listening. */
+  isReady?: () => boolean;
   corsOrigin: string;
   hookToken: string;
   getTerminal: () => Promise<TerminalEndpoint>;
@@ -160,6 +162,9 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       },
     )
     .get("/health", (c) => {
+      if (deps.isReady && !deps.isReady()) {
+        return c.json({ error: "agentd_unavailable", message: "agentd is still starting" }, 503);
+      }
       const response = {
         ok: true as const,
         service: "agentd" as const,

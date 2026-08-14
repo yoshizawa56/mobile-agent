@@ -88,7 +88,7 @@ The browser key is scoped to the web UI origin. Therefore changing the `agentd` 
 
 The web connection profile may store `webOrigin`, `agentdBaseUrl`, `serverId`, display name, and route metadata. It must not store private keys, access tokens, QR secrets, or WebSocket tickets in `localStorage`.
 
-The SQLite database is environment-scoped at its source and worktree-scoped at runtime. Each worktree receives a snapshot copy of the environment database and starts `agentd` with that copy. Use an explicit `AGENTD_DB_FILE` for each worktree; the recommended source layout is:
+The SQLite database is environment-scoped at its source and worktree-scoped at runtime. Each worktree receives a snapshot copy of the environment database and starts `agentd` with that copy. Give each worktree a distinct `AGENTD_INSTANCE_DIR`; its `agentd.sqlite` is the runtime copy. The recommended source layout is:
 
 ```text
 ~/.local/state/mobile-agent/<environment>/agentd.sqlite

@@ -16,7 +16,7 @@ if (!existsSync(binary)) {
 } else {
   const child = spawn(binary, process.argv.slice(2), {
     cwd: process.cwd(),
-    env: releaseEnvironment(process.env),
+    env: process.env,
     stdio: "inherit",
   });
   child.once("error", (error) => {
@@ -27,12 +27,4 @@ if (!existsSync(binary)) {
     if (signal) process.kill(process.pid, signal);
     else process.exitCode = code ?? 1;
   });
-}
-
-function releaseEnvironment(environment) {
-  const result = {
-    ...environment,
-    AGENT_PROFILE: environment.AGENT_PROFILE ?? "release",
-  };
-  return result;
 }

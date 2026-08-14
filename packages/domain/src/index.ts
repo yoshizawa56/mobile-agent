@@ -199,6 +199,9 @@ export type AgentSessionRecord = {
   baselineStatus: string | null;
   codexSessionBaseline: string | null;
   lastExitStatus: number | null;
+  executionId?: string | null;
+  executionPid?: number | null;
+  executionStartedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -206,6 +209,12 @@ export type AgentSessionRecord = {
 export type PaneRecord = {
   id: PaneId;
   tmuxPaneId: string;
+  /** Identifies the tmux server generation that owned this pane id. */
+  tmuxServerId?: string;
+  /** Links a live pane to the durable agent session it is executing. */
+  agentSessionId?: string | null;
+  /** Identifies the current execution so stale cleanup cannot clear a newer adoption. */
+  agentExecutionId?: string | null;
   sessionName: string;
   windowId: string;
   kind: PaneKind;
@@ -219,6 +228,9 @@ export type PaneRecord = {
   lastSeenAt: string;
   windowName?: string;
   windowIndex?: number;
+  // Present for live tmux snapshots. Persisted rows may omit the volatile
+  // position because pane indexes are scoped to a window and can be changed.
+  paneIndex?: number;
   left?: number;
   top?: number;
   width?: number;

@@ -91,17 +91,17 @@ export function PaneLayoutOverlay({
             >
               <span className={`window-tab-dot${attention ? " window-tab-dot-attention" : ""}`} />
               <span className="window-tab-label">{window.sessionName}</span>
-              <span className="window-tab-number">{windowNumber(window.id)}</span>
+              <span className="window-tab-number">{window.index}</span>
             </button>
           );
         })}
       </div>
 
       {activeWindow ? (
-        <div className="tmux-window-canvas" role="tabpanel" aria-label={`${activeWindow.sessionName} window ${windowNumber(activeWindow.id)}`}>
+        <div className="tmux-window-canvas" role="tabpanel" aria-label={`${activeWindow.sessionName} window ${activeWindow.index}`}>
           <div className="tmux-window-chrome">
             <span className="tmux-window-chrome-title">{activeWindow.sessionName}</span>
-            <span>window {windowNumber(activeWindow.id)}</span>
+            <span>window {activeWindow.index}</span>
             <span>{activeWindow.panes.length} panes</span>
           </div>
         <div className={`tmux-window-panes${useCompactPaneList ? " tmux-window-panes-compact" : activeWindow.hasGeometry ? " tmux-window-panes-real" : ` tmux-window-panes-${Math.min(activeWindow.panes.length, 3)}`}`}>
@@ -111,10 +111,11 @@ export function PaneLayoutOverlay({
                 key={pane.id}
                 type="button"
                 onClick={() => onSelect(pane)}
-                aria-label={`Select ${pane.name}`}
+                aria-label={`Select pane ${pane.paneIndex ?? "unknown"}: ${pane.name}`}
+                title={pane.tmuxPaneId}
                 style={activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined}
               >
-                <span className="tmux-layout-pane-id">{pane.tmuxPaneId}</span>
+                <span className="tmux-layout-pane-id">PANE {pane.paneIndex ?? "?"}</span>
                 <strong>{pane.name}</strong>
                 <small>{pane.agentId ?? "zsh"} · {paneStateLabel(pane.state)}</small>
               </button>
@@ -134,10 +135,6 @@ export function PaneLayoutOverlay({
 }
 
 const FOCUSABLE_SELECTOR = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
-
-function windowNumber(id: string): string {
-  return id.replace(/^@/, "");
-}
 
 function groupByWindow(panes: PaneSummary[]): Array<{
   id: string;
@@ -164,7 +161,7 @@ function groupByWindow(panes: PaneSummary[]): Array<{
       id: pane.windowId,
       sessionName: pane.sessionName,
       name: pane.windowName ?? "",
-      index: pane.windowIndex ?? (Number(windowNumber(pane.windowId)) || 0),
+      index: pane.windowIndex ?? (Number(windowIdNumber(pane.windowId)) || 0),
       windowWidth: pane.windowWidth,
       windowHeight: pane.windowHeight,
       hasGeometry: true,
@@ -177,6 +174,10 @@ function groupByWindow(panes: PaneSummary[]): Array<{
     windows.set(pane.windowId, current);
   }
   return [...windows.values()];
+}
+
+function windowIdNumber(id: string): string {
+  return id.replace(/^@/, "");
 }
 
 export function hasPaneGeometry(pane: Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">): boolean {

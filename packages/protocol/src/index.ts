@@ -72,6 +72,18 @@ export const agentdControlRequestSchema = z.discriminatedUnion("type", [
     type: z.literal("reject_pairing"),
     pairingId: z.string().min(16).max(256),
   }).strict(),
+  z.object({
+    type: z.literal("adopt_agent_session"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("release_agent_session"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
 ]);
 export type AgentdControlRequest = z.infer<typeof agentdControlRequestSchema>;
 
@@ -91,6 +103,18 @@ export const agentdControlResponseSchema = z.discriminatedUnion("type", [
     pairingId: z.string().min(16).max(256),
     status: z.enum(["approved", "rejected"]),
     deviceId: z.string().min(1).max(256).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("agent_session_adopted"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("agent_session_released"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
   }).strict(),
   z.object({
     type: z.literal("error"),
@@ -301,6 +325,9 @@ export const paneSummarySchema = z.object({
   // the client falls back to a readable stacked layout in that case.
   windowName: z.string().optional(),
   windowIndex: z.number().int().min(0).optional(),
+  // Pane indexes are scoped to a tmux window and are distinct from tmuxPaneId
+  // (the server-wide target such as %32).
+  paneIndex: z.number().int().min(0).optional(),
   left: z.number().int().min(0).optional(),
   top: z.number().int().min(0).optional(),
   width: z.number().int().min(1).optional(),

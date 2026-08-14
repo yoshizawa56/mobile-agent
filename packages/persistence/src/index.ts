@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
@@ -307,6 +307,15 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
       })
       .where(eq(agentSessions.id, record.id))
       .run();
+  }
+
+  public async setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<AgentSessionRecord | undefined> {
+    this.database
+      .update(agentSessions)
+      .set({ backendSessionId, updatedAt: new Date().toISOString() })
+      .where(and(eq(agentSessions.id, id), isNull(agentSessions.backendSessionId)))
+      .run();
+    return this.findById(id);
   }
 
   public async delete(id: string): Promise<void> {

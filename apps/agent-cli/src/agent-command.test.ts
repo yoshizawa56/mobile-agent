@@ -149,6 +149,134 @@ describe("agent command migration", () => {
     expect(repaired?.backendSessionId).toBe("codex-session-id");
   });
 
+  it("does not wait for a missing remote rollout before finishing", async () => {
+    const fixture = createFixture();
+    const fakeCodex = join(fixture.root, "fake-codex-no-rollout");
+    writeExecutable(fakeCodex, `#!/bin/sh
+if [ "\${1:-}" = "app-server" ]; then exit 0; fi
+exit 0
+`);
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: {
+        ...fixture.env,
+        AGENT_CODEX_BIN: fakeCodex,
+        CODEX_HOME: join(fixture.root, "codex-home"),
+      },
+      io: { out: output, err: output },
+    });
+    const startedAt = Date.now();
+    await expect(command.execute(["run", "codex", "--no-worktree", "-n", "missing"])).resolves.toBe(0);
+    const elapsedMs = Date.now() - startedAt;
+    command.close();
+
+    expect(elapsedMs).toBeLessThan(2_000);
+    expect(output.value()).toContain("rollout scan:");
+    expect(output.value()).toContain("files=0");
+    expect(output.value()).toContain("root=missing");
+  });
+
+  it("reports privacy-safe reasons for rejected Codex rollouts", async () => {
+    const fixture = createFixture({ AGENT_CODEX_REMOTE: "" });
+    const codexHome = join(fixture.root, "codex-home");
+    const sessionRoot = join(codexHome, "sessions", "diagnostic");
+    mkdirSync(sessionRoot, { recursive: true });
+    const workspaceRoot = realpathSync(fixture.workspace);
+    const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 16);
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const database = createAgentDatabase(fixture.database);
+    await new DrizzleAgentSessionRepository(database.db).insert({
+      ...sessionFixture("codex"),
+      id: "diagnostic-id",
+      name: "diagnostic",
+      workspaceId,
+      workspaceRoot,
+      workspaceName: "workspace",
+      backendSessionId: null,
+      codexRemote: "",
+      codexSessionBaseline: JSON.stringify({ codexSessions: ["baseline-session"] }),
+      createdAt,
+      updatedAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    database.close();
+
+    writeFileSync(join(sessionRoot, "invalid.jsonl"), "not-json\n");
+    writeFileSync(join(sessionRoot, "event.jsonl"), `${JSON.stringify({ type: "event" })}\n`);
+    writeFileSync(join(sessionRoot, "missing-id.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
+    writeFileSync(join(sessionRoot, "wrong-cwd.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "wrong-cwd", session_id: "wrong-cwd", cwd: "/other", originator: "codex-tui", thread_source: "user" } })}\n`);
+    writeFileSync(join(sessionRoot, "originator.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "originator", session_id: "originator", cwd: workspaceRoot, originator: "codex-cli", thread_source: "user" } })}\n`);
+    writeFileSync(join(sessionRoot, "subagent.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "subagent", session_id: "subagent", cwd: workspaceRoot, originator: "codex-tui", thread_source: "subagent" } })}\n`);
+    writeFileSync(join(sessionRoot, "baseline.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "baseline-session", session_id: "baseline-session", cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
+
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: { ...fixture.env, CODEX_HOME: codexHome },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["resume", "diagnostic"])).rejects.toThrow("no backend session ID");
+    command.close();
+
+    expect(output.value()).toContain("rollout scan:");
+    expect(output.value()).toContain("invalid_json=1");
+    expect(output.value()).toContain("not_session_meta=1");
+    expect(output.value()).toContain("missing_session_id=1");
+    expect(output.value()).toContain("cwd_mismatch=1");
+    expect(output.value()).toContain("unsupported_originator=1");
+    expect(output.value()).toContain("subagent=1");
+    expect(output.value()).toContain("baseline=1");
+    expect(output.value()).not.toContain("baseline-session");
+  });
+
+  it("does not archive a Codex thread when cleanup has no safe ID mapping", async () => {
+    const fixture = createFixture({ AGENT_CODEX_REMOTE: "" });
+    const codexHome = join(fixture.root, "codex-home");
+    const sessionRoot = join(codexHome, "sessions", "cleanup");
+    mkdirSync(sessionRoot, { recursive: true });
+    const workspaceRoot = realpathSync(fixture.workspace);
+    const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 16);
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const database = createAgentDatabase(fixture.database);
+    await new DrizzleAgentSessionRepository(database.db).insert({
+      ...sessionFixture("codex"),
+      id: "cleanup-id",
+      name: "cleanup",
+      workspaceId,
+      workspaceRoot,
+      workspaceName: "workspace",
+      backendSessionId: null,
+      codexRemote: "unix://",
+      codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
+      createdAt,
+      updatedAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    database.close();
+    writeFileSync(join(sessionRoot, "rollout.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "cleanup-session", session_id: "cleanup-session", cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
+
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: {
+        ...fixture.env,
+        CODEX_HOME: codexHome,
+      },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["cleanup", "cleanup"])).resolves.toBe(1);
+    command.close();
+
+    expect(output.value()).toContain("cannot archive Codex remote thread; session ID is missing");
+    expect(output.value()).toContain("session 'cleanup' retained because cleanup did not complete");
+    const verification = createAgentDatabase(fixture.database);
+    const stored = await new DrizzleAgentSessionRepository(verification.db).findByName(workspaceId, "cleanup");
+    verification.close();
+    expect(stored?.backendSessionId).toBeNull();
+  });
+
   it("captures legacy flat Codex session metadata", async () => {
     const fixture = createFixture({ AGENT_CODEX_REMOTE: "", TEST_AGENT_SESSION_ID: "legacy-codex-session" });
     const fakeCodex = join(fixture.root, "fake-codex");
@@ -203,7 +331,7 @@ describe("agent command migration", () => {
         codexRemote: "",
         codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
         createdAt,
-        updatedAt: createdAt,
+        updatedAt: new Date(Date.now() + 5_000).toISOString(),
       });
       writeFileSync(
         join(sessionRoot, `${name}.jsonl`),
@@ -226,6 +354,62 @@ describe("agent command migration", () => {
     const stored = await new DrizzleAgentSessionRepository(verification.db).findByName(workspaceId, "first");
     verification.close();
     expect(output.value()).toContain("cannot safely recover Codex session ID for 'first'");
+    expect(stored?.backendSessionId).toBeNull();
+  });
+
+  it("does not bind a rollout while another unbound Codex session uses the same directory", async () => {
+    const fixture = createFixture({ AGENT_CODEX_REMOTE: "" });
+    const codexHome = join(fixture.root, "codex-home");
+    const sessionRoot = join(codexHome, "sessions", "test");
+    mkdirSync(sessionRoot, { recursive: true });
+    const workspaceRoot = realpathSync(fixture.workspace);
+    const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 16);
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const database = createAgentDatabase(fixture.database);
+    const sessions = new DrizzleAgentSessionRepository(database.db);
+    await sessions.insert({
+      ...sessionFixture("codex"),
+      id: "target-id",
+      name: "target",
+      workspaceId,
+      workspaceRoot,
+      workspaceName: "workspace",
+      backendSessionId: null,
+      codexRemote: "",
+      codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
+      createdAt,
+      updatedAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    await sessions.insert({
+      ...sessionFixture("codex"),
+      id: "competing-id",
+      name: "competing",
+      workspaceId,
+      workspaceRoot,
+      workspaceName: "workspace",
+      backendSessionId: null,
+      codexRemote: "",
+      codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
+      createdAt,
+      updatedAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    database.close();
+    writeFileSync(join(sessionRoot, "rollout.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "competing-session", session_id: "competing-session", cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
+
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      databaseFile: fixture.database,
+      env: { ...fixture.env, CODEX_HOME: codexHome },
+      io: { out: output, err: output },
+    });
+    await expect(command.execute(["resume", "target"])).rejects.toThrow("no backend session ID");
+    command.close();
+
+    expect(output.value()).toContain("competing_session=1");
+    const verification = createAgentDatabase(fixture.database);
+    const stored = await new DrizzleAgentSessionRepository(verification.db).findByName(workspaceId, "target");
+    verification.close();
     expect(stored?.backendSessionId).toBeNull();
   });
 });

@@ -8,7 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
-import { AuthStore, createAgentDatabase, defaultAgentDatabaseFile, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
+import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, resolveAgentdPaths } from "@mobile-agent/persistence";
 import { AgentdControlServer } from "./auth/control.js";
 import { AuthService, type AuthContext } from "./auth/service.js";
 import { AgentdEventHub } from "./events.js";
@@ -53,8 +53,16 @@ export function createAgentdServer(options: AgentdOptions) {
   });
   const tmux = new TmuxAdapter();
   const viewportManager = new TmuxViewportManager(tmux);
-  const databaseFile = options.databaseFile ?? defaultDatabaseFile();
-  const database = createAgentDatabase(databaseFile);
+  const paths = resolveAgentdPaths(process.env, {
+    databaseFile: options.databaseFile,
+    controlSocket: options.controlSocket,
+  });
+  const databaseFile = paths.databaseFile;
+  const configuredDatabaseFile = options.databaseFile ?? process.env.AGENTD_DB_FILE ?? process.env.AGENT_DATABASE_FILE;
+  const usePrivateInstanceDirectory = Boolean(process.env.AGENTD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
+  const database = createAgentDatabase(databaseFile, {
+    instanceDirectory: databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
+  });
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
@@ -69,13 +77,13 @@ export function createAgentdServer(options: AgentdOptions) {
     webOrigin,
     agentdBaseUrl: options.agentdBaseUrl ?? process.env.AGENTD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
   });
-  const controlSocket = options.controlSocket ?? process.env.AGENTD_CONTROL_SOCKET ?? `${databaseFile === ":memory:" ? `${homedir()}/.local/state/mobile-agent/agentd` : databaseFile}.control.sock`;
   const controlServer = new AgentdControlServer({
-    socketPath: controlSocket,
+    socketPath: paths.controlSocket,
     auth,
     adoptAgentSession: (request) => adoptAgentSession(tmux, paneRepository, agentSessionRepository, request),
     releaseAgentSession: (request) => releaseAgentSession(tmux, paneRepository, agentSessionRepository, request),
   });
+  let controlReady = false;
   const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, "AGENTD_TMUX_POLL_INTERVAL_MS", defaultTmuxPollIntervalMs, 1);
   const paneCleanupIntervalMs = durationOption(options.paneCleanupIntervalMs, "AGENTD_PANE_CLEANUP_INTERVAL_MS", defaultPaneCleanupIntervalMs, 1);
   const paneRetentionMs = durationOption(options.paneRetentionMs, "AGENTD_PANE_RETENTION_MS", defaultPaneRetentionMs, 0);
@@ -102,6 +110,7 @@ export function createAgentdServer(options: AgentdOptions) {
 
   const app = createAgentdApp({
     auth,
+    isReady: () => controlReady,
     corsOrigin,
     hookToken,
     getTerminal: getLocalTerminal,
@@ -203,13 +212,19 @@ export function createAgentdServer(options: AgentdOptions) {
           logger.error("daemon.start_failed", errorFields(error));
           rejectStart(error);
         };
-        const onListening = () => {
+        const onListening = async () => {
           httpServer.removeListener("error", onError);
-          tmuxStateMonitor.start();
-          viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
-          controlServer.start();
-          logger.info("daemon.listening", { host: options.host, port: options.port });
-          resolveStart();
+          try {
+            tmuxStateMonitor.start();
+            viewportManager.configureHooks(`http://127.0.0.1:${options.port}/internal/tmux-hook`, hookToken);
+            await controlServer.start();
+            controlReady = true;
+            logger.info("daemon.listening", { host: options.host, port: options.port });
+            resolveStart();
+          } catch (error) {
+            logger.error("daemon.start_failed", errorFields(error));
+            rejectStart(error instanceof Error ? error : new Error(String(error)));
+          }
         };
 
         httpServer.once("error", onError);
@@ -242,6 +257,7 @@ export function createAgentdServer(options: AgentdOptions) {
       });
     },
     stop() {
+      controlReady = false;
       logger.info("daemon.stopping");
       tmuxStateMonitor.stop();
       terminalSessions.closeAll();
@@ -667,10 +683,6 @@ function tailscaleIp(): string | undefined {
   const result = spawnSync("tailscale", ["ip", "-4"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   const address = result.status === 0 ? result.stdout.trim().split("\n")[0] : "";
   return address || undefined;
-}
-
-function defaultDatabaseFile(): string {
-  return defaultAgentDatabaseFile(process.env);
 }
 
 function durationOption(value: number | undefined, environmentName: string, fallback: number, minimum: number): number {

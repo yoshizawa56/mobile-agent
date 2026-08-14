@@ -6,9 +6,12 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "development": "./src/index.ts",
-      "import": "./dist/index.js"
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./paths": {
+      "types": "./src/paths.ts",
+      "default": "./src/paths.ts"
     }
   },
   "scripts": {

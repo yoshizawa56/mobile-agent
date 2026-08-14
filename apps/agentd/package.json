@@ -6,25 +6,22 @@
   "type": "module",
   "exports": {
     "./server": {
-      "types": "./dist/server.d.ts",
-      "development": "./src/server.ts",
-      "import": "./dist/server.js"
+      "types": "./src/server-types.ts",
+      "default": "./src/server.ts"
     },
     "./daemon": {
-      "types": "./dist/daemon.d.ts",
-      "development": "./src/daemon.ts",
-      "import": "./dist/daemon.js"
+      "types": "./src/daemon.ts",
+      "default": "./src/daemon.ts"
     },
     "./tmux": {
-      "types": "./dist/tmux.d.ts",
-      "development": "./src/tmux.ts",
-      "import": "./dist/tmux.js"
+      "types": "./src/tmux.ts",
+      "default": "./src/tmux.ts"
     }
   },
   "scripts": {
     "build": "bunx --bun tsc -p tsconfig.build.json",
     "dev": "bun --watch src/index.ts",
-    "start": "bun dist/index.js",
+    "start": "bun src/index.ts",
     "test": "bun test src",
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },

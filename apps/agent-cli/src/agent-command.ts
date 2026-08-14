@@ -21,11 +21,11 @@ import {
   type LogLevel,
 } from "@mobile-agent/logging";
 import {
-  defaultAgentDatabaseFile,
   createAgentDatabase,
   DrizzleAgentSessionRepository,
   DrizzleWorkspaceRepository,
   recordAuditEvent,
+  resolveAgentdPaths,
   type AgentDatabase,
 } from "@mobile-agent/persistence";
 import { manageCodexThread } from "./codex-remote.js";
@@ -159,6 +159,7 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private readonly instanceDirectory: string | undefined;
   private readonly tmux: TmuxAdapter;
   private readonly logger: Logger;
   private readonly ownsLogger: boolean;
@@ -181,9 +182,14 @@ export class AgentCommand {
       showStack: options.logLevel === "debug",
     });
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-    this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
+    const paths = resolveAgentdPaths(this.env, { databaseFile: options.databaseFile });
+    this.hookOutputRoot = resolveFromRoot(paths.hookOutputDirectory, this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
-    this.databaseFile = options.databaseFile ?? defaultAgentDatabaseFile(this.env);
+    this.databaseFile = options.databaseFile ?? paths.databaseFile;
+    const configuredDatabaseFile = options.databaseFile ?? this.env.AGENTD_DB_FILE ?? this.env.AGENT_DATABASE_FILE;
+    this.instanceDirectory = this.databaseFile === ":memory:" || (configuredDatabaseFile?.trim() && !this.env.AGENTD_INSTANCE_DIR?.trim())
+      ? undefined
+      : paths.instanceDirectory;
     this.tmux = options.tmux ?? new TmuxAdapter(this.env.AGENTD_TMUX_SOCKET, undefined, this.env);
   }
 
@@ -1725,6 +1731,7 @@ export class AgentCommand {
     this.currentLogger.debug("database.opening", { databaseFile: this.databaseFile });
     this.database = createAgentDatabase(this.databaseFile, {
       migrationsFolder: this.env.AGENTD_MIGRATIONS_DIR ?? this.env.AGENT_MIGRATIONS_DIR,
+      instanceDirectory: this.instanceDirectory,
     });
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
@@ -1869,8 +1876,7 @@ function currentTmuxPane(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 function defaultControlSocket(env: NodeJS.ProcessEnv, databaseFile: string): string {
-  if (env.AGENTD_CONTROL_SOCKET) return env.AGENTD_CONTROL_SOCKET;
-  return `${databaseFile !== ":memory:" ? databaseFile : join(homedir(), ".local", "state", "mobile-agent", "agentd")}.control.sock`;
+  return resolveAgentdPaths(env, { databaseFile }).controlSocket;
 }
 
 function isControlSocketUnavailable(error: unknown): boolean {

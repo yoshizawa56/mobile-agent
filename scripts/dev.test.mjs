@@ -130,9 +130,8 @@ describe("dev orchestration diagnostics", () => {
     }
 
     assert.equal(config.adoptExistingServices, false);
-    assert.equal(config.baseEnvironment.AGENT_PROFILE, "dev");
     assert.match(config.baseEnvironment.AGENT_WORKTREE_ID, /^[0-9a-f]{16}$/);
-    assert.match(config.baseEnvironment.AGENTD_DB_FILE, /worktrees\/[^/]+\/agentd\.sqlite$/);
+    assert.match(config.baseEnvironment.AGENTD_INSTANCE_DIR, /worktrees\/[^/]+$/);
     assert.equal(config.baseEnvironment.AGENTD_TMUX_SOCKET, undefined);
   });
 

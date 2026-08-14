@@ -11,7 +11,6 @@ const outputPath = isAbsolute(output) ? output : join(repositoryRoot, output);
 
 mkdirSync(dirname(outputPath), { recursive: true });
 run(process.execPath, ["scripts/sync-embedded-migrations.mjs"], repositoryRoot);
-run(process.execPath, ["x", "--no-install", "turbo", "run", "build", "--filter=@mobile-agent/agent-cli..."], repositoryRoot);
 
 const buildArgs = ["build", "apps/agent-cli/src/index.ts", "--compile", "--minify"];
 if (target) buildArgs.push(`--target=${target}`);

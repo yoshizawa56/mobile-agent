@@ -62,14 +62,15 @@ MOBILE_AGENT_MIGRATION_COMMAND='bun run db:migrate' \
 agent run codex --worktree review
 ```
 
-`MOBILE_AGENT_MIGRATION_COMMAND` is executed with `sh -c` as a trusted local setting. The worktree database path is provided through `AGENTD_DB_FILE` and `AGENT_SQLITE_FILE`.
+`MOBILE_AGENT_MIGRATION_COMMAND` is executed with `sh -c` as a trusted local setting. The worktree instance directory is provided through `AGENTD_INSTANCE_DIR`; the generated database path is also exposed through the legacy `AGENTD_DB_FILE` and `AGENT_SQLITE_FILE` variables for migration scripts.
 
 ## Configuration
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `MOBILE_AGENT_BASE_DB_FILE` | `AGENTD_DB_FILE` or `~/.local/state/mobile-agent/agentd.sqlite` | Source SQLite database |
-| `MOBILE_AGENT_DB_PATH` | `.local/agentd.sqlite` | SQLite path inside the worktree |
+| `MOBILE_AGENT_BASE_DB_FILE` | `AGENTD_DB_FILE` or `$AGENTD_INSTANCE_DIR/agentd.sqlite` (default `~/.local/state/mobile-agent/agentd.sqlite`) | Source SQLite database |
+| `MOBILE_AGENT_INSTANCE_PATH` | `.local` | Instance directory inside the worktree |
+| `MOBILE_AGENT_DB_PATH` | `$MOBILE_AGENT_INSTANCE_PATH/agentd.sqlite` | Advanced database path override inside the worktree |
 | `MOBILE_AGENT_ENV_FILE` | `.env` | Environment file for ports and the database path |
 | `MOBILE_AGENT_PORT_STRIDE` | `3` | Port increment per checksum slot |
 | `MOBILE_AGENT_PORT_SLOT_COUNT` | `20000` | Number of checksum slots |

@@ -4,10 +4,11 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveAgentdPaths } from "./paths.js";
 import type {
   AgentSessionRepository,
   PaneFilter,
@@ -35,6 +36,8 @@ import {
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
+export { agentdControlSocketMaxBytes, defaultAgentdInstanceDirectory, resolveAgentdPaths, validateAgentdControlSocketPath } from "./paths.js";
+export type { AgentdInstancePaths, AgentdPathOverrides } from "./paths.js";
 export { AuthStore, AuthStoreError } from "./auth.js";
 export type {
   AuthDeviceRecord,
@@ -57,15 +60,30 @@ export type AgentDatabase = {
 
 export type AgentDatabaseOptions = {
   migrationsFolder?: string;
+  instanceDirectory?: string;
 };
 
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.AGENTD_DB_FILE ?? env.AGENT_DATABASE_FILE ?? joinHomeStatePath(env);
+  return resolveAgentdPaths(env).databaseFile;
 }
 
-export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memory:", options: AgentDatabaseOptions = {}): AgentDatabase {
-  if (file !== ":memory:") mkdirSync(dirname(resolve(file)), { recursive: true, mode: 0o700 });
-  const sqlite = new Database(file);
+export function createAgentDatabase(file: string | undefined = undefined, options: AgentDatabaseOptions = {}): AgentDatabase {
+  const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
+  const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
+  const configuredInstanceDirectory = file === undefined && process.env.AGENTD_INSTANCE_DIR?.trim()
+    ? resolveAgentdPaths(process.env).instanceDirectory
+    : undefined;
+  const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
+  if (databasePath !== ":memory:") {
+    if (instanceDirectory) {
+      const resolvedInstanceDirectory = resolve(instanceDirectory);
+      mkdirSync(resolvedInstanceDirectory, { recursive: true, mode: 0o700 });
+      chmodSync(resolvedInstanceDirectory, 0o700);
+    }
+    mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+  }
+  const sqlite = new Database(databasePath);
+  secureDatabaseFiles(databasePath);
   sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
   baselineLegacyDatabase(sqlite, migrationsFolder);
@@ -77,12 +95,26 @@ export function createAgentDatabase(file = process.env.AGENTD_DB_FILE ?? ":memor
     throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   ensureAuthSchema(sqlite);
+  secureDatabaseFiles(databasePath);
 
   return {
     db,
     sqlite,
     close: () => sqlite.close(),
   };
+}
+
+function secureDatabaseFiles(databasePath: string): void {
+  if (databasePath === ":memory:") return;
+  for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+    if (existsSync(path)) chmodSync(path, 0o600);
+  }
+}
+
+function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
+  const configured = [env.AGENTD_INSTANCE_DIR, env.AGENTD_DB_FILE, env.AGENT_DATABASE_FILE].some((value) => Boolean(value?.trim()));
+  if (!configured) return ":memory:";
+  return resolveAgentdPaths(env).databaseFile;
 }
 
 export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
@@ -497,11 +529,6 @@ function ensureAuthSchema(sqlite: Database): void {
 function ensureColumn(sqlite: Database, table: string, column: string, definition: string): void {
   const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((entry) => entry.name === column)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-}
-
-function joinHomeStatePath(env: NodeJS.ProcessEnv): string {
-  const home = env.HOME ?? homedir();
-  return `${home}/.local/state/mobile-agent/agentd.sqlite`;
 }
 
 function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {

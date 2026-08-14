@@ -1,9 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel } from "@mobile-agent/logging";
-import { defaultAgentDatabaseFile } from "@mobile-agent/persistence";
+import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import { createAgentdServer } from "./server.js";
 
 export type AgentdCliOptions = {
@@ -127,8 +126,9 @@ function isAgentdCommand(value: string): value is AgentdCommand {
 function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   let host = process.env.AGENTD_HOST ?? "127.0.0.1";
   let port = Number(process.env.AGENTD_PORT ?? 4317);
-  let pidFile = defaultAgentdPidFile(process.env);
-  let controlSocket = process.env.AGENTD_CONTROL_SOCKET;
+  const paths = resolveAgentdPaths(process.env);
+  let pidFile = paths.pidFile;
+  let controlSocket = paths.controlSocket;
   let webOrigin = process.env.AGENTD_WEB_ORIGIN;
   let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
   let logLevel = parseLogLevel(process.env.AGENT_LOG_LEVEL, "info");
@@ -157,16 +157,8 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
     else throw new Error(`unknown agent daemon option: ${argument}`);
   }
 
+  validateAgentdControlSocketPath(controlSocket);
   return { options: { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl, logLevel, logFile }, foreground };
-}
-
-function defaultAgentdPidFile(environment: NodeJS.ProcessEnv): string {
-  const configured = environment.AGENTD_PID_FILE;
-  if (configured) return resolve(configured);
-
-  const databaseFile = defaultAgentDatabaseFile(environment);
-  if (databaseFile !== ":memory:") return `${resolve(databaseFile)}.pid`;
-  return join(homedir(), ".local", "state", "mobile-agent", "agentd.pid");
 }
 
 async function statusAgentd(options: AgentdCliOptions): Promise<number> {

@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import {
   agentdControlRequestSchema,
   agentdControlResponseSchema,
@@ -26,13 +27,32 @@ export class AgentdControlServer {
     this.options.auth.setPairingClaimListener((notification) => this.notifyClaim(notification));
   }
 
-  public start(): void {
+  public start(): Promise<void> {
     ensureSocketPathIsSafe(this.options.socketPath);
     mkdirSync(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
     this.server = createServer((socket) => this.handleConnection(socket));
-    this.server.listen(this.options.socketPath, () => {
-      chmodSync(this.options.socketPath, 0o600);
-      this.started = true;
+    return new Promise((resolve, reject) => {
+      const server = this.server!;
+      const onError = (error: Error) => {
+        server.removeListener("listening", onListening);
+        this.server = undefined;
+        if (server.listening) server.close();
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        try {
+          chmodSync(this.options.socketPath, 0o600);
+          this.started = true;
+          resolve();
+        } catch (error) {
+          onError(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(this.options.socketPath);
     });
   }
 
@@ -137,6 +157,7 @@ export class AgentdControlServer {
 }
 
 function ensureSocketPathIsSafe(path: string): void {
+  validateAgentdControlSocketPath(path);
   if (!path || path === "/" || path.endsWith("/")) throw new Error(`invalid agentd control socket path: ${path}`);
   if (existsSync(path) && !lstatSync(path).isSocket()) throw new Error(`agentd control socket path is not a socket: ${path}`);
 }

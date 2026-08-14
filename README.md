@@ -39,7 +39,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-`mise.toml` pins Bun, Node, and tmux. `bun run dev` uses an explicit local profile derived from the current linked worktree: agentd, the Web app, and SQLite each get worktree-specific runtime state and the agentd process is never shared across different worktrees. The tmux socket and sessions are intentionally shared with the normal user tmux server. The launcher prints the selected agentd and Web URLs. It starts a fresh agentd and Web process for the current profile; an occupied port is treated as an error rather than adopting another process. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
+`mise.toml` pins Bun, Node, and tmux. `bun run dev` uses an explicit local profile derived from the current linked worktree: agentd, the Web app, and the agentd instance directory each get worktree-specific runtime state and the agentd process is never shared across different worktrees. The tmux socket and sessions are intentionally shared with the normal user tmux server. The launcher prints the selected agentd and Web URLs. It starts a fresh agentd and Web process for the current profile; an occupied port is treated as an error rather than adopting another process. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
 
 Before printing `ready`, the command checks agentd's `/health`, the web HTML shell, the web `/api/capabilities` proxy, and WebSocket upgrades for both `/terminal` and `/events`. If an owned child exits, `bun run dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
 
@@ -150,16 +150,16 @@ With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured u
 
 `agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
 
-`build:agent` builds the agent CLI's workspace dependencies before compiling the standalone executable, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
+`build:agent` compiles the agent CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 
 ### Running multiple agentd instances
 
-`agent daemon start` starts agentd in a detached process, waits for its health endpoint, and returns to the shell. Use `agent daemon status`, `agent daemon restart`, and `agent daemon stop` for its lifecycle. If launchd, systemd, or another process supervisor needs to own the foreground process directly, use `agent daemon start --foreground` (or the `apps/agentd` package entrypoint). When multiple agentd processes share the normal tmux server, give every process a distinct SQLite file, HTTP port, PID file, and `AGENT_WORKTREE_ID`. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
+`agent daemon start` starts agentd in a detached process, waits for its health endpoint, and returns to the shell. Use `agent daemon status`, `agent daemon restart`, and `agent daemon stop` for its lifecycle. If launchd, systemd, or another process supervisor needs to own the foreground process directly, use `agent daemon start --foreground` (or the `apps/agentd` package entrypoint). When multiple agentd processes share the normal tmux server, give every process a distinct `AGENTD_INSTANCE_DIR`, HTTP port, and `AGENT_WORKTREE_ID`. The instance directory contains the SQLite database, hook output, PID file, and control socket. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
 
 ```sh
 # profile-a.env and profile-b.env are local files and are not committed.
-# Each file contains a unique AGENTD_DB_FILE, AGENTD_PORT, AGENTD_PID_FILE,
-# and AGENT_WORKTREE_ID; leave AGENTD_TMUX_SOCKET unset to share tmux.
+# Each file contains a unique AGENTD_INSTANCE_DIR, AGENTD_PORT, and
+# AGENT_WORKTREE_ID; leave AGENTD_TMUX_SOCKET unset to share tmux.
 set -a; . ./profile-a.env; set +a
 agent daemon start
 ```
@@ -192,7 +192,7 @@ agent --help
 
 `bun run agent:install` downloads the latest stable GitHub Release for the current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at `~/.local/libexec/mobile-agent/agent`, and updates `~/.local/bin/agent` to point directly to that binary. Override the install paths with `AGENT_INSTALL_DIR` and `AGENT_BIN_DIR` when needed.
 
-The default state database is `~/.local/state/mobile-agent/agentd.sqlite`; override it with `AGENTD_DB_FILE`. Other overrides are `AGENTD_MIGRATIONS_DIR`, `AGENT_WORKTREE_ROOT`, and `AGENT_HOOK_OUTPUT_DIR`. Lifecycle state, registered workspace hook paths, and worktree copy patterns are stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
+The default agentd instance directory is `~/.local/state/mobile-agent`; it contains `agentd.sqlite`, `hooks/`, `agentd.sqlite.pid`, and the legacy `agentd.sqlite.control.sock`. Set `AGENTD_INSTANCE_DIR` to isolate another instance or worktree profile; configured instance directories use the shorter `agentd.sock` control socket. `AGENTD_DB_FILE`, `AGENT_HOOK_OUTPUT_DIR`, `AGENTD_PID_FILE`, and `AGENTD_CONTROL_SOCKET` remain available as legacy or service-manager overrides, but are not needed for normal use. Other overrides are `AGENTD_MIGRATIONS_DIR` and `AGENT_WORKTREE_ROOT`. Lifecycle state, registered workspace hook paths, and worktree copy patterns are stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 
 With `--worktree`, the CLI creates an `agent/<name>` branch by default. When `AGENT_WORKTREE_ID` is set, it uses an isolated worktree directory and `agent/<worktree-id>/<name>` branch namespace, which avoids collisions when the same session name is used from multiple linked worktrees.
 

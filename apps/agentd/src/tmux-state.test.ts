@@ -71,6 +71,7 @@ function createPane(paneId: string, sessionName: string): TmuxPane {
     sessionName,
     windowName: "shell",
     windowIndex: 0,
+    paneIndex: 0,
     cwd: "/tmp",
     command: "zsh",
     title: "zsh",

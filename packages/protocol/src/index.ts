@@ -131,6 +131,9 @@ export const paneSummarySchema = z.object({
   // the client falls back to a readable stacked layout in that case.
   windowName: z.string().optional(),
   windowIndex: z.number().int().min(0).optional(),
+  // Pane indexes are scoped to a tmux window and are distinct from tmuxPaneId
+  // (the server-wide target such as %32).
+  paneIndex: z.number().int().min(0).optional(),
   left: z.number().int().min(0).optional(),
   top: z.number().int().min(0).optional(),
   width: z.number().int().min(1).optional(),

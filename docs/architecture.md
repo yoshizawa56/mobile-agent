@@ -126,6 +126,8 @@ tmux pane identifiers can change after a pane is recreated or moved, so mobilePa
 @agentd.agent_id
 @agentd.workspace_id
 @agentd.profile_id
+@agentd.managed_session_id
+@agentd.parent_run_id
 ~~~
 
 ## 4. System architecture
@@ -478,6 +480,30 @@ agentd uses tmux Control Mode for management and monitoring:
 - use capture-pane for inspection and recovery when necessary.
 
 The initial mobile terminal does not project Control Mode events directly onto the screen. xterm.js owns the responsibility for interpreting terminal screen state.
+
+### 8.1.1 Managed launch path
+
+The managed desktop and mobile launch path is deliberately explicit:
+
+~~~text
+agent tmux new-session
+        |
+        +-- tmux default-command -> agent shell
+        |                            |
+        |                            +-- agent run codex|claude
+        |
+        +-- agentd tmux monitor: session/window/pane existence and geometry
+        +-- provider plugin: run-specific output, logs, and state observations
+~~~
+
+`agent tmux new-session` configures the initial pane and the tmux
+`default-command` to use `agent shell`. The application uses the same wrapper
+when it creates a session or pane. `agent shell` records the shell run ID and
+passes it as `AGENTD_PARENT_RUN_ID` to a nested `agent run`; the nested command
+then records its own agent/run type and restores the shell metadata when it
+exits. The tmux layer owns only infrastructure facts. Provider-specific state
+and approval detection belong to the corresponding plugin; screen parsing is a
+compatibility fallback for panes that predate the managed path.
 
 ### 8.2 Mobile terminal data route
 

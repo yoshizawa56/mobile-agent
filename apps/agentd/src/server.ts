@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { hostname, homedir, platform } from "node:os";
@@ -11,7 +11,7 @@ import { createAgentDatabase, defaultAgentDatabaseFile, DrizzlePaneRepository, D
 import { AgentdEventHub } from "./events.js";
 import { AgentdHttpError, createAgentdApp } from "./http/app.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
-import { TmuxAdapter, type TmuxPane } from "./tmux.js";
+import { buildAgentShellCommand, configureManagedTmuxSession, TmuxAdapter, type TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 import { TmuxViewportManager } from "./viewport-manager.js";
 import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
@@ -26,6 +26,8 @@ export type AgentdOptions = {
 
 export type { AgentdApp } from "./http/app.js";
 export { AgentdHttpError, createAgentdApp } from "./http/app.js";
+export { TmuxAdapter } from "./tmux.js";
+export type { TmuxPane } from "./tmux.js";
 
 export function createAgentdServer(options: AgentdOptions) {
   const tmux = new TmuxAdapter();
@@ -133,9 +135,26 @@ export function createAgentdServer(options: AgentdOptions) {
         httpServer.once("error", onError);
         httpServer.once("listening", onListening);
 
+        let createdDefaultSession = false;
         try {
-          tmux.ensureSession(defaultTarget, process.cwd());
+          const managedSessionId = randomUUID();
+          createdDefaultSession = tmux.ensureSession(
+            defaultTarget,
+            process.cwd(),
+            buildAgentShellCommand(undefined, {
+              AGENTD_MANAGED_SESSION_ID: managedSessionId,
+              AGENTD_MANAGED_SESSION_NAME: defaultTarget,
+            }),
+          );
+          if (createdDefaultSession) configureManagedTmuxSession(tmux, defaultTarget, managedSessionId);
         } catch (error) {
+          if (createdDefaultSession) {
+            try {
+              tmux.killSession(defaultTarget);
+            } catch {
+              // Preserve the warning; cleanup is best effort.
+            }
+          }
           console.warn(`agentd could not prepare default tmux session: ${error instanceof Error ? error.message : String(error)}`);
         }
 
@@ -187,13 +206,53 @@ async function createSession(
     throw new AgentdHttpError(409, "session_exists", `tmux session already exists: ${input.name}`);
   }
 
-  tmux.createSession(input.name, cwd);
-  const panes = await syncPanes(tmux, paneRepository);
-  const session = summarizeSessions(panes.filter((pane) => pane.sessionName === input.name)).find((candidate) => candidate.name === input.name);
-  if (!session || !panes.some((pane) => pane.sessionName === input.name)) {
-    throw new AgentdHttpError(503, "session_not_visible", "tmux created the session but agentd could not read it");
+  const managedSessionId = randomUUID();
+  let created = false;
+  try {
+    const binary = process.env.AGENTD_AGENT_COMMAND ?? "agent";
+    tmux.createSession(input.name, cwd, buildAgentShellCommand(binary, {
+      AGENTD_MANAGED_SESSION_ID: managedSessionId,
+      AGENTD_MANAGED_SESSION_NAME: input.name,
+    }));
+    created = true;
+    configureManagedTmuxSession(tmux, input.name, managedSessionId, binary);
+    const panes = await syncPanes(tmux, paneRepository);
+    const initialPane = panes.find((pane) => pane.sessionName === input.name);
+    if (initialPane) {
+      const shellPane: PaneRecord = {
+        ...initialPane,
+        kind: "shell",
+        agentId: null,
+        state: "running",
+      };
+      await paneRepository.upsert(shellPane);
+      tmux.setAgentPaneMetadata(initialPane.tmuxPaneId, "kind", "shell");
+      tmux.setAgentPaneMetadata(initialPane.tmuxPaneId, "agent_id", "");
+      tmux.setAgentPaneMetadata(initialPane.tmuxPaneId, "managed_session_id", managedSessionId);
+    }
+    const currentPanes = initialPane
+      ? panes.map((pane) => pane.id === initialPane.id ? {
+          ...pane,
+          kind: "shell" as const,
+          agentId: null,
+          state: "running" as const,
+        } : pane)
+      : panes;
+    const session = summarizeSessions(currentPanes.filter((pane) => pane.sessionName === input.name)).find((candidate) => candidate.name === input.name);
+    if (!session || !currentPanes.some((pane) => pane.sessionName === input.name)) {
+      throw new AgentdHttpError(503, "session_not_visible", "tmux created the session but agentd could not read it");
+    }
+    return session;
+  } catch (error) {
+    if (created) {
+      try {
+        tmux.killSession(input.name);
+      } catch {
+        // Preserve the original setup error; cleanup is best effort.
+      }
+    }
+    throw error;
   }
-  return session;
 }
 
 async function listCurrentPanes(
@@ -228,7 +287,11 @@ async function createPane(
   }
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
-  const command = input.kind === "agent" ? agentCommand(input, workspace) : undefined;
+  const command = buildAgentShellCommand(
+    process.env.AGENTD_AGENT_COMMAND ?? "agent",
+    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: input.name },
+    input.kind === "agent" ? agentCommand(input, workspace) : undefined,
+  );
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
     : createSplitPane(input, tmux, cwd, command);
@@ -298,12 +361,13 @@ async function syncPanes(
       cwd: tmuxPane.cwd,
       workspaceId: existing?.workspaceId ?? null,
       agentId,
-      runId: kind === "agent" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : null,
+      runId: tmuxPane.agentdRunId ?? existing?.runId ?? null,
       state,
       title: tmuxPane.title || null,
       lastSeenAt: now,
       windowName: tmuxPane.windowName,
       windowIndex: tmuxPane.windowIndex,
+      paneIndex: tmuxPane.paneIndex,
       left: tmuxPane.left,
       top: tmuxPane.top,
       width: tmuxPane.width,

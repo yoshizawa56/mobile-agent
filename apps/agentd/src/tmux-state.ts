@@ -85,6 +85,7 @@ function paneFingerprint(pane: TmuxPane): string {
     pane.windowId,
     pane.windowName,
     pane.windowIndex,
+    pane.paneIndex,
     pane.cwd,
     pane.command,
     pane.title,
@@ -100,6 +101,8 @@ function paneFingerprint(pane: TmuxPane): string {
     pane.agentdKind,
     pane.agentdAgentId,
     pane.agentdRunId,
+    pane.agentdManagedSessionId,
+    pane.agentdParentRunId,
   ]);
 }
 

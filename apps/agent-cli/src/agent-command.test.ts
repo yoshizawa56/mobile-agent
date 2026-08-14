@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { TmuxAdapter } from "@mobile-agent/agentd/tmux";
 import type { AgentSessionRecord } from "@mobile-agent/domain";
 import { createAgentDatabase, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentCommand, buildResumeCommand, buildRunCommand } from "./agent-command.js";
@@ -16,6 +17,73 @@ afterEach(() => {
 });
 
 describe("agent command migration", () => {
+  it("creates a managed tmux session with an agent shell default", async () => {
+    const fixture = createFixture();
+    const tmux = new RecordingTmuxAdapter();
+    const output = captureOutput();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      env: { ...fixture.env, AGENTD_AGENT_COMMAND: "/opt/mobile-agent/agent" },
+      io: { out: output, err: output },
+      tmux,
+    });
+
+    await expect(command.execute(["tmux", "new-session", "-s", "work", "-c", fixture.workspace, "--detached"])).resolves.toBe(0);
+    command.close();
+
+    expect(tmux.created).toMatchObject({ name: "work", cwd: realpathSync(fixture.workspace) });
+    expect(tmux.created?.command).toContain("'/opt/mobile-agent/agent' shell");
+    expect(tmux.options).toEqual([{ name: "work", key: "default-command", value: "'/opt/mobile-agent/agent' shell" }]);
+    expect(tmux.environments).toEqual([
+      { name: "work", key: "AGENTD_MANAGED_SESSION_ID", value: expect.any(String) },
+      { name: "work", key: "AGENTD_MANAGED_SESSION_NAME", value: "work" },
+    ]);
+    expect(tmux.sessionMetadata).toEqual([
+      { name: "work", field: "managed_session_id", value: expect.any(String) },
+      { name: "work", field: "managed", value: "1" },
+      { name: "work", field: "wrapper", value: "agent-shell" },
+    ]);
+    expect(output.value()).toMatch(/created managed tmux session 'work' \([0-9a-f-]+\)/);
+  });
+
+  it("passes the wrapped shell context to a child agent command", async () => {
+    const fixture = createFixture();
+    const child = join(fixture.root, "child-command");
+    writeExecutable(child, `#!/bin/sh\nprintf 'parent=%s shell=%s\\n' "$AGENTD_PARENT_RUN_ID" "$AGENTD_SHELL_RUN_ID" >>"$TEST_AGENT_LOG"\n`);
+    const tmux = new RecordingTmuxAdapter();
+    const command = new AgentCommand({
+      cwd: fixture.workspace,
+      env: {
+        ...fixture.env,
+        TMUX_PANE: "%7",
+        AGENTD_MANAGED_SESSION_ID: "managed-session",
+        AGENTD_MANAGED_SESSION_NAME: "work",
+        AGENTD_PANE_NAME: "terminal-shell",
+      },
+      tmux,
+    });
+
+    await expect(command.execute(["shell", "--exit-after-command", "--", child])).resolves.toBe(0);
+    command.close();
+
+    const log = readFileSync(fixture.log, "utf8");
+    expect(log).toMatch(/parent=[0-9a-f-]+ shell=[0-9a-f-]+/);
+    expect(tmux.paneMetadata.filter((entry) => entry.field === "kind").map((entry) => entry.value)).toEqual(["shell", "shell"]);
+    expect(tmux.paneMetadata.some((entry) => entry.field === "managed_session_id" && entry.value === "managed-session")).toBe(true);
+    expect(tmux.paneMetadata.some((entry) => entry.field === "pane_name" && entry.value === "terminal-shell")).toBe(true);
+  });
+
+  it("rolls back a partially configured managed tmux session", async () => {
+    const fixture = createFixture();
+    const tmux = new RecordingTmuxAdapter({ failOnSessionOption: true });
+    const command = new AgentCommand({ cwd: fixture.workspace, env: fixture.env, tmux });
+
+    await expect(command.execute(["tmux", "new-session", "-s", "broken", "--detached"])).rejects.toThrow();
+    command.close();
+
+    expect(tmux.killed).toEqual(["broken"]);
+  });
+
   it.each([
     { name: "injects Codex defaults", backend: "codex" as const, expected: ["codex", "--profile", "local-agent", "--remote", "unix://", "--cd", "/workspace"] },
     { name: "injects Claude lifecycle flags", backend: "claude" as const, expected: ["claude", "--name", "review", "--session-id", "claude-session", "--permission-mode", "auto"] },
@@ -169,6 +237,54 @@ function createFixture(extraEnv: Record<string, string> = {}) {
 function writeExecutable(path: string, content: string): void {
   writeFileSync(path, content, { mode: 0o700 });
   chmodSync(path, 0o700);
+}
+
+class RecordingTmuxAdapter extends TmuxAdapter {
+  public created?: { name: string; cwd: string; command?: string };
+  public options: Array<{ name: string; key: string; value: string }> = [];
+  public environments: Array<{ name: string; key: string; value: string }> = [];
+  public sessionMetadata: Array<{ name: string; field: "managed_session_id" | "managed" | "wrapper"; value: string }> = [];
+  public paneMetadata: Array<{ paneId: string; field: string; value: string }> = [];
+  public killed: string[] = [];
+  private readonly failOnSessionOption: boolean;
+
+  public constructor(options: { failOnSessionOption?: boolean } = {}) {
+    super("/private/tmp/mobile-agent-cli-test.sock");
+    this.failOnSessionOption = options.failOnSessionOption ?? false;
+  }
+
+  public override hasSession(): boolean {
+    return false;
+  }
+
+  public override createSession(name: string, cwd: string, command?: string): void {
+    this.created = { name, cwd, command };
+  }
+
+  public override setSessionOption(name: string, key: string, value: string): void {
+    if (this.failOnSessionOption) throw new Error("simulated tmux option failure");
+    this.options.push({ name, key, value });
+  }
+
+  public override killSession(name: string): void {
+    this.killed.push(name);
+  }
+
+  public override setSessionEnvironment(name: string, key: string, value: string): void {
+    this.environments.push({ name, key, value });
+  }
+
+  public override setAgentSessionMetadata(name: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
+    this.sessionMetadata.push({ name, field, value });
+  }
+
+  public override setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id", value: string): void {
+    this.paneMetadata.push({ paneId, field, value });
+  }
+
+  public override attachSession(): number {
+    return 0;
+  }
 }
 
 function captureOutput(): Writable & { value: () => string } {

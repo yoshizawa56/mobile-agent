@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { buildAgentShellCommand, configureManagedTmuxSession, TmuxAdapter } from "@mobile-agent/agentd/tmux";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -33,6 +34,7 @@ export type AgentCommandOptions = {
   io?: AgentCommandIO;
   databaseFile?: string;
   repositoryRoot?: string;
+  tmux?: TmuxAdapter;
 };
 
 type WorkspaceContext = WorkspaceRecord;
@@ -61,6 +63,18 @@ type ProcessResult = {
   interrupted: boolean;
 };
 
+type ShellOptions = {
+  shell?: string;
+  command: string[];
+  exitAfterCommand: boolean;
+};
+
+type TmuxNewSessionOptions = {
+  name: string;
+  cwd: string;
+  detached: boolean;
+};
+
 const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const defaultCodexProfile = "local-agent";
 
@@ -79,6 +93,7 @@ export class AgentCommand {
   private readonly hookOutputRoot: string;
   private readonly defaultCodexRemote: string;
   private readonly databaseFile: string;
+  private readonly tmux: TmuxAdapter;
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
@@ -91,6 +106,7 @@ export class AgentCommand {
     this.hookOutputRoot = resolveFromRoot(this.env.AGENT_HOOK_OUTPUT_DIR ?? join(homedir(), ".local", "state", "mobile-agent", "hooks"), this.repositoryRoot);
     this.defaultCodexRemote = this.env.AGENT_CODEX_REMOTE === undefined ? "unix://" : this.env.AGENT_CODEX_REMOTE;
     this.databaseFile = options.databaseFile ?? defaultAgentDatabaseFile(this.env);
+    this.tmux = options.tmux ?? new TmuxAdapter(this.env.AGENTD_TMUX_SOCKET, undefined, this.env);
   }
 
   public close(): void {
@@ -105,6 +121,14 @@ export class AgentCommand {
         if (backend !== "codex" && backend !== "claude") throw new AgentCommandError("run requires codex or claude");
         return this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
       }
+      case "shell":
+        if (args.includes("-h") || args.includes("--help")) {
+          this.write("Usage: agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]\n");
+          return 0;
+        }
+        return this.runShell(this.parseShellOptions(args.slice(1)));
+      case "tmux":
+        return this.runTmux(args.slice(1));
       case "resume":
         if (args[1] === "-h" || args[1] === "--help") {
           this.write("Usage: agent resume [--global] NAME [-- BACKEND_ARGS...]\n");
@@ -232,6 +256,131 @@ export class AgentCommand {
       codexProfile,
       backendArgs,
     };
+  }
+
+  private parseShellOptions(args: string[]): ShellOptions {
+    let shell: string | undefined;
+    let exitAfterCommand = false;
+    let command: string[] = [];
+
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index]!;
+      if (argument === "--") {
+        command = args.slice(index + 1);
+        break;
+      }
+      if (argument === "--shell") shell = requireOptionValue(argument, args[++index]);
+      else if (argument.startsWith("--shell=")) shell = argument.slice("--shell=".length);
+      else if (argument === "--exit-after-command") exitAfterCommand = true;
+      else throw new AgentCommandError(`unknown shell option: ${argument}`);
+    }
+
+    if (exitAfterCommand && command.length === 0) throw new AgentCommandError("--exit-after-command requires a command after --");
+    return { shell, command, exitAfterCommand };
+  }
+
+  private async runShell(options: ShellOptions): Promise<number> {
+    const shellRunId = this.env.AGENTD_SHELL_RUN_ID ?? randomUUID();
+    const paneName = this.env.AGENTD_PANE_NAME ?? this.env.AGENTD_MANAGED_SESSION_NAME ?? "shell";
+    const shellEnvironment: NodeJS.ProcessEnv = {
+      ...this.env,
+      AGENTD_SHELL_RUN_ID: shellRunId,
+      AGENTD_SHELL_PARENT_RUN_ID: this.env.AGENTD_PARENT_RUN_ID ?? "",
+      AGENTD_PARENT_RUN_ID: shellRunId,
+      AGENTD_WRAPPED_SHELL: "1",
+    };
+    const shellMetadataEnvironment: NodeJS.ProcessEnv = {
+      ...shellEnvironment,
+      AGENTD_PARENT_RUN_ID: shellEnvironment.AGENTD_SHELL_PARENT_RUN_ID,
+    };
+    this.markCurrentPane({ kind: "shell", agentId: null, runId: shellRunId, name: paneName }, shellMetadataEnvironment);
+
+    try {
+      if (options.command.length > 0) {
+        const result = await spawnAttached(options.command[0]!, options.command.slice(1), this.cwd, shellEnvironment);
+        if (options.exitAfterCommand) return result.code;
+      }
+
+      const shellBinary = resolveExecutable(options.shell ?? this.env.SHELL ?? "sh", this.env);
+      return await spawnAttached(shellBinary, ["-i"], this.cwd, shellEnvironment).then((result) => result.code);
+    } finally {
+      this.restoreCurrentPaneMetadata(shellMetadataEnvironment);
+    }
+  }
+
+  private async runTmux(args: string[]): Promise<number> {
+    const [subcommand = "", ...rest] = args;
+    if (subcommand === "" || subcommand === "-h" || subcommand === "--help") {
+      this.write("Usage: agent tmux new-session [-s NAME] [-c PATH] [--detached]\n");
+      return subcommand === "" ? 2 : 0;
+    }
+    if (subcommand !== "new-session") throw new AgentCommandError(`unknown tmux command: ${subcommand}`);
+    if (rest.includes("-h") || rest.includes("--help")) {
+      this.write("Usage: agent tmux new-session [-s NAME] [-c PATH] [--detached]\n");
+      return 0;
+    }
+
+    const options = parseTmuxNewSessionOptions(rest, this.cwd);
+    if (this.tmux.hasSession(options.name)) throw new AgentCommandError(`tmux session already exists: ${options.name}`);
+
+    const managedSessionId = randomUUID();
+    const binary = this.env.AGENTD_AGENT_COMMAND ?? "agent";
+    const firstPaneCommand = buildAgentShellCommand(binary, {
+      AGENTD_MANAGED_SESSION_ID: managedSessionId,
+      AGENTD_MANAGED_SESSION_NAME: options.name,
+    });
+    let created = false;
+    try {
+      this.tmux.createSession(options.name, options.cwd, firstPaneCommand);
+      created = true;
+      configureManagedTmuxSession(this.tmux, options.name, managedSessionId, binary);
+    } catch (error) {
+      if (created) {
+        try {
+          this.tmux.killSession(options.name);
+        } catch {
+          // Preserve the original setup error; cleanup is best effort.
+        }
+      }
+      throw error;
+    }
+
+    this.write(`agent: created managed tmux session '${options.name}' (${managedSessionId})\n`);
+    if (options.detached) return 0;
+    return this.tmux.attachSession(options.name);
+  }
+
+  private markCurrentPane(
+    input: { kind: "shell" | "agent"; agentId: string | null; runId: string; name: string },
+    environment = this.env,
+  ): void {
+    const paneId = environment.TMUX_PANE;
+    if (!paneId) return;
+    try {
+      this.tmux.setAgentPaneMetadata(paneId, "kind", input.kind);
+      this.tmux.setAgentPaneMetadata(paneId, "agent_id", input.agentId ?? "");
+      this.tmux.setAgentPaneMetadata(paneId, "run_id", input.runId);
+      this.tmux.setAgentPaneMetadata(paneId, "pane_name", input.name);
+      this.tmux.setAgentPaneMetadata(paneId, "managed_session_id", environment.AGENTD_MANAGED_SESSION_ID ?? "");
+      const parentRunId = input.kind === "shell"
+        ? environment.AGENTD_SHELL_PARENT_RUN_ID ?? environment.AGENTD_PARENT_RUN_ID ?? ""
+        : environment.AGENTD_PARENT_RUN_ID ?? "";
+      this.tmux.setAgentPaneMetadata(paneId, "parent_run_id", parentRunId);
+    } catch {
+      // A shell can also run outside tmux or against a server that disappears
+      // while the wrapper is starting. The wrapper must remain usable there.
+    }
+  }
+
+  private restoreCurrentPaneMetadata(environment = this.env): void {
+    const shellRunId = environment.AGENTD_SHELL_RUN_ID;
+    if (!shellRunId) return;
+    this.markCurrentPane({
+      kind: "shell",
+      agentId: null,
+      runId: shellRunId,
+      name: environment.AGENTD_PANE_NAME ?? environment.AGENTD_MANAGED_SESSION_NAME ?? "shell",
+    }, environment);
   }
 
   private parseResumeOptions(args: string[]): ResumeOptions {
@@ -388,8 +537,13 @@ export class AgentCommand {
     current = updateSession(current, { status: "running" });
     await this.sessions.update(current);
     const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
+    this.markCurrentPane({ kind: "agent", agentId: backend, runId: current.id, name: current.name });
     const result = await this.runBackend(current, command, runDir, startedAt);
-    return this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
+    try {
+      return await this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
+    } finally {
+      this.restoreCurrentPaneMetadata();
+    }
   }
 
   private async resumeSession(options: ResumeOptions): Promise<number> {
@@ -406,8 +560,13 @@ export class AgentCommand {
     const current = updateSession(session, { status: "resuming", resuming: true });
     await this.sessions.update(current);
     const startedAt = Math.floor(Date.now() / 1000);
+    this.markCurrentPane({ kind: "agent", agentId: session.backend, runId: current.id, name: current.name });
     const result = await this.runBackend(current, command, runDir, startedAt);
-    return this.finalizeSession(current, result, startedAt, runDir, true);
+    try {
+      return await this.finalizeSession(current, result, startedAt, runDir, true);
+    } finally {
+      this.restoreCurrentPaneMetadata();
+    }
   }
 
   private async listSessions(options: { global: boolean; names: boolean; json: boolean }): Promise<number> {
@@ -666,7 +825,11 @@ export class AgentCommand {
   private async runBackend(session: AgentSessionRecord, command: string[], runDir: string, startedAt: number): Promise<ProcessResult> {
     this.setTerminalTitle(session.name);
     const nameWatcher = session.backend === "codex" && session.backendSessionId === null && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
-    const result = await spawnAttached(command[0]!, command.slice(1), runDir, this.env);
+    const result = await spawnAttached(command[0]!, command.slice(1), runDir, {
+      ...this.env,
+      AGENTD_RUN_ID: session.id,
+      AGENTD_AGENT_ID: session.backend,
+    });
     if (nameWatcher) await nameWatcher.stop();
     this.restoreTerminalTitle();
     return result;
@@ -917,6 +1080,8 @@ export class AgentCommand {
 
   private printUsage(): void {
     this.write(`Usage:
+  agent tmux new-session [-s NAME] [-c PATH] [--detached]
+  agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]
   agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
   agent resume [--global] NAME [-- BACKEND_ARGS...]
   agent list [--global] [--names|--json]
@@ -1037,6 +1202,30 @@ function localTimestamp(): string {
 function requireOptionValue(option: string, value: string | undefined): string {
   if (!value || value.startsWith("-")) throw new AgentCommandError(`${option} requires a value`);
   return value;
+}
+
+function parseTmuxNewSessionOptions(args: string[], defaultCwd: string): TmuxNewSessionOptions {
+  let name = "agentd";
+  let cwd = defaultCwd;
+  let detached = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "-s" || argument === "--name") name = requireOptionValue(argument, args[++index]);
+    else if (argument.startsWith("--name=")) name = argument.slice("--name=".length);
+    else if (argument === "-c" || argument === "--cwd") cwd = resolveFromRoot(requireOptionValue(argument, args[++index]), defaultCwd);
+    else if (argument.startsWith("--cwd=")) cwd = resolveFromRoot(argument.slice("--cwd=".length), defaultCwd);
+    else if (argument === "-d" || argument === "--detached") detached = true;
+    else throw new AgentCommandError(`unknown tmux new-session option: ${argument}`);
+  }
+
+  validateSessionName(name);
+  if (!existsSync(cwd)) throw new AgentCommandError(`tmux session cwd does not exist: ${cwd}`);
+  return { name, cwd: realpathSafe(cwd), detached };
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function validateSessionName(name: string): void {

@@ -166,6 +166,9 @@ export type PaneRecord = {
   lastSeenAt: string;
   windowName?: string;
   windowIndex?: number;
+  // Present for live tmux snapshots. Persisted rows may omit the volatile
+  // position because pane indexes are scoped to a window and can be changed.
+  paneIndex?: number;
   left?: number;
   top?: number;
   width?: number;

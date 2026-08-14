@@ -13,6 +13,63 @@ import { AgentCommand, buildResumeCommand, buildRunCommand } from "./agent-comma
 
 const temporaryRoots: string[] = [];
 
+type WorktreeNameCase = {
+  name: string;
+  input: string;
+  normalized: string;
+  assert: readonly ["creates-canonical-worktree"];
+};
+
+const worktreeNameCases = [
+  {
+    name: "uses the normalized name for the worktree and session",
+    input: "API review",
+    normalized: "api-review",
+    assert: ["creates-canonical-worktree"],
+  },
+] satisfies readonly WorktreeNameCase[];
+
+type LookupCase = {
+  name: string;
+  reference: string;
+  sessionNames: readonly string[];
+  expected: { status?: number; error?: string; remaining: readonly string[] };
+  assert: readonly ("returns-success" | "returns-error" | "keeps-unmatched-sessions")[];
+};
+
+const lookupCases = [
+  {
+    name: "uses an exact legacy name before normalized lookup",
+    reference: "Review",
+    sessionNames: ["Review", "review"],
+    expected: { status: 0, remaining: ["review"] },
+    assert: ["returns-success", "keeps-unmatched-sessions"],
+  },
+  {
+    name: "rejects a workspace-qualified reference without global mode",
+    reference: "other/bar",
+    sessionNames: ["bar"],
+    expected: { error: "workspace-qualified session references require --global", remaining: ["bar"] },
+    assert: ["returns-error", "keeps-unmatched-sessions"],
+  },
+] satisfies readonly LookupCase[];
+
+type CollisionCase = {
+  name: string;
+  existingName: string;
+  requestedName: string;
+  assert: readonly ["rejects-collision", "keeps-existing-session"];
+};
+
+const collisionCases = [
+  {
+    name: "rejects a new canonical name that collides with a legacy name",
+    existingName: "Review",
+    requestedName: "review",
+    assert: ["rejects-collision", "keeps-existing-session"],
+  },
+] satisfies readonly CollisionCase[];
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -549,7 +606,119 @@ exit 0
     verification.close();
     expect(stored?.backendSessionId).toBeNull();
   });
+
+  it.each(worktreeNameCases)("$name", async (row) => {
+    const fixture = createFixture();
+    const worktreeRoot = realpathSync(fixture.worktree);
+    const output = captureOutput();
+    const command = new AgentCommand({ cwd: fixture.workspace, databaseFile: fixture.database, env: fixture.env, io: { out: output, err: output } });
+    try {
+      await expect(command.execute(["run", "claude", "--worktree", row.input])).resolves.toBe(0);
+    } finally {
+      command.close();
+    }
+
+    assertNamedAssertions(row.name, row.assert, {
+      "creates-canonical-worktree": () => {
+        expect(readFileSync(fixture.log, "utf8")).toContain(`backend cwd=${worktreeRoot}/${row.normalized}`);
+        expect(output.value()).toContain(`session '${row.normalized}' cleaned up`);
+      },
+    });
+  });
+
+  it.each(lookupCases)("$name", async (row) => {
+    const fixture = createFixture();
+    const workspaceId = await seedSessionRecords(fixture, row.sessionNames);
+    const output = captureOutput();
+    const command = new AgentCommand({ cwd: fixture.workspace, databaseFile: fixture.database, env: fixture.env, io: { out: output, err: output } });
+    let status: number | undefined;
+    let error: unknown;
+    try {
+      try {
+        status = await command.execute(["cleanup", "--force", row.reference]);
+      } catch (caught) {
+        error = caught;
+      }
+    } finally {
+      command.close();
+    }
+    const remaining = await storedSessionNames(fixture, workspaceId);
+
+    assertNamedAssertions(row.name, row.assert, {
+      "returns-success": () => expect(status).toBe(row.expected.status),
+      "returns-error": () => expect(error).toBeInstanceOf(Error),
+      "keeps-unmatched-sessions": () => {
+        if (row.expected.error) expect(error instanceof Error ? error.message : String(error)).toContain(row.expected.error);
+        expect(remaining).toEqual(row.expected.remaining);
+      },
+    });
+  });
+
+  it.each(collisionCases)("$name", async (row) => {
+    const fixture = createFixture();
+    const workspaceId = await seedSessionRecords(fixture, [row.existingName]);
+    const output = captureOutput();
+    const command = new AgentCommand({ cwd: fixture.workspace, databaseFile: fixture.database, env: fixture.env, io: { out: output, err: output } });
+    let error: unknown;
+    try {
+      await command.execute(["run", "claude", "--no-worktree", "--name", row.requestedName]);
+    } catch (caught) {
+      error = caught;
+    } finally {
+      command.close();
+    }
+    const remaining = await storedSessionNames(fixture, workspaceId);
+
+    assertNamedAssertions(row.name, row.assert, {
+      "rejects-collision": () => expect(error instanceof Error ? error.message : String(error)).toContain("session name already exists"),
+      "keeps-existing-session": () => expect(remaining).toEqual([row.existingName]),
+    });
+  });
 });
+
+function assertNamedAssertions(
+  rowName: string,
+  assertions: readonly string[],
+  checks: Record<string, () => void>,
+): void {
+  const failures: Error[] = [];
+  for (const assertion of assertions) {
+    try {
+      const check = checks[assertion];
+      if (!check) throw new Error(`unknown assertion '${assertion}'`);
+      check();
+    } catch (error) {
+      failures.push(new Error(`${assertion}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }));
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `${rowName} failed`);
+}
+
+async function seedSessionRecords(fixture: ReturnType<typeof createFixture>, names: readonly string[]): Promise<string> {
+  const workspaceRoot = realpathSync(fixture.workspace);
+  const workspaceId = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 16);
+  const database = createAgentDatabase(fixture.database);
+  const sessions = new DrizzleAgentSessionRepository(database.db);
+  for (const [index, name] of names.entries()) {
+    await sessions.insert({
+      ...sessionFixture("claude"),
+      id: `legacy-session-${index}`,
+      name,
+      workspaceId,
+      workspaceRoot,
+      workspaceName: "workspace",
+    });
+  }
+  database.close();
+  return workspaceId;
+}
+
+async function storedSessionNames(fixture: ReturnType<typeof createFixture>, workspaceId: string): Promise<string[]> {
+  const database = createAgentDatabase(fixture.database);
+  const sessions = await new DrizzleAgentSessionRepository(database.db).list(workspaceId);
+  database.close();
+  return sessions.map((session) => session.name);
+}
 
 function createFixture(extraEnv: Record<string, string> = {}) {
   const root = mkdtempSync(join(tmpdir(), "mobile-agent-cli-test-"));

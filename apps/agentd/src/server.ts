@@ -5,7 +5,7 @@ import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer, type WebSocket } from "ws";
-import { paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
+import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
 import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, resolveAgentdPaths } from "@mobile-agent/persistence";
@@ -390,10 +390,12 @@ async function createPane(
   }
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
+  const paneName = input.kind === "agent" ? normalizeAgentSessionName(input.name) : input.name;
+  const commandInput = paneName === input.name ? input : { ...input, name: paneName };
   const command = buildAgentShellCommand(
     resolveAgentCommand(),
-    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: input.name },
-    input.kind === "agent" ? agentCommand(input, workspace) : undefined,
+    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: paneName },
+    input.kind === "agent" ? agentCommand(commandInput, workspace) : undefined,
   );
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
@@ -410,14 +412,14 @@ async function createPane(
   const record: PaneSummary = {
     ...current,
     kind: input.kind,
-    name: input.name,
+    name: paneName,
     workspaceId: input.workspaceId ?? current.workspaceId,
     agentId: input.agentId,
     state: input.kind === "agent" ? "starting" : "running",
   };
   await repository.upsert(record);
   tmux.setAgentPaneMetadata(tmuxPaneId, "pane_id", record.id);
-  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_name", input.name);
+  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_name", paneName);
   tmux.setAgentPaneMetadata(tmuxPaneId, "agent_id", input.agentId ?? "");
   tmux.setAgentPaneMetadata(tmuxPaneId, "kind", input.kind);
   tmux.setAgentPaneMetadata(tmuxPaneId, "workspace_id", input.workspaceId ?? "");

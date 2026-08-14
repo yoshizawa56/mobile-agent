@@ -63,7 +63,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("");
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
-  const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>("workspace");
+  const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>("worktree");
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("window");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>(null);
   const [newPaneError, setNewPaneError] = useState<string | null>(null);
@@ -118,6 +118,12 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const workspaces = workspacesQuery.data ?? [];
   const workspaceStatus = queryStatus(workspacesQuery.status);
   const workspaceError = errorMessage(workspacesQuery.error);
+
+  useEffect(() => {
+    if (stage !== "new-pane" || newPaneKind !== "agent" || newPaneSelectionMode !== "worktree") return;
+    const selectedWorkspace = workspaces.find((workspace) => workspace.id === newPaneWorkspaceId) ?? workspaces[0];
+    if (selectedWorkspace && !selectedWorkspace.isGit) setNewPaneSelectionMode("workspace");
+  }, [newPaneKind, newPaneSelectionMode, newPaneWorkspaceId, stage, workspaces]);
 
   const browseWorkspaceDirectories = useCallback((path?: string) => {
     setWorkspaceBrowserStatus("loading");
@@ -352,6 +358,9 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneKind(kind);
       if (kind === "shell") {
         setNewPaneSelectionMode("workspace");
+      } else {
+        const selectedWorkspace = workspaces.find((workspace) => workspace.id === newPaneWorkspaceId) ?? workspaces[0];
+        if (selectedWorkspace?.isGit) setNewPaneSelectionMode("worktree");
       }
     },
     onAgentChange: setNewPaneAgent,
@@ -404,7 +413,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneWorkspaceId("");
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
-      setNewPaneSelectionMode("workspace");
+      setNewPaneSelectionMode("worktree");
       setNewPanePlacement("window");
       setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
       if (terminalId && selectedSession) navigateTo(newPanePath(terminalId, selectedSession.name));
@@ -513,7 +522,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneWorkspaceId("");
       setNewPaneKind("agent");
       setNewPaneAgent("codex");
-      setNewPaneSelectionMode("workspace");
+      setNewPaneSelectionMode("worktree");
       setNewPanePlacement(selectedPaneId ? "right" : "window");
       setNewPaneTargetPaneId(selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? null);
       navigateTo(newPanePath(terminalId, selectedSession.name));

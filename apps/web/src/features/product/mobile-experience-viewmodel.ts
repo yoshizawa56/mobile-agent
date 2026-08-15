@@ -495,14 +495,14 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       if (isPairingQr) return;
       setIsScanningQr(false);
       setIsPairingQr(true);
-      setPairingMessage("QRを確認しています…");
+      setPairingMessage("Checking QR code…");
       setConnectionSettingsError(null);
       void pairBrowserFromQr(value, {
         deviceName: connectionName,
         onProgress: (progress) => {
-          if (progress.phase === "claiming") setPairingMessage("端末を登録する準備をしています…");
-          else if (progress.phase === "awaiting_approval") setPairingMessage("agentd側の承認を待っています…");
-          else setPairingMessage("登録しました。接続しています…");
+          if (progress.phase === "claiming") setPairingMessage("Preparing to register device…");
+          else if (progress.phase === "awaiting_approval") setPairingMessage("Waiting for approval from agentd…");
+          else setPairingMessage("Registered. Connecting…");
         },
       })
         .then((result) => {

@@ -36,7 +36,7 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>開発用 Web サーバーへ接続するためにローカルネットワークを使用します。</string>
+	<string>This app uses the local network to connect to the development web server.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

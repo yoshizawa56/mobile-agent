@@ -36,9 +36,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>QRコードを読み取るためにカメラを使用します。</string>
+	<string>Camera access is required to scan QR codes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>開発用 Web サーバーへ接続するためにローカルネットワークを使用します。</string>
+	<string>Local network access is used to connect to the development web server.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

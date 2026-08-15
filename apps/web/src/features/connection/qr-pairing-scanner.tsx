@@ -29,27 +29,27 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
 
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         const secureContext = typeof window !== "undefined" && window.isSecureContext;
-        setError(secureContext ? "この環境ではカメラを利用できません。" : "カメラを使うには HTTPS または localhost で開いてください。");
+        setError(secureContext ? "Camera access is unavailable in this environment." : "Camera access requires HTTPS or localhost.");
         return;
       }
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("カメラの使用が許可されていません。ブラウザまたは端末の設定でカメラを許可してください。");
+        setError("Camera permission was denied. Allow camera access in your browser or device settings.");
         return;
       }
       if (name === "NotFoundError") {
-        setError("利用できるカメラが見つかりません。");
+        setError("No camera was found.");
         return;
       }
       if (name === "NotReadableError" || name === "AbortError") {
-        setError("カメラを開始できませんでした。他のアプリがカメラを使用していないか確認してください。");
+        setError("Could not start the camera. Make sure another app is not using it.");
         return;
       }
-      setError(cause instanceof Error && cause.message ? cause.message : "カメラを利用できません。");
+      setError("Camera access failed.");
     };
 
     const start = async () => {
       if (!video) {
-        setError("カメラの表示領域を初期化できません。");
+        setError("Could not initialize the camera preview.");
         return;
       }
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -85,8 +85,8 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video ref={videoRef} autoPlay muted playsInline />
         <span className="connection-qr-target" />
       </div>
-      <p>{error ?? "agent pair に表示されたQRをアプリ内で読み取ってください。"}</p>
-      <button className="connection-flow-secondary" type="button" onClick={onClose}>カメラを閉じる</button>
+      <p>{error ?? "Scan the QR code displayed by agent pair in the app."}</p>
+      <button className="connection-flow-secondary" type="button" onClick={onClose}>Close camera</button>
     </section>
   );
 }

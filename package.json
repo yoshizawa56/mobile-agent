@@ -29,10 +29,13 @@
     "dev": "bun scripts/dev.mjs",
     "audit:public": "bun scripts/audit-public-repo.mjs",
     "lint": "bunx --no-install turbo run lint",
-    "test": "bun test scripts/dev.test.mjs && bunx --no-install turbo run test",
+    "test:table": "node scripts/check-table-tests.mjs",
+    "test": "bun run test:table && bun test scripts/dev.test.ts && bunx --no-install turbo run test",
     "typecheck": "bunx --no-install turbo run typecheck"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.8",
+    "@mobile-agent/test-support": "workspace:*",
     "turbo": "^2.10.8"
   }
 }

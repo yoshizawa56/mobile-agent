@@ -1,15 +1,17 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
+import { isIP } from "node:net";
 import { hostname, homedir, platform } from "node:os";
 import { basename } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import { WebSocketServer, type WebSocket } from "ws";
 import { WorkspaceCrud } from "@mobile-agent/application";
-import { paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
+import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { CreatePaneRequest, PaneSummary, TmuxSession, TerminalEndpoint } from "@mobile-agent/protocol";
 import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveAgentdPaths } from "@mobile-agent/persistence";
+import { buildTailscaleInvocation } from "@mobile-agent/tailscale";
 import { AgentdControlServer } from "./auth/control.js";
 import { AuthService, type AuthContext } from "./auth/service.js";
 import { AgentdEventHub } from "./events.js";
@@ -410,10 +412,12 @@ async function createPane(
   }
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
 
+  const paneName = input.kind === "agent" ? normalizeAgentSessionName(input.name) : input.name;
+  const commandInput = paneName === input.name ? input : { ...input, name: paneName };
   const command = buildAgentShellCommand(
     resolveAgentCommand(),
-    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: input.name },
-    input.kind === "agent" ? agentCommand(input, workspace) : undefined,
+    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: paneName },
+    input.kind === "agent" ? agentCommand(commandInput, workspace) : undefined,
   );
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
@@ -430,14 +434,14 @@ async function createPane(
   const record: PaneSummary = {
     ...current,
     kind: input.kind,
-    name: input.name,
+    name: paneName,
     workspaceId: input.workspaceId ?? current.workspaceId,
     agentId: input.agentId,
     state: input.kind === "agent" ? "starting" : "running",
   };
   await repository.upsert(record);
   tmux.setAgentPaneMetadata(tmuxPaneId, "pane_id", record.id);
-  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_name", input.name);
+  tmux.setAgentPaneMetadata(tmuxPaneId, "pane_name", paneName);
   tmux.setAgentPaneMetadata(tmuxPaneId, "agent_id", input.agentId ?? "");
   tmux.setAgentPaneMetadata(tmuxPaneId, "kind", input.kind);
   tmux.setAgentPaneMetadata(tmuxPaneId, "workspace_id", input.workspaceId ?? "");
@@ -700,9 +704,17 @@ function shellQuote(value: string): string {
 }
 
 function tailscaleIp(): string | undefined {
-  const result = spawnSync("tailscale", ["ip", "-4"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const invocation = buildTailscaleInvocation(process.env.TAILSCALE_BIN ?? "tailscale", ["ip", "-4"], process.env, process.platform, {
+    allowShellFallback: false,
+  });
+  const result = spawnSync(invocation.command, invocation.args, {
+    encoding: "utf8",
+    env: invocation.environment,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 500,
+  });
   const address = result.status === 0 ? result.stdout.trim().split("\n")[0] : "";
-  return address || undefined;
+  return isIP(address) === 4 ? address : undefined;
 }
 
 function durationOption(value: number | undefined, environmentName: string, fallback: number, minimum: number): number {

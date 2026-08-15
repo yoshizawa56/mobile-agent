@@ -15,7 +15,7 @@ import type {
   AgentSessionRecord,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
-import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
+import { InvalidAgentSessionNameError, isValidWorktreeCopyPattern, normalizeAgentSessionName, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
 import {
   createLogger,
   errorFields,
@@ -166,7 +166,7 @@ type WorkspaceDeleteOptions = {
   selector: string;
 };
 
-const sessionNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
 const defaultCodexProfile = "local-agent";
 
 /**
@@ -903,9 +903,15 @@ export class AgentCommand {
       ? (options.cleanupHook ? this.resolveHookPath(options.cleanupHook, workspace.rootPath) : null)
       : options.useWorktree ? this.resolveStoredHook(workspace.cleanupScriptPath) : null;
 
-    const name = options.name ?? await this.generateName(workspace.id, backend);
-    validateSessionName(name);
-    if (await this.sessions.findByName(workspace.id, name)) throw new AgentCommandError(`session name already exists in this workspace: ${name}`);
+    const name = normalizeSessionName(options.name ?? await this.generateName(workspace.id, backend));
+    const existing = (await this.sessions.list(workspace.id)).find((session) => {
+      try {
+        return normalizeAgentSessionName(session.name) === name;
+      } catch {
+        return false;
+      }
+    });
+    if (existing) throw new AgentCommandError(`session name already exists in this workspace: ${existing.name}`);
 
     const worktree = options.useWorktree ? this.createWorktree(workspace, name, options.worktreeRoot) : emptyWorktree();
     const now = timestamp();
@@ -2008,17 +2014,21 @@ export class AgentCommand {
   }
 
   private async locateSession(reference: string, global: boolean): Promise<AgentSessionRecord> {
-    validateSessionName(reference.includes("/") ? reference.slice(reference.indexOf("/") + 1) : reference);
+    const separatorIndex = reference.indexOf("/");
+    if (!global && separatorIndex >= 0) throw new AgentCommandError(`workspace-qualified session references require --global: ${reference}`);
+    const selector = separatorIndex >= 0 ? reference.slice(0, separatorIndex) : undefined;
+    const requestedName = separatorIndex >= 0 ? reference.slice(separatorIndex + 1) : reference;
+    if (requestedName.includes("/")) throw new AgentCommandError(`invalid session reference: ${reference}`);
     const sessions = await this.sessions.list(global ? undefined : (await this.resolveWorkspace()).id);
-    if (!global) {
-      const session = sessions.find((candidate) => candidate.name === reference);
-      if (!session) throw new AgentCommandError(`session not found in this workspace: ${reference}`);
-      return session;
-    }
-    const [selector, name] = reference.includes("/") ? reference.split("/", 2) : [undefined, reference];
-    const matches = sessions.filter((session) => session.name === name && (!selector || session.workspaceId === selector || session.workspaceName === selector));
-    if (matches.length === 0) throw new AgentCommandError(`global session not found: ${reference}`);
-    if (matches.length > 1) throw new AgentCommandError(`global session name is ambiguous; use WORKSPACE/${name}`);
+    const scopedSessions = sessions.filter((session) => !selector || session.workspaceId === selector || session.workspaceName === selector);
+    const exactMatches = scopedSessions.filter((session) => session.name === requestedName);
+    if (exactMatches.length === 1) return exactMatches[0]!;
+    if (exactMatches.length > 1) throw new AgentCommandError(`${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${requestedName}`);
+
+    const name = normalizeSessionName(requestedName);
+    const matches = scopedSessions.filter((session) => session.name === name);
+    if (matches.length === 0) throw new AgentCommandError(global ? `global session not found: ${reference}` : `session not found in this workspace: ${reference}`);
+    if (matches.length > 1) throw new AgentCommandError(`${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${name}`);
     return matches[0]!;
   }
 
@@ -2314,6 +2324,17 @@ function shellQuote(value: string): string {
 
 function validateSessionName(name: string): void {
   if (!sessionNamePattern.test(name)) throw new AgentCommandError(`invalid session name '${name}'; use 1-64 letters, digits, '.', '_' or '-'`);
+}
+
+function normalizeSessionName(value: string): string {
+  try {
+    const name = normalizeAgentSessionName(value);
+    validateSessionName(name);
+    return name;
+  } catch (error) {
+    if (error instanceof InvalidAgentSessionNameError) throw new AgentCommandError(error.message);
+    throw error;
+  }
 }
 
 function gitWorkspaceRoot(cwd: string): string | undefined {

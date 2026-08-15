@@ -1,29 +1,33 @@
 import type { WorkspaceRecord } from "@mobile-agent/domain";
-import { describe, expect, it } from "vitest";
-import { WorkspaceCrud, type RegisterWorkspaceInput, type UpdateWorkspaceInput, type WorkspaceDirectoryPort, type WorkspaceRepository } from "./index.js";
+import { describe, it } from "vitest";
+import {
+  hasNoError,
+  hasObserved,
+  runScenarioTable,
+  type FixtureHandle,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import { WorkspaceCrud, type UpdateWorkspaceInput, type WorkspaceDirectoryPort, type WorkspaceRepository } from "./index.js";
 
 type WorkspaceStep =
-  | { type: "register"; input: RegisterWorkspaceInput }
+  | { type: "register"; input: { directory: string; name?: string; worktreeCopyPatterns?: string[] } }
   | { type: "update"; selector: string; input: UpdateWorkspaceInput }
   | { type: "delete"; selector: string };
 
-type WorkspaceScenario = {
-  name: string;
-  steps: readonly WorkspaceStep[];
-  expectedCount: number;
-  expectedName: string;
-  expectedPatterns: string[];
-  expectedAuditEvents: string[];
+type WorkspaceFixture = {
+  repository: FakeWorkspaceRepository;
+  crud: WorkspaceCrud;
+  auditEvents: string[];
 };
 
-type Outcome =
-  | { ok: true; value: WorkspaceRecord }
-  | { ok: false; error: unknown };
-
-type ScenarioContext = {
-  records: WorkspaceRecord[];
-  auditEvents: string[];
-  outcomes: Outcome[];
+type WorkspaceContext = {
+  recordCount: number;
+  recordName: string;
+  rootPath: string;
+  patterns: readonly string[];
+  auditEvents: readonly string[];
 };
 
 const scenarios = [
@@ -33,10 +37,14 @@ const scenarios = [
       { type: "register", input: { directory: "/work/project", name: "project", worktreeCopyPatterns: [".env"] } },
       { type: "update", selector: "project", input: { name: "renamed", appendCopyPatterns: ["config/**/*.local.json"] } },
     ],
-    expectedCount: 1,
-    expectedName: "renamed",
-    expectedPatterns: [".env", "config/**/*.local.json"],
-    expectedAuditEvents: ["workspace.created", "workspace.updated"],
+    assert: [
+      hasNoError<WorkspaceContext, WorkspaceRecord>(),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 1),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", "renamed"),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("rootPath", "/work/project"),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("patterns", [".env", "config/**/*.local.json"]),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.updated"]),
+    ],
   },
   {
     name: "deletes only the registered record through the shared application service",
@@ -44,57 +52,61 @@ const scenarios = [
       { type: "register", input: { directory: "/work/project" } },
       { type: "delete", selector: "workspace-1" },
     ],
-    expectedCount: 0,
-    expectedName: "",
-    expectedPatterns: [],
-    expectedAuditEvents: ["workspace.created", "workspace.deleted"],
+    assert: [
+      hasNoError<WorkspaceContext, WorkspaceRecord>(),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 0),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", ""),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("patterns", []),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.deleted"]),
+    ],
   },
-] satisfies readonly WorkspaceScenario[];
+] satisfies readonly ScenarioCase<"default", WorkspaceStep, WorkspaceRecord, WorkspaceContext>[];
+
+const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, WorkspaceRecord, WorkspaceContext> = {
+  defaultFixture: createWorkspaceFixture,
+  cases: scenarios,
+  execute: async (fixture, steps) => {
+    let result: WorkspaceRecord | undefined;
+    for (const step of steps) {
+      result = step.type === "register"
+        ? await fixture.crud.register.execute(step.input)
+        : step.type === "update"
+          ? await fixture.crud.update.execute(step.selector, step.input)
+          : await fixture.crud.delete.execute(step.selector);
+    }
+    return result!;
+  },
+  observe: async (fixture) => {
+    const records = await fixture.repository.list();
+    const record = records[0];
+    return {
+      recordCount: records.length,
+      recordName: record?.name ?? "",
+      rootPath: record?.rootPath ?? "",
+      patterns: record?.worktreeCopyPatterns ?? [],
+      auditEvents: [...fixture.auditEvents],
+    };
+  },
+};
 
 describe("workspace application use cases", () => {
-  it.each(scenarios)("$name", async (scenario) => {
-    const context = await executeScenario(scenario);
-
-    expect(context.outcomes).toHaveLength(scenario.steps.length);
-    for (const [index, outcome] of context.outcomes.entries()) {
-      expect(outcome, `step ${index + 1} should succeed`).toMatchObject({ ok: true });
-    }
-    expect(context.records).toHaveLength(scenario.expectedCount);
-    if (scenario.expectedCount > 0) {
-      expect(context.records[0]).toMatchObject({
-        name: scenario.expectedName,
-        rootPath: "/work/project",
-        worktreeCopyPatterns: scenario.expectedPatterns,
-      });
-    }
-    expect(context.auditEvents).toEqual(scenario.expectedAuditEvents);
-  });
+  runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-async function executeScenario(scenario: WorkspaceScenario): Promise<ScenarioContext> {
+function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   const repository = new FakeWorkspaceRepository();
   const directory = new FakeWorkspaceDirectory();
   const auditEvents: string[] = [];
-  const crud = new WorkspaceCrud(repository, directory, {
-    now: () => "2026-08-15T00:00:00.000Z",
-    audit: { record: (eventType) => { auditEvents.push(eventType); } },
-  });
-  const outcomes: Outcome[] = [];
-
-  for (const step of scenario.steps) {
-    try {
-      const value = step.type === "register"
-        ? await crud.register.execute(step.input)
-        : step.type === "update"
-          ? await crud.update.execute(step.selector, step.input)
-          : await crud.delete.execute(step.selector);
-      outcomes.push({ ok: true, value });
-    } catch (error) {
-      outcomes.push({ ok: false, error });
-    }
-  }
-
-  return { records: await repository.list(), auditEvents, outcomes };
+  return {
+    fixture: {
+      repository,
+      auditEvents,
+      crud: new WorkspaceCrud(repository, directory, {
+        now: () => "2026-08-15T00:00:00.000Z",
+        audit: { record: (eventType) => { auditEvents.push(eventType); } },
+      }),
+    },
+  };
 }
 
 class FakeWorkspaceRepository implements WorkspaceRepository {

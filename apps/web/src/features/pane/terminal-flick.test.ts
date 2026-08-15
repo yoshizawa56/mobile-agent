@@ -1,84 +1,124 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { classifyTerminalFlick, installTerminalFlickInput, terminalInputForFlick } from "./terminal-flick";
+import { describe, it, vi } from "vitest";
+import {
+  hasObserved,
+  noFixture,
+  returns,
+  runOperationTable,
+  runScenarioTable,
+  type FixtureHandle,
+  type OperationCase,
+  type OperationTable,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import {
+  classifyTerminalFlick,
+  installTerminalFlickInput,
+  terminalInputForFlick,
+  type TerminalFlickDirection,
+} from "./terminal-flick";
+
+type EmptyContext = {};
+type FlickMetrics = { dx: number; dy: number; durationMs: number };
+type FlickResult = { direction: TerminalFlickDirection; input: string } | null;
+
+const flickCases = [
+  { name: "maps a fast right flick", input: { dx: 72, dy: 3, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "right", input: "\u001b[C" })] },
+  { name: "maps a fast left flick", input: { dx: -72, dy: 3, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "left", input: "\u001b[D" })] },
+  { name: "maps a fast up flick", input: { dx: 2, dy: -72, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "up", input: "\u001b[A" })] },
+  { name: "maps a fast down flick", input: { dx: 2, dy: 72, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "down", input: "\u001b[B" })] },
+  { name: "rejects a short drag", input: { dx: 12, dy: 0, durationMs: 120 }, assert: [returns<EmptyContext, FlickResult>(null)] },
+  { name: "rejects a slow drag", input: { dx: 72, dy: 0, durationMs: 800 }, assert: [returns<EmptyContext, FlickResult>(null)] },
+  { name: "rejects a low velocity drag", input: { dx: 28, dy: 0, durationMs: 240 }, assert: [returns<EmptyContext, FlickResult>(null)] },
+] satisfies readonly OperationCase<"default", FlickMetrics, FlickResult, EmptyContext>[];
+
+const flickTable: OperationTable<undefined, "default", FlickMetrics, FlickResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: flickCases,
+  execute: (_fixture, input) => {
+    const direction = classifyTerminalFlick(input);
+    return direction ? { direction, input: terminalInputForFlick(direction) } : null;
+  },
+  observe: () => ({}),
+};
+
+type PointerValues = { pointerId: number; clientX: number; clientY: number };
+type FlickStep = { type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel"; now: number; values: PointerValues };
+type FlickContext = { inputs: readonly string[]; scrollDeltas: readonly number[] };
+type FlickFixture = {
+  container: HTMLElement;
+  inputs: string[];
+  scrollDeltas: number[];
+  setNow: (value: number) => void;
+};
+
+const flickFixture = (): FixtureHandle<FlickFixture> => {
+  const container = createPointerSurface();
+  const inputs: string[] = [];
+  const scrollDeltas: number[] = [];
+  let now = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  const cleanupInput = installTerminalFlickInput(container, (input) => inputs.push(input), {
+    onScroll: (deltaY) => scrollDeltas.push(deltaY),
+  });
+  return {
+    fixture: { container, inputs, scrollDeltas, setNow: (value) => { now = value; } },
+    cleanup: () => {
+      cleanupInput();
+      clock.mockRestore();
+    },
+  };
+};
+
+const gestureCases = [
+  {
+    name: "discards a gesture on pointercancel",
+    steps: [
+      { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 120, clientY: 120 } },
+      { type: "pointermove", now: 90, values: { pointerId: 1, clientX: 120, clientY: 48 } },
+      { type: "pointercancel", now: 90, values: { pointerId: 1, clientX: 120, clientY: 48 } },
+    ],
+    assert: [hasObserved<FlickContext, undefined>("inputs", []), hasObserved<FlickContext, undefined>("scrollDeltas", [])],
+  },
+  {
+    name: "scrolls a deliberate vertical drag",
+    steps: [
+      { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 120, clientY: 120 } },
+      { type: "pointermove", now: 300, values: { pointerId: 1, clientX: 120, clientY: 150 } },
+      { type: "pointermove", now: 420, values: { pointerId: 1, clientX: 120, clientY: 174 } },
+      { type: "pointerup", now: 500, values: { pointerId: 1, clientX: 120, clientY: 174 } },
+    ],
+    assert: [hasObserved<FlickContext, undefined>("scrollDeltas", [30, 24]), hasObserved<FlickContext, undefined>("inputs", [])],
+  },
+  {
+    name: "discards a gesture when a second touch joins it",
+    steps: [
+      { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 10, clientY: 10 } },
+      { type: "pointerdown", now: 0, values: { pointerId: 2, clientX: 20, clientY: 20 } },
+      { type: "pointerup", now: 100, values: { pointerId: 1, clientX: 90, clientY: 10 } },
+      { type: "pointerup", now: 100, values: { pointerId: 2, clientX: 20, clientY: 20 } },
+    ],
+    assert: [hasObserved<FlickContext, undefined>("inputs", [])],
+  },
+] satisfies readonly ScenarioCase<"default", FlickStep, undefined, FlickContext>[];
+
+const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined, FlickContext> = {
+  defaultFixture: flickFixture,
+  cases: gestureCases,
+  execute: (fixture, steps) => {
+    for (const step of steps) {
+      fixture.setNow(step.now);
+      dispatchPointer(fixture.container, step.type, step.values);
+    }
+  },
+  observe: (fixture) => ({ inputs: [...fixture.inputs], scrollDeltas: [...fixture.scrollDeltas] }),
+};
 
 describe("terminal flick input", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it.each([
-    { name: "right", dx: 72, dy: 3, durationMs: 180, direction: "right" as const, input: "\u001b[C" },
-    { name: "left", dx: -72, dy: 3, durationMs: 180, direction: "left" as const, input: "\u001b[D" },
-    { name: "up", dx: 2, dy: -72, durationMs: 180, direction: "up" as const, input: "\u001b[A" },
-    { name: "down", dx: 2, dy: 72, durationMs: 180, direction: "down" as const, input: "\u001b[B" },
-  ])("maps a fast $name flick to an arrow sequence", ({ dx, dy, durationMs, direction, input }) => {
-    expect(classifyTerminalFlick({ dx, dy, durationMs })).toBe(direction);
-    expect(terminalInputForFlick(direction)).toBe(input);
-  });
-
-  it.each([
-    { name: "short drag", dx: 12, dy: 0, durationMs: 120 },
-    { name: "slow drag", dx: 72, dy: 0, durationMs: 800 },
-    { name: "low velocity drag", dx: 28, dy: 0, durationMs: 240 },
-  ])("does not treat a $name as a flick", (metrics) => {
-    expect(classifyTerminalFlick(metrics)).toBeNull();
-  });
-
-  it("discards a gesture when the WebView sends pointercancel", () => {
-    const container = createPointerSurface();
-    const inputs: string[] = [];
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    const cleanup = installTerminalFlickInput(container, (input) => inputs.push(input));
-
-    dispatchPointer(container, "pointerdown", { pointerId: 1, clientX: 120, clientY: 120 });
-    now = 90;
-    dispatchPointer(container, "pointermove", { pointerId: 1, clientX: 120, clientY: 48 });
-    dispatchPointer(container, "pointercancel", { pointerId: 1, clientX: 120, clientY: 48 });
-
-    expect(inputs).toEqual([]);
-    cleanup();
-  });
-
-  it("scrolls a deliberate vertical drag instead of sending an arrow key", () => {
-    const container = createPointerSurface();
-    const inputs: string[] = [];
-    const scrollDeltas: number[] = [];
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    const cleanup = installTerminalFlickInput(container, (input) => inputs.push(input), {
-      onScroll: (deltaY) => scrollDeltas.push(deltaY),
-    });
-
-    dispatchPointer(container, "pointerdown", { pointerId: 1, clientX: 120, clientY: 120 });
-    now = 300;
-    dispatchPointer(container, "pointermove", { pointerId: 1, clientX: 120, clientY: 150 });
-    now = 420;
-    dispatchPointer(container, "pointermove", { pointerId: 1, clientX: 120, clientY: 174 });
-    now = 500;
-    dispatchPointer(container, "pointerup", { pointerId: 1, clientX: 120, clientY: 174 });
-
-    expect(scrollDeltas).toEqual([30, 24]);
-    expect(inputs).toEqual([]);
-    cleanup();
-  });
-
-  it("discards a gesture when a second touch joins it", () => {
-    const container = createPointerSurface();
-    const inputs: string[] = [];
-    let now = 0;
-    vi.spyOn(performance, "now").mockImplementation(() => now);
-    const cleanup = installTerminalFlickInput(container, (input) => inputs.push(input));
-
-    dispatchPointer(container, "pointerdown", { pointerId: 1, clientX: 10, clientY: 10 });
-    dispatchPointer(container, "pointerdown", { pointerId: 2, clientX: 20, clientY: 20 });
-    now = 100;
-    dispatchPointer(container, "pointerup", { pointerId: 1, clientX: 90, clientY: 10 });
-    dispatchPointer(container, "pointerup", { pointerId: 2, clientX: 20, clientY: 20 });
-
-    expect(inputs).toEqual([]);
-    cleanup();
-  });
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, flickTable);
+  runScenarioTable(register, gestureTable);
 });
 
 function createPointerSurface(): HTMLElement {
@@ -87,11 +127,7 @@ function createPointerSurface(): HTMLElement {
   return surface as HTMLElement;
 }
 
-function dispatchPointer(
-  surface: HTMLElement,
-  type: string,
-  values: { pointerId: number; clientX: number; clientY: number },
-): void {
+function dispatchPointer(surface: HTMLElement, type: string, values: PointerValues): void {
   const event = new Event(type, { cancelable: true });
   Object.defineProperties(event, {
     pointerId: { value: values.pointerId },

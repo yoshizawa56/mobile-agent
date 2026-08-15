@@ -1,204 +1,161 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { clientControlMessageSchema, serverControlMessageSchema, terminalProtocolVersion } from "@mobile-agent/protocol";
-import type { PtyProcess } from "./pty.js";
 import {
-  TerminalSession,
-  TerminalSessionRegistry,
-  type TerminalSessionOptions,
-} from "./terminal-session.js";
+  hasObserved,
+  runScenarioTable,
+  type FixtureHandle,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import type { PtyProcess } from "./pty.js";
+import { TerminalSession, TerminalSessionRegistry, type TerminalSessionOptions } from "./terminal-session.js";
+
+type SessionStep =
+  | { type: "connect"; socket: "first" | "second"; credentials?: "resume-first" }
+  | { type: "network-close"; socket: "first" | "second" }
+  | { type: "detach"; socket: "first" | "second" }
+  | { type: "emit-output"; value: string }
+  | { type: "send-input"; value: string }
+  | { type: "advance"; milliseconds: number };
+type SessionContext = {
+  prepareCalls: number;
+  spawnCalls: number;
+  releaseCalls: number;
+  killed: number;
+  registrySize: number;
+  secondResumed: boolean;
+  secondErrors: readonly string[];
+  firstClosedReasons: readonly string[];
+  binaryFrames: readonly string[];
+  writes: readonly string[];
+};
+type SessionFixture = ReturnType<typeof createHarness> & { sockets: Partial<Record<"first" | "second", FakeSocket>> };
+
+const sessionFixture = (): FixtureHandle<SessionFixture> => {
+  vi.useFakeTimers();
+  const harness = createHarness({ resumeGraceMs: 100 });
+  return {
+    fixture: { ...harness, sockets: {} },
+    cleanup: () => { vi.useRealTimers(); vi.restoreAllMocks(); },
+  };
+};
+
+const cases = [
+  {
+    name: "parks one PTY and viewport lease across a network reconnect",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "emit-output", value: "resumed output" },
+      { type: "send-input", value: "ls" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("prepareCalls", 1),
+      hasObserved<SessionContext, undefined>("spawnCalls", 1),
+      hasObserved<SessionContext, undefined>("releaseCalls", 0),
+      hasObserved<SessionContext, undefined>("killed", 0),
+      hasObserved<SessionContext, undefined>("registrySize", 1),
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("binaryFrames", ["resumed output"]),
+      hasObserved<SessionContext, undefined>("writes", ["ls"]),
+    ],
+  },
+  {
+    name: "releases the runtime only for an explicit detach",
+    steps: [{ type: "connect", socket: "first" }, { type: "detach", socket: "first" }],
+    assert: [hasObserved<SessionContext, undefined>("firstClosedReasons", ["detached"]), hasObserved<SessionContext, undefined>("releaseCalls", 1), hasObserved<SessionContext, undefined>("killed", 1), hasObserved<SessionContext, undefined>("registrySize", 0)],
+  },
+  {
+    name: "does not create a duplicate lease while the original session is parked",
+    steps: [{ type: "connect", socket: "first" }, { type: "network-close", socket: "first" }, { type: "connect", socket: "second" }],
+    assert: [hasObserved<SessionContext, undefined>("prepareCalls", 2), hasObserved<SessionContext, undefined>("spawnCalls", 1), hasObserved<SessionContext, undefined>("releaseCalls", 0), hasObserved<SessionContext, undefined>("secondErrors", ["attach_failed"])],
+  },
+  {
+    name: "expires a parked runtime after the resume grace period",
+    steps: [{ type: "connect", socket: "first" }, { type: "network-close", socket: "first" }, { type: "advance", milliseconds: 100 }],
+    assert: [hasObserved<SessionContext, undefined>("releaseCalls", 1), hasObserved<SessionContext, undefined>("killed", 1), hasObserved<SessionContext, undefined>("registrySize", 0)],
+  },
+] satisfies readonly ScenarioCase<"default", SessionStep, undefined, SessionContext>[];
+
+const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, SessionContext> = {
+  defaultFixture: sessionFixture,
+  cases,
+  execute: async (fixture, steps) => {
+    for (const step of steps) {
+      if (step.type === "connect") {
+        const socket = new FakeSocket();
+        fixture.sockets[step.socket] = socket;
+        new TerminalSession(socket.asWebSocket(), fixture.options);
+        const previousReady = fixture.sockets.first?.controls().find((message) => message.type === "ready");
+        const credentials = step.credentials === "resume-first" && previousReady?.type === "ready"
+          ? { sessionId: previousReady.sessionId, resumeToken: previousReady.resumeToken }
+          : {};
+        socket.receive(attachFrame(credentials));
+        await flush();
+      }
+      if (step.type === "network-close") fixture.sockets[step.socket]?.networkClose();
+      if (step.type === "detach") {
+        fixture.sockets[step.socket]?.receive(JSON.stringify({ type: "detach", version: terminalProtocolVersion }));
+        await flush();
+      }
+      if (step.type === "emit-output") fixture.pty.emitOutput(step.value);
+      if (step.type === "send-input") {
+        fixture.sockets.second?.receive(Buffer.from(step.value), true);
+        await flush();
+      }
+      if (step.type === "advance") vi.advanceTimersByTime(step.milliseconds);
+    }
+  },
+  observe: (fixture) => ({
+    prepareCalls: fixture.manager.prepare.mock.calls.length,
+    spawnCalls: fixture.spawn.mock.calls.length,
+    releaseCalls: fixture.lease.release.mock.calls.length,
+    killed: fixture.pty.killed,
+    registrySize: fixture.registry.size,
+    secondResumed: fixture.sockets.second?.controls().some((message) => message.type === "ready" && message.resumed) ?? false,
+    secondErrors: fixture.sockets.second?.controls().filter((message) => message.type === "error").map((message) => message.code) ?? [],
+    firstClosedReasons: fixture.sockets.first?.controls().filter((message) => message.type === "closed").map((message) => message.reason) ?? [],
+    binaryFrames: fixture.sockets.second?.binaryFrames() ?? [],
+    writes: [...fixture.pty.writes],
+  }),
+};
 
 describe("terminal session lifecycle", () => {
-  it("parks one PTY and viewport lease across a network reconnect", async () => {
-    const harness = createHarness();
-    const firstSocket = new FakeSocket();
-    new TerminalSession(firstSocket.asWebSocket(), harness.options);
-
-    firstSocket.receive(attachFrame());
-    await flush();
-
-    const ready = firstSocket.controls().find((message) => message.type === "ready");
-    expect(ready?.type).toBe("ready");
-    if (!ready || ready.type !== "ready") throw new Error("expected ready frame");
-    expect(ready.resumed).toBe(false);
-    expect(harness.manager.prepare).toHaveBeenCalledTimes(1);
-    expect(harness.spawn).toHaveBeenCalledTimes(1);
-
-    firstSocket.networkClose();
-    expect(harness.lease.release).not.toHaveBeenCalled();
-    expect(harness.pty.killed).toBe(0);
-    expect(harness.registry.size).toBe(1);
-
-    const secondSocket = new FakeSocket();
-    new TerminalSession(secondSocket.asWebSocket(), harness.options);
-    secondSocket.receive(attachFrame({ sessionId: ready.sessionId, resumeToken: ready.resumeToken }));
-    await flush();
-
-    expect(harness.manager.prepare).toHaveBeenCalledTimes(1);
-    expect(harness.spawn).toHaveBeenCalledTimes(1);
-    expect(harness.lease.claimMobile).toHaveBeenCalledWith(80, 24);
-    expect(secondSocket.controls()).toContainEqual(expect.objectContaining({ type: "ready", resumed: true }));
-
-    harness.pty.emitOutput("resumed output");
-    expect(secondSocket.binaryFrames()).toEqual(["resumed output"]);
-
-    secondSocket.receive(Buffer.from("ls"), true);
-    await flush();
-    expect(harness.pty.writes).toEqual(["ls"]);
-  });
-
-  it("releases the runtime only for an explicit detach", async () => {
-    const harness = createHarness();
-    const socket = new FakeSocket();
-    new TerminalSession(socket.asWebSocket(), harness.options);
-
-    socket.receive(attachFrame());
-    await flush();
-    socket.receive(JSON.stringify({ type: "detach", version: terminalProtocolVersion }));
-    await flush();
-
-    expect(socket.controls()).toContainEqual(expect.objectContaining({ type: "closed", reason: "detached" }));
-    expect(harness.lease.release).toHaveBeenCalledTimes(1);
-    expect(harness.pty.killed).toBe(1);
-    expect(harness.registry.size).toBe(0);
-  });
-
-  it("does not create a duplicate lease while the original session is parked", async () => {
-    const harness = createHarness();
-    const firstSocket = new FakeSocket();
-    new TerminalSession(firstSocket.asWebSocket(), harness.options);
-    firstSocket.receive(attachFrame());
-    await flush();
-    firstSocket.networkClose();
-
-    const secondSocket = new FakeSocket();
-    new TerminalSession(secondSocket.asWebSocket(), harness.options);
-    secondSocket.receive(attachFrame());
-    await flush();
-
-    expect(harness.manager.prepare).toHaveBeenCalledTimes(2);
-    expect(harness.spawn).toHaveBeenCalledTimes(1);
-    expect(harness.lease.release).not.toHaveBeenCalled();
-    expect(secondSocket.controls()).toContainEqual(expect.objectContaining({ type: "error", code: "attach_failed" }));
-  });
-
-  it("expires a parked runtime after the resume grace period", async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createHarness({ resumeGraceMs: 100 });
-      const socket = new FakeSocket();
-      new TerminalSession(socket.asWebSocket(), harness.options);
-      socket.receive(attachFrame());
-      await flush();
-      socket.networkClose();
-
-      vi.advanceTimersByTime(100);
-      expect(harness.lease.release).toHaveBeenCalledTimes(1);
-      expect(harness.pty.killed).toBe(1);
-      expect(harness.registry.size).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
 function createHarness(overrides: Partial<TerminalSessionOptions> = {}) {
   const pty = new FakePty(401);
-  const lease = {
-    id: "lease-1",
-    target: "%0",
-    paneId: "%0",
-    windowId: "@0",
-    sessionName: "agentd",
-    claimMobile: vi.fn(),
-    resize: vi.fn(),
-    release: vi.fn(),
-  };
-  const prepared = {
-    target: "%0",
-    pane: { paneId: "%0", windowId: "@0", sessionName: "agentd" },
-    snapshot: {} as never,
-    attach: vi.fn(async () => lease),
-    release: vi.fn(),
-  };
+  const lease = { id: "lease-1", target: "%0", paneId: "%0", windowId: "@0", sessionName: "agentd", claimMobile: vi.fn(), resize: vi.fn(), release: vi.fn() };
+  const prepared = { target: "%0", pane: { paneId: "%0", windowId: "@0", sessionName: "agentd" }, snapshot: {} as never, attach: vi.fn(async () => lease), release: vi.fn() };
   let preparedCount = 0;
-  const manager = {
-    prepare: vi.fn(() => {
-      preparedCount += 1;
-      if (preparedCount > 1) throw new Error("Viewport is already in use for tmux window: @0");
-      return prepared;
-    }),
-    tmux: { attachArgs: vi.fn(() => ["attach-session", "-t", "agentd"]) },
-  };
+  const manager = { prepare: vi.fn(() => { preparedCount += 1; if (preparedCount > 1) throw new Error("Viewport is already in use for tmux window: @0"); return prepared; }), tmux: { attachArgs: vi.fn(() => ["attach-session", "-t", "agentd"]) } };
   const spawn = vi.fn(() => pty.asPty());
   const registry = new TerminalSessionRegistry();
-  const options: TerminalSessionOptions = {
-    cwd: "/tmp",
-    defaultTarget: "agentd",
-    viewportManager: manager as unknown as TerminalSessionOptions["viewportManager"],
-    spawnPty: spawn as unknown as TerminalSessionOptions["spawnPty"],
-    sessions: registry,
-    ...overrides,
-  };
+  const options: TerminalSessionOptions = { cwd: "/tmp", defaultTarget: "agentd", viewportManager: manager as unknown as TerminalSessionOptions["viewportManager"], spawnPty: spawn as unknown as TerminalSessionOptions["spawnPty"], sessions: registry, ...overrides };
   return { manager, prepared, lease, pty, spawn, registry, options };
 }
 
 function attachFrame(credentials: { sessionId?: string; resumeToken?: string } = {}): string {
-  const result = clientControlMessageSchema.parse({
-    type: "attach",
-    version: terminalProtocolVersion,
-    target: "%0",
-    cols: 80,
-    rows: 24,
-    ...credentials,
-  });
-  return JSON.stringify(result);
+  return JSON.stringify(clientControlMessageSchema.parse({ type: "attach", version: terminalProtocolVersion, target: "%0", cols: 80, rows: 24, ...credentials }));
 }
 
-async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
+async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); }
 
 class FakeSocket extends EventEmitter {
   public readyState: number = WebSocket.OPEN;
   public readonly sent: Array<string | Buffer> = [];
-
-  public send(data: string | Buffer): void {
-    if (this.readyState !== WebSocket.OPEN) throw new Error("socket is closed");
-    this.sent.push(data);
-  }
-
-  public receive(data: string | Buffer, isBinary = false): void {
-    this.emit("message", data, isBinary);
-  }
-
-  public networkClose(): void {
-    this.readyState = WebSocket.CLOSED;
-    this.emit("close", 1006, Buffer.from("network-lost"));
-  }
-
-  public close(): void {
-    this.readyState = WebSocket.CLOSED;
-    this.emit("close", 1000, Buffer.from("closed"));
-  }
-
-  public controls() {
-    return this.sent
-      .filter((frame): frame is string => typeof frame === "string")
-      .map((frame) => serverControlMessageSchema.parse(JSON.parse(frame)));
-  }
-
-  public binaryFrames(): string[] {
-    return this.sent
-      .filter((frame): frame is Buffer => Buffer.isBuffer(frame))
-      .map((frame) => frame.toString("utf8"));
-  }
-
-  public asWebSocket(): WebSocket {
-    return this as unknown as WebSocket;
-  }
+  public send(data: string | Buffer): void { if (this.readyState !== WebSocket.OPEN) throw new Error("socket is closed"); this.sent.push(data); }
+  public receive(data: string | Buffer, isBinary = false): void { this.emit("message", data, isBinary); }
+  public networkClose(): void { this.readyState = WebSocket.CLOSED; this.emit("close", 1006, Buffer.from("network-lost")); }
+  public close(): void { this.readyState = WebSocket.CLOSED; this.emit("close", 1000, Buffer.from("closed")); }
+  public controls() { return this.sent.filter((frame): frame is string => typeof frame === "string").map((frame) => serverControlMessageSchema.parse(JSON.parse(frame))); }
+  public binaryFrames(): string[] { return this.sent.filter((frame): frame is Buffer => Buffer.isBuffer(frame)).map((frame) => frame.toString("utf8")); }
+  public asWebSocket(): WebSocket { return this as unknown as WebSocket; }
 }
 
 class FakePty {
@@ -206,35 +163,12 @@ class FakePty {
   public readonly resizeCalls: Array<[number, number]> = [];
   public killed = 0;
   private dataHandler: ((data: string) => void) | undefined;
-
   public constructor(public readonly pid: number) {}
-
-  public onData(handler: (data: string) => void): { dispose: () => void } {
-    this.dataHandler = handler;
-    return { dispose: () => { this.dataHandler = undefined; } };
-  }
-
-  public onExit(_handler: (event: { exitCode: number; signal?: number }) => void): { dispose: () => void } {
-    return { dispose: () => undefined };
-  }
-
-  public write(data: string): void {
-    this.writes.push(data);
-  }
-
-  public resize(cols: number, rows: number): void {
-    this.resizeCalls.push([cols, rows]);
-  }
-
-  public kill(): void {
-    this.killed += 1;
-  }
-
-  public emitOutput(data: string): void {
-    this.dataHandler?.(data);
-  }
-
-  public asPty(): PtyProcess {
-    return this as unknown as PtyProcess;
-  }
+  public onData(handler: (data: string) => void): { dispose: () => void } { this.dataHandler = handler; return { dispose: () => { this.dataHandler = undefined; } }; }
+  public onExit(_handler: (event: { exitCode: number; signal?: number }) => void): { dispose: () => void } { return { dispose: () => undefined }; }
+  public write(data: string): void { this.writes.push(data); }
+  public resize(cols: number, rows: number): void { this.resizeCalls.push([cols, rows]); }
+  public kill(): void { this.killed += 1; }
+  public emitOutput(data: string): void { this.dataHandler?.(data); }
+  public asPty(): PtyProcess { return this as unknown as PtyProcess; }
 }

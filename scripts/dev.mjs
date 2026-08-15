@@ -6,7 +6,7 @@ import { createConnection, createServer } from "node:net";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildServeArgs, buildServeHttpUrl, parseTailscaleHostname } from "../packages/tailscale/src/index.ts";
+import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "../packages/tailscale/src/index.ts";
 import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
@@ -22,6 +22,7 @@ export const DEFAULT_DEV_CONFIG = {
 
 const scriptPath = fileURLToPath(import.meta.url);
 const execFileAsync = promisify(execFile);
+const tailscaleCommandTimeoutMs = 15_000;
 
 export class DevRuntimeError extends Error {
   constructor(message, options = {}) {
@@ -107,13 +108,15 @@ function resolveTailscaleHostname(environment) {
 
   const binary = environment.TAILSCALE_BIN ?? "tailscale";
   try {
-    const status = execFileSync(binary, ["status", "--json"], {
-      env: environment,
+    const invocation = buildTailscaleInvocation(binary, ["status", "--json"], environment);
+    const status = execFileSync(invocation.command, invocation.args, {
+      env: invocation.environment,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 256 * 1024,
+      timeout: tailscaleCommandTimeoutMs,
     });
-    return normalizeHostname(parseTailscaleHostname(status));
+    return normalizeHostname(parseTailscaleHostname(normalizeTailscaleStdout(status, invocation)));
   } catch {
     return undefined;
   }
@@ -221,11 +224,14 @@ export async function configureDevServe(config, runCommand = runExternalCommand)
 
 async function runExternalCommand(command, args, options) {
   try {
-    return await execFileAsync(command, args, {
-      env: options.env,
+    const invocation = buildTailscaleInvocation(command, args, options.env);
+    const result = await execFileAsync(invocation.command, invocation.args, {
+      env: invocation.environment,
       encoding: "utf8",
       maxBuffer: 256 * 1024,
+      timeout: tailscaleCommandTimeoutMs,
     });
+    return { ...result, stdout: normalizeTailscaleStdout(result.stdout, invocation) };
   } catch (error) {
     throw new DevRuntimeError(`could not run ${command}`, { cause: error });
   }

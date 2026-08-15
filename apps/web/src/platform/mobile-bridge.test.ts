@@ -1,60 +1,122 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMobileAgentBridge } from "./mobile-bridge";
+import { describe, it } from "vitest";
+import {
+  hasObserved,
+  noFixture,
+  runOperationTable,
+  runScenarioTable,
+  type FixtureHandle,
+  type OperationCase,
+  type OperationTable,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import { createMobileAgentBridge, type MobileAgentBridge } from "./mobile-bridge";
 
-describe("mobile agent bridge", () => {
-  const originalDocument = globalThis.document;
+type BridgeContext = {
+  platform: string;
+  isNative: boolean;
+  capabilities: MobileAgentBridge["capabilities"];
+};
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    if (originalDocument) {
-      Object.defineProperty(globalThis, "document", { configurable: true, value: originalDocument });
-    } else {
-      Reflect.deleteProperty(globalThis, "document");
-    }
-  });
-
-  it("uses the web platform and keeps native-only capabilities disabled in the MVP", () => {
-    expect(createMobileAgentBridge()).toMatchObject({
-      platform: "web",
-      isNative: false,
-      capabilities: {
+const bridgeCases = [
+  {
+    name: "uses the web platform with native-only capabilities disabled",
+    input: {},
+    assert: [
+      hasObserved<BridgeContext, MobileAgentBridge>("platform", "web"),
+      hasObserved<BridgeContext, MobileAgentBridge>("isNative", false),
+      hasObserved<BridgeContext, MobileAgentBridge>("capabilities", {
         appLifecycle: true,
         routeProvider: false,
         keychain: false,
         notifications: false,
         liveActivities: false,
-      },
-    });
-  });
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", {}, MobileAgentBridge, BridgeContext>[];
 
-  it("forwards WebView visibility changes as app state changes", () => {
-    const listeners = new Set<() => void>();
-    const documentStub = {
-      visibilityState: "visible" as DocumentVisibilityState,
-      addEventListener: (_eventName: string, listener: EventListenerOrEventListenerObject) => {
-        listeners.add(listener as () => void);
-      },
-      removeEventListener: (_eventName: string, listener: EventListenerOrEventListenerObject) => {
-        listeners.delete(listener as () => void);
-      },
-      dispatchVisibilityChange: () => {
-        for (const listener of listeners) listener();
-      },
-    };
-    Object.defineProperty(globalThis, "document", { configurable: true, value: documentStub });
+const bridgeTable: OperationTable<undefined, "default", {}, MobileAgentBridge, BridgeContext> = {
+  defaultFixture: noFixture(),
+  cases: bridgeCases,
+  execute: () => createMobileAgentBridge(),
+  observe: (_fixture, result) => {
+    if (!result.ok) return { platform: "", isNative: false, capabilities: { appLifecycle: true, routeProvider: false, keychain: false, notifications: false, liveActivities: false } };
+    return { platform: result.value.platform, isNative: result.value.isNative, capabilities: result.value.capabilities };
+  },
+};
 
-    const bridge = createMobileAgentBridge();
-    const states: string[] = [];
-    const unsubscribe = bridge.onAppStateChange((state) => states.push(state));
+type VisibilityStep = { type: "set-visibility"; value: DocumentVisibilityState } | { type: "dispatch" } | { type: "unsubscribe" };
+type VisibilityContext = { states: readonly string[] };
+type VisibilityFixture = {
+  documentStub: {
+    visibilityState: DocumentVisibilityState;
+    addEventListener: (_eventName: string, listener: EventListenerOrEventListenerObject) => void;
+    removeEventListener: (_eventName: string, listener: EventListenerOrEventListenerObject) => void;
+    dispatchVisibilityChange: () => void;
+  };
+  states: string[];
+  unsubscribe: (() => void) | null;
+};
 
-    documentStub.visibilityState = "hidden";
-    documentStub.dispatchVisibilityChange();
-    documentStub.visibilityState = "visible";
-    documentStub.dispatchVisibilityChange();
-    unsubscribe();
-    documentStub.visibilityState = "hidden";
-    documentStub.dispatchVisibilityChange();
+const visibilityFixture = (): FixtureHandle<VisibilityFixture> => {
+  const originalDocument = globalThis.document;
+  const listeners = new Set<() => void>();
+  const documentStub: VisibilityFixture["documentStub"] = {
+    visibilityState: "visible",
+    addEventListener: (_eventName, listener) => listeners.add(listener as () => void),
+    removeEventListener: (_eventName, listener) => listeners.delete(listener as () => void),
+    dispatchVisibilityChange: () => { for (const listener of listeners) listener(); },
+  };
+  Object.defineProperty(globalThis, "document", { configurable: true, value: documentStub });
+  const fixture: VisibilityFixture = { documentStub, states: [], unsubscribe: null };
+  const bridge = createMobileAgentBridge();
+  fixture.unsubscribe = bridge.onAppStateChange((state) => fixture.states.push(state));
+  return {
+    fixture,
+    cleanup: () => {
+      fixture.unsubscribe?.();
+      if (originalDocument) Object.defineProperty(globalThis, "document", { configurable: true, value: originalDocument });
+      else Reflect.deleteProperty(globalThis, "document");
+    },
+  };
+};
 
-    expect(states).toEqual(["background", "active"]);
-  });
+const visibilityCases = [
+  {
+    name: "forwards visibility changes and stops after unsubscribe",
+    steps: [
+      { type: "set-visibility", value: "hidden" },
+      { type: "dispatch" },
+      { type: "set-visibility", value: "visible" },
+      { type: "dispatch" },
+      { type: "unsubscribe" },
+      { type: "set-visibility", value: "hidden" },
+      { type: "dispatch" },
+    ],
+    assert: [hasObserved<VisibilityContext, undefined>("states", ["background", "active"])],
+  },
+] satisfies readonly ScenarioCase<"default", VisibilityStep, undefined, VisibilityContext>[];
+
+const visibilityTable: ScenarioTable<VisibilityFixture, "default", VisibilityStep, undefined, VisibilityContext> = {
+  defaultFixture: visibilityFixture,
+  cases: visibilityCases,
+  execute: (fixture, steps) => {
+    for (const step of steps) {
+      if (step.type === "set-visibility") fixture.documentStub.visibilityState = step.value;
+      if (step.type === "dispatch") fixture.documentStub.dispatchVisibilityChange();
+      if (step.type === "unsubscribe") {
+        fixture.unsubscribe?.();
+        fixture.unsubscribe = null;
+      }
+    }
+  },
+  observe: (fixture) => ({ states: [...fixture.states] }),
+};
+
+describe("mobile agent bridge", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, bridgeTable);
+  runScenarioTable(register, visibilityTable);
 });

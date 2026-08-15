@@ -3,144 +3,226 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  hasNoError,
+  hasObserved,
+  runScenarioTable,
+  type Assertion,
+  type FixtureHandle,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
 import { createAgentDatabase, DrizzleWorkspaceRepository } from "@mobile-agent/persistence";
 import { AgentCommand } from "./agent-command.js";
 
 type WorkspaceStep = {
   args: string[];
-  outcome: "success" | "error";
+  expected: "success" | "error";
   errorIncludes?: string;
-};
-
-type WorkspaceScenario = {
-  name: string;
-  fixture?: "plain" | "git-subdirectory";
-  steps: WorkspaceStep[];
-  expectedWorkspaceCount: number;
-  expectedName?: string;
-  expectedRootPath?: string;
-  expectedSetupHook?: string | null;
-  expectedCopyPatterns?: string[];
-  outputIncludes: string[];
-  directoryMustRemain: boolean;
 };
 
 type Outcome =
   | { ok: true; value: number }
   | { ok: false; error: unknown };
 
-type ScenarioContext = {
-  fixture: ReturnType<typeof createFixture>;
+type WorkspaceFixture = ReturnType<typeof createFixture> & {
+  command: AgentCommand;
   output: Writable & { value: () => string };
   outcomes: Outcome[];
-  workspaces: Awaited<ReturnType<DrizzleWorkspaceRepository["list"]>>;
+  steps: readonly WorkspaceStep[];
+  closed: boolean;
 };
 
-const temporaryRoots: string[] = [];
+type WorkspaceContext = {
+  steps: readonly WorkspaceStep[];
+  outcomes: readonly Outcome[];
+  workspaceCount: number;
+  workspaceName: string | null;
+  workspaceRootPath: string | null;
+  fixtureWorkspacePath: string;
+  setupHook: string | null;
+  copyPatterns: readonly string[];
+  output: string;
+  directoryEntries: readonly string[];
+  readme: string;
+};
 
-afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+const stepOutcomesMatch: Assertion<WorkspaceContext, void> = {
+  name: "all command steps have their expected outcomes",
+  check: (ctx) => {
+    expect(ctx.outcomes).toHaveLength(ctx.steps.length);
+    for (const [index, step] of ctx.steps.entries()) {
+      const outcome = ctx.outcomes[index]!;
+      if (step.expected === "success") {
+        expect(outcome, `step ${index + 1} should succeed`).toMatchObject({ ok: true });
+      } else {
+        expect(outcome, `step ${index + 1} should fail`).toMatchObject({ ok: false });
+        if (step.errorIncludes) expect(errorText(outcome)).toContain(step.errorIncludes);
+      }
+    }
+  },
+};
+
+const outputContains = (...texts: string[]): Assertion<WorkspaceContext, void> => ({
+  name: `CLI output contains ${texts.join(", ")}`,
+  check: (ctx) => {
+    for (const text of texts) expect(ctx.output).toContain(text);
+  },
 });
+
+const workspaceDirectoryRemains = (): Assertion<WorkspaceContext, void> => ({
+  name: "workspace directory remains intact",
+  check: (ctx) => {
+    expect(ctx.directoryEntries).toContain("hooks");
+    expect(ctx.readme).toBe("workspace fixture\n");
+  },
+});
+
+const canonicalizesGitRoot: Assertion<WorkspaceContext, void> = {
+  name: "workspace registration uses the repository root",
+  check: (ctx) => expect(ctx.workspaceRootPath).toBe(ctx.fixtureWorkspacePath),
+};
+
+type WorkspaceFixtureKey = "default" | "git-subdirectory";
 
 const scenarios = [
   {
     name: "adds updates lists and deletes only the workspace registration",
     steps: [
-      { args: ["workspace", "add", ".", "--name", "primary", "--copy-pattern", ".env"], outcome: "success" },
-      { args: ["list", "--json"], outcome: "success" },
-      { args: ["workspace", "update", "primary", "--name", "renamed", "--clear-copy-patterns"], outcome: "success" },
-      { args: ["workspace", "list", "--json"], outcome: "success" },
-      { args: ["workspace", "delete", "renamed"], outcome: "success" },
-      { args: ["list", "--json"], outcome: "success" },
+      { args: ["workspace", "add", ".", "--name", "primary", "--copy-pattern", ".env"], expected: "success" },
+      { args: ["list", "--json"], expected: "success" },
+      { args: ["workspace", "update", "primary", "--name", "renamed", "--clear-copy-patterns"], expected: "success" },
+      { args: ["workspace", "list", "--json"], expected: "success" },
+      { args: ["workspace", "delete", "renamed"], expected: "success" },
+      { args: ["workspace", "list", "--json"], expected: "success" },
     ],
-    expectedWorkspaceCount: 0,
-    outputIncludes: [
-      "workspace 'primary' added",
-      "workspace 'renamed' updated",
-      "workspace 'renamed' unregistered; directory was not deleted",
+    assert: [
+      hasNoError<WorkspaceContext, void>(),
+      stepOutcomesMatch,
+      hasObserved<WorkspaceContext, void>("workspaceCount", 0),
+      outputContains("workspace 'primary' added", "workspace 'renamed' updated", "workspace 'renamed' unregistered; directory was not deleted"),
+      workspaceDirectoryRemains(),
     ],
-    directoryMustRemain: true,
   },
   {
     name: "validates hooks and preserves configured workspace metadata",
     steps: [
-      { args: ["workspace", "add", ".", "--setup-hook", "hooks/setup", "--copy-pattern", ".env", "--copy-pattern", "config/**/*.local.json"], outcome: "success" },
-      { args: ["workspace", "update", "workspace", "--no-setup-hook", "--add-copy-pattern", "tmp/local.json"], outcome: "success" },
-      { args: ["workspace", "list", "--json"], outcome: "success" },
+      { args: ["workspace", "add", ".", "--setup-hook", "hooks/setup", "--copy-pattern", ".env", "--copy-pattern", "config/**/*.local.json"], expected: "success" },
+      { args: ["workspace", "update", "workspace", "--no-setup-hook", "--add-copy-pattern", "tmp/local.json"], expected: "success" },
+      { args: ["workspace", "list", "--json"], expected: "success" },
     ],
-    expectedWorkspaceCount: 1,
-    expectedName: "workspace",
-    expectedSetupHook: null,
-    expectedCopyPatterns: [".env", "config/**/*.local.json", "tmp/local.json"],
-    outputIncludes: [],
-    directoryMustRemain: true,
+    assert: [
+      hasNoError<WorkspaceContext, void>(),
+      stepOutcomesMatch,
+      hasObserved<WorkspaceContext, void>("workspaceCount", 1),
+      hasObserved<WorkspaceContext, void>("workspaceName", "workspace"),
+      hasObserved<WorkspaceContext, void>("setupHook", null),
+      hasObserved<WorkspaceContext, void>("copyPatterns", [".env", "config/**/*.local.json", "tmp/local.json"]),
+      workspaceDirectoryRemains(),
+    ],
   },
   {
     name: "rejects an invalid hook without creating a partial registration",
     steps: [
-      { args: ["workspace", "add", ".", "--setup-hook", "hooks/missing"], outcome: "error", errorIncludes: "workspace hook does not exist" },
-      { args: ["workspace", "list", "--json"], outcome: "success" },
+      { args: ["workspace", "add", ".", "--setup-hook", "hooks/missing"], expected: "error", errorIncludes: "workspace hook does not exist" },
+      { args: ["workspace", "list", "--json"], expected: "success" },
     ],
-    expectedWorkspaceCount: 0,
-    outputIncludes: [],
-    directoryMustRemain: true,
+    assert: [
+      hasNoError<WorkspaceContext, void>(),
+      stepOutcomesMatch,
+      hasObserved<WorkspaceContext, void>("workspaceCount", 0),
+      workspaceDirectoryRemains(),
+    ],
   },
   {
     name: "exposes session list under the new namespace and the legacy alias",
     steps: [
-      { args: ["session", "list", "--global", "--json"], outcome: "success" },
-      { args: ["list", "--global", "--json"], outcome: "success" },
+      { args: ["session", "list", "--global", "--json"], expected: "success" },
+      { args: ["list", "--global", "--json"], expected: "success" },
     ],
-    expectedWorkspaceCount: 0,
-    outputIncludes: [],
-    directoryMustRemain: true,
+    assert: [
+      hasNoError<WorkspaceContext, void>(),
+      stepOutcomesMatch,
+      hasObserved<WorkspaceContext, void>("workspaceCount", 0),
+      workspaceDirectoryRemains(),
+    ],
   },
   {
     name: "canonicalizes a git subdirectory to the repository root",
     fixture: "git-subdirectory",
     steps: [
-      { args: ["workspace", "add", ".", "--name", "git-root"], outcome: "success" },
-      { args: ["list", "--global", "--json"], outcome: "success" },
+      { args: ["workspace", "add", ".", "--name", "git-root"], expected: "success" },
+      { args: ["list", "--global", "--json"], expected: "success" },
     ],
-    expectedWorkspaceCount: 1,
-    expectedName: "git-root",
-    expectedRootPath: "fixture.workspace",
-    outputIncludes: ["workspace 'git-root' added"],
-    directoryMustRemain: true,
+    assert: [
+      hasNoError<WorkspaceContext, void>(),
+      stepOutcomesMatch,
+      hasObserved<WorkspaceContext, void>("workspaceCount", 1),
+      hasObserved<WorkspaceContext, void>("workspaceName", "git-root"),
+      outputContains("workspace 'git-root' added"),
+      canonicalizesGitRoot,
+      workspaceDirectoryRemains(),
+    ],
   },
-] satisfies readonly WorkspaceScenario[];
+] satisfies readonly ScenarioCase<WorkspaceFixtureKey, WorkspaceStep, void, WorkspaceContext>[];
+
+const workspaceFixtures: Readonly<Record<WorkspaceFixtureKey, () => FixtureHandle<WorkspaceFixture>>> = {
+  default: () => createWorkspaceFixture("plain"),
+  "git-subdirectory": () => createWorkspaceFixture("git-subdirectory"),
+};
+
+const table: ScenarioTable<WorkspaceFixture, WorkspaceFixtureKey, WorkspaceStep, void, WorkspaceContext> = {
+  defaultFixture: workspaceFixtures.default,
+  fixtures: workspaceFixtures,
+  cases: scenarios,
+  execute: async (fixture, steps) => {
+    fixture.steps = steps;
+    try {
+      for (const step of steps) {
+        try {
+          fixture.outcomes.push({ ok: true, value: await fixture.command.execute(step.args) });
+        } catch (error) {
+          fixture.outcomes.push({ ok: false, error });
+        }
+      }
+    } finally {
+      fixture.command.close();
+      fixture.closed = true;
+    }
+  },
+  observe: async (fixture) => {
+    const database = createAgentDatabase(fixture.database);
+    let workspaces;
+    try {
+      workspaces = await new DrizzleWorkspaceRepository(database.db).list();
+    } finally {
+      database.close();
+    }
+    const workspace = workspaces[0];
+    return {
+      steps: fixture.steps,
+      outcomes: [...fixture.outcomes],
+      workspaceCount: workspaces.length,
+      workspaceName: workspace?.name ?? null,
+      workspaceRootPath: workspace?.rootPath ?? null,
+      fixtureWorkspacePath: realpathSync(fixture.workspace),
+      setupHook: workspace?.setupScriptPath ?? null,
+      copyPatterns: workspace?.worktreeCopyPatterns ?? [],
+      output: fixture.output.value(),
+      directoryEntries: readdirSync(fixture.workspace),
+      readme: readFileSync(join(fixture.workspace, "README"), "utf8"),
+    };
+  },
+};
 
 describe("workspace and session CLI commands", () => {
-  it.each(scenarios)("$name", async (scenario) => {
-    const context = await executeScenario(scenario);
-
-    expect(context.outcomes).toHaveLength(scenario.steps.length);
-    for (const [index, step] of scenario.steps.entries()) {
-      const outcome = context.outcomes[index]!;
-      if (step.outcome === "success") {
-        expect(outcome, `step ${index + 1} should succeed`).toMatchObject({ ok: true });
-      } else {
-        expect(outcome, `step ${index + 1} should fail`).toMatchObject({ ok: false });
-        expect(errorText(outcome)).toContain(step.errorIncludes);
-      }
-    }
-
-    expect(context.workspaces).toHaveLength(scenario.expectedWorkspaceCount);
-    if (scenario.expectedName) expect(context.workspaces[0]?.name).toBe(scenario.expectedName);
-    if (scenario.expectedRootPath === "fixture.workspace") expect(context.workspaces[0]?.rootPath).toBe(realpathSync(context.fixture.workspace));
-    if ("expectedSetupHook" in scenario) expect(context.workspaces[0]?.setupScriptPath).toBe(scenario.expectedSetupHook);
-    if (scenario.expectedCopyPatterns) expect(context.workspaces[0]?.worktreeCopyPatterns).toEqual(scenario.expectedCopyPatterns);
-    for (const text of scenario.outputIncludes) expect(context.output.value()).toContain(text);
-    if (scenario.directoryMustRemain) {
-      expect(readdirSync(context.fixture.workspace)).toEqual(expect.arrayContaining(["hooks"]));
-      expect(readFileSync(join(context.fixture.workspace, "README"), "utf8")).toBe("workspace fixture\n");
-    }
-  });
+  runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-async function executeScenario(scenario: WorkspaceScenario): Promise<ScenarioContext> {
-  const fixture = createFixture(scenario.fixture ?? "plain");
+function createWorkspaceFixture(kind: "plain" | "git-subdirectory"): FixtureHandle<WorkspaceFixture> {
+  const fixture = createFixture(kind);
   const output = captureOutput();
   const command = new AgentCommand({
     cwd: fixture.cwd,
@@ -148,28 +230,21 @@ async function executeScenario(scenario: WorkspaceScenario): Promise<ScenarioCon
     env: fixture.env,
     io: { out: output, err: output },
   });
-  const outcomes: Outcome[] = [];
-  try {
-    for (const step of scenario.steps) {
-      try {
-        outcomes.push({ ok: true, value: await command.execute(step.args) });
-      } catch (error) {
-        outcomes.push({ ok: false, error });
+  const value: WorkspaceFixture = { ...fixture, command, output, outcomes: [], steps: [], closed: false };
+  return {
+    fixture: value,
+    cleanup: () => {
+      if (!value.closed) {
+        value.command.close();
+        value.closed = true;
       }
-    }
-  } finally {
-    command.close();
-  }
-
-  const database = createAgentDatabase(fixture.database);
-  const workspaces = await new DrizzleWorkspaceRepository(database.db).list();
-  database.close();
-  return { fixture, output, outcomes, workspaces };
+      rmSync(value.root, { recursive: true, force: true });
+    },
+  };
 }
 
 function createFixture(kind: "plain" | "git-subdirectory") {
   const root = mkdtempSync(join(tmpdir(), "mobile-agent-workspace-cli-test-"));
-  temporaryRoots.push(root);
   const workspace = join(root, "workspace");
   const hooks = join(workspace, "hooks");
   const database = join(root, "agentd.sqlite");

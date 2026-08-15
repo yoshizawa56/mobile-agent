@@ -1,60 +1,101 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
+import {
+  hasObserved,
+  runScenarioTable,
+  type FixtureHandle,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
 import { createAgentDatabase, AuthStore } from "@mobile-agent/persistence";
 import { AgentdControlServer } from "./control.js";
 import { AuthService } from "./service.js";
 
-describe("agentd private control socket", () => {
-  it("dispatches pane adoption and release requests to the daemon", async () => {
-    const database = createAgentDatabase();
-    const socketPath = "/tmp/agentd-control-test.sock";
-    const auth = new AuthService({
-      store: new AuthStore(database.sqlite),
-      webOrigin: "http://localhost:5173",
-      agentdBaseUrl: "http://127.0.0.1:4317",
-    });
-    const calls: string[] = [];
-    const request = { agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" };
-    const server = new AgentdControlServer({
-      socketPath,
-      auth,
-      adoptAgentSession: async (input) => { calls.push(`adopt:${input.agentSessionId}:${input.tmuxPaneId}:${input.executionId}`); },
-      releaseAgentSession: async (input) => { calls.push(`release:${input.agentSessionId}:${input.tmuxPaneId}:${input.executionId}`); },
-    });
-    const responses: string[] = [];
-    const socket = {
-      destroyed: false,
-      write(data: string) {
-        responses.push(data);
-      },
-    };
-    const handleRequest = (server as unknown as {
-      handleRequest: (client: typeof socket, line: string) => void;
-    }).handleRequest.bind(server);
+type ControlRequest = { agentSessionId: string; tmuxPaneId: string; executionId: string };
+type ControlStep = { type: "adopt" | "release" };
+type ControlFixture = {
+  server: AgentdControlServer;
+  handleRequest: (line: string) => void;
+  request: ControlRequest;
+  responses: string[];
+  calls: string[];
+  socket: { destroyed: boolean; write(data: string): void };
+  database: ReturnType<typeof createAgentDatabase>;
+};
+type ControlContext = { responses: readonly unknown[]; calls: readonly string[] };
 
-    try {
-      handleRequest(socket, JSON.stringify({ type: "adopt_agent_session", ...request }));
-      await waitFor(() => responses.length === 1);
-      expect(JSON.parse(responses[0]!)).toEqual({ type: "agent_session_adopted", ...request });
+const request: ControlRequest = { agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" };
 
-      handleRequest(socket, JSON.stringify({ type: "release_agent_session", ...request }));
-      await waitFor(() => responses.length === 2);
-      expect(JSON.parse(responses[1]!)).toEqual({ type: "agent_session_released", ...request });
-
-      expect(calls).toEqual([
-        `adopt:${request.agentSessionId}:${request.tmuxPaneId}:${request.executionId}`,
-        `release:${request.agentSessionId}:${request.tmuxPaneId}:${request.executionId}`,
-      ]);
-    } finally {
-      server.stop();
-      database.close();
-    }
+const fixture = (): FixtureHandle<ControlFixture> => {
+  const database = createAgentDatabase();
+  const auth = new AuthService({
+    store: new AuthStore(database.sqlite),
+    webOrigin: "http://localhost:5173",
+    agentdBaseUrl: "http://127.0.0.1:4317",
   });
+  const calls: string[] = [];
+  const responses: string[] = [];
+  const server = new AgentdControlServer({
+    socketPath: "/tmp/agentd-control-test.sock",
+    auth,
+    adoptAgentSession: async (input) => { calls.push("adopt:" + input.agentSessionId + ":" + input.tmuxPaneId + ":" + input.executionId); },
+    releaseAgentSession: async (input) => { calls.push("release:" + input.agentSessionId + ":" + input.tmuxPaneId + ":" + input.executionId); },
+  });
+  const socket = {
+    destroyed: false,
+    write(data: string) { responses.push(data); },
+  };
+  const handleRequest = (server as unknown as {
+    handleRequest: (client: typeof socket, line: string) => void;
+  }).handleRequest.bind(server);
+  return {
+    fixture: { server, handleRequest: (line) => handleRequest(socket, line), request, responses, calls, socket, database },
+    cleanup: () => { server.stop(); database.close(); },
+  };
+};
+
+const cases = [
+  {
+    name: "dispatches pane adoption and release requests to the daemon",
+    steps: [{ type: "adopt" }, { type: "release" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        { type: "agent_session_adopted", ...request },
+        { type: "agent_session_released", ...request },
+      ]),
+      hasObserved<ControlContext, undefined>("calls", [
+        "adopt:session-id:%1:execution-id-123456",
+        "release:session-id:%1:execution-id-123456",
+      ]),
+    ],
+  },
+] satisfies readonly ScenarioCase<"default", ControlStep, undefined, ControlContext>[];
+
+const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, ControlContext> = {
+  defaultFixture: fixture,
+  cases,
+  execute: async (testFixture, steps) => {
+    for (const step of steps) {
+      const type = step.type === "adopt" ? "adopt_agent_session" : "release_agent_session";
+      const expectedCount = testFixture.responses.length + 1;
+      testFixture.handleRequest(JSON.stringify({ type, ...testFixture.request }));
+      await waitFor(() => testFixture.responses.length === expectedCount);
+    }
+  },
+  observe: (testFixture) => ({
+    responses: testFixture.responses.map((value) => JSON.parse(value)),
+    calls: [...testFixture.calls],
+  }),
+};
+
+describe("agentd private control socket", () => {
+  runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error("timed out waiting for agentd control response");
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 }

@@ -36,6 +36,59 @@ export const worktreeCopyPatternLimits = {
   maxPatternLength: 4_096,
 } as const;
 
+export const agentSessionNameLimits = {
+  maxLength: 64,
+  maxUtf8Bytes: 240,
+} as const;
+
+export class InvalidAgentSessionNameError extends Error {
+  public readonly code = "invalid_agent_name" as const;
+
+  public constructor() {
+    super("Name must contain at least one letter or number after normalization");
+    this.name = "InvalidAgentSessionNameError";
+  }
+}
+
+/**
+ * Produces the one name used by an agent session, its worktree, and its git
+ * branch. Git accepts more than ASCII, so letters from other scripts remain
+ * possible, but the result deliberately removes ref/path hazards and keeps
+ * the conservative 1-64 character session limit.
+ */
+export function normalizeAgentSessionName(value: string): string {
+  let normalized = value
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/gu, "-")
+    .replace(/[^\p{L}\p{N}\p{M}._-]+/gu, "-")
+    .replace(/\.{2,}/gu, "-")
+    .replace(/-{2,}/gu, "-")
+    .replace(/\.lock$/iu, "-lock")
+    .replace(/-{2,}/gu, "-")
+    .replace(/^[._-]+|[._-]+$/gu, "");
+
+  const encoder = new TextEncoder();
+  let limited = "";
+  let byteLength = 0;
+  let codePointCount = 0;
+  for (const character of normalized) {
+    if (codePointCount >= agentSessionNameLimits.maxLength) break;
+    const characterBytes = encoder.encode(character).byteLength;
+    if (byteLength + characterBytes > agentSessionNameLimits.maxUtf8Bytes) break;
+    limited += character;
+    byteLength += characterBytes;
+    codePointCount += 1;
+  }
+  normalized = limited.replace(/^[._-]+|[._-]+$/gu, "");
+
+  if (!normalized || !/^[\p{L}\p{N}]/u.test(normalized)) {
+    throw new InvalidAgentSessionNameError();
+  }
+  return normalized;
+}
+
 /**
  * Worktree copy patterns are relative, slash-separated git paths. The
  * wildcard matcher supports `*` and `**`; keeping validation here lets the

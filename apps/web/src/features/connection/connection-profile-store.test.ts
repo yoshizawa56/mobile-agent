@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  noFixture,
+  returns,
+  runOperationTable,
+  runScenarioTable,
+  type Assertion,
+  type FixtureHandle,
+  type OperationCase,
+  type OperationTable,
+  type ScenarioCase,
+  type ScenarioTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import {
   clearBrowserConnectionProfile,
   normalizeServeUrl,
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
+  type BrowserConnectionProfile,
 } from "./connection-profile-store";
 
 class MemoryStorage implements Storage {
@@ -17,31 +31,96 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string): void { this.values.set(key, value); }
 }
 
+type EmptyContext = {};
+
+const normalizeCases = [
+  { name: "removes a trailing slash", input: "https://workstation.tailnet.ts.net/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net")] },
+  { name: "preserves a non-default port", input: "https://workstation.tailnet.ts.net:8449/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net:8449")] },
+  { name: "removes path and query details", input: "https://example.test/agentd/?ignored=1", assert: [returns<EmptyContext, string>("https://example.test/agentd")] },
+] satisfies readonly OperationCase<"default", string, string, EmptyContext>[];
+
+const normalizeTable: OperationTable<undefined, "default", string, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: normalizeCases,
+  execute: (_fixture, input) => normalizeServeUrl(input),
+  observe: () => ({}),
+};
+
+type ProfileFixture = { storage: MemoryStorage };
+type ProfileStep =
+  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "serveUrl"> }
+  | { type: "set-raw"; value: string }
+  | { type: "clear" }
+  | { type: "read" };
+type ProfileContext = { raw: string | null };
+type ProfileResult = BrowserConnectionProfile | null;
+
+const profileFixture = (): FixtureHandle<ProfileFixture> => ({
+  fixture: { storage: new MemoryStorage() },
+});
+
+const hasProfileName = (expected: string): Assertion<ProfileContext, ProfileResult> => ({
+  name: `returns profile ${expected}`,
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value?.name).toBe(expected);
+  },
+});
+
+const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
+  name: "persists no credential fields",
+  check: (ctx) => {
+    expect(ctx.raw).not.toContain("key");
+    expect(ctx.raw).not.toContain("password");
+  },
+});
+
+const profileCases = [
+  {
+    name: "round-trips a profile without credentials",
+    steps: [
+      { type: "save", input: { name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/" } },
+      { type: "read" },
+    ],
+    assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
+  },
+  {
+    name: "ignores malformed stored data",
+    steps: [
+      { type: "set-raw", value: "not-json" },
+      { type: "read" },
+    ],
+    assert: [returns<ProfileContext, ProfileResult>(null)],
+  },
+  {
+    name: "clears a saved profile",
+    steps: [
+      { type: "save", input: { name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net" } },
+      { type: "clear" },
+      { type: "read" },
+    ],
+    assert: [returns<ProfileContext, ProfileResult>(null)],
+  },
+] satisfies readonly ScenarioCase<"default", ProfileStep, ProfileResult, ProfileContext>[];
+
+const profileTable: ScenarioTable<ProfileFixture, "default", ProfileStep, ProfileResult, ProfileContext> = {
+  defaultFixture: profileFixture,
+  cases: profileCases,
+  execute: (fixture, steps) => {
+    let result: ProfileResult = null;
+    for (const step of steps) {
+      if (step.type === "save") result = saveBrowserConnectionProfile(step.input, fixture.storage);
+      if (step.type === "set-raw") fixture.storage.setItem("mobile-agent.connection-profile.v1", step.value);
+      if (step.type === "clear") clearBrowserConnectionProfile(fixture.storage);
+      if (step.type === "read") result = readBrowserConnectionProfile(fixture.storage);
+    }
+    return result;
+  },
+  observe: (fixture) => ({ raw: fixture.storage.getItem("mobile-agent.connection-profile.v1") }),
+};
+
 describe("browser connection profile", () => {
-  it.each([
-    { input: "https://workstation.tailnet.ts.net/", expected: "https://workstation.tailnet.ts.net" },
-    { input: "https://workstation.tailnet.ts.net:8449/", expected: "https://workstation.tailnet.ts.net:8449" },
-    { input: "https://example.test/agentd/?ignored=1", expected: "https://example.test/agentd" },
-  ])("normalizes a non-secret Serve URL", ({ input, expected }) => {
-    expect(normalizeServeUrl(input)).toBe(expected);
-  });
-
-  it("round-trips a profile without credentials", () => {
-    const storage = new MemoryStorage();
-    const saved = saveBrowserConnectionProfile({ name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/" }, storage);
-    const loaded = readBrowserConnectionProfile(storage);
-
-    expect(loaded).toEqual(saved);
-    expect(storage.getItem("mobile-agent.connection-profile.v1")).not.toContain("key");
-    expect(storage.getItem("mobile-agent.connection-profile.v1")).not.toContain("password");
-  });
-
-  it("ignores malformed stored data and can clear a profile", () => {
-    const storage = new MemoryStorage();
-    storage.setItem("mobile-agent.connection-profile.v1", "not-json");
-    expect(readBrowserConnectionProfile(storage)).toBeNull();
-    saveBrowserConnectionProfile({ name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net" }, storage);
-    clearBrowserConnectionProfile(storage);
-    expect(readBrowserConnectionProfile(storage)).toBeNull();
-  });
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, normalizeTable);
+  runScenarioTable(register, profileTable);
 });

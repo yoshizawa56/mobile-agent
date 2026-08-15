@@ -1,251 +1,158 @@
 import { describe, expect, it } from "vitest";
-import { agentdControlRequestSchema, agentdControlResponseSchema, agentdEventSchema, clientControlMessageSchema, createPaneRequestSchema, createSessionRequestSchema, paneListResponseSchema, serverControlMessageSchema, terminalProtocolVersion, workspaceSelectionSchema } from "./index.js";
+import {
+  runOperationTable,
+  noFixture,
+  type Assertion,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
+import {
+  agentdControlRequestSchema,
+  agentdControlResponseSchema,
+  agentdEventSchema,
+  clientControlMessageSchema,
+  createPaneRequestSchema,
+  createSessionRequestSchema,
+  paneListResponseSchema,
+  serverControlMessageSchema,
+  terminalProtocolVersion,
+  workspaceSelectionSchema,
+} from "./index.js";
 
-type TableCase = {
-  name: string;
-  given: () => unknown;
-  when: (input: unknown) => ReturnType<typeof clientControlMessageSchema.safeParse>;
-  check: Array<(ctx: { result?: ReturnType<typeof clientControlMessageSchema.safeParse> }) => void>;
-  assert: Array<(ctx: { result?: ReturnType<typeof clientControlMessageSchema.safeParse> }) => void>;
+type EmptyContext = {};
+type ValidationResult = { success: boolean; data?: unknown; issuePath?: readonly (string | number)[] };
+type ValidationSchema = { safeParse: (input: unknown) => unknown };
+
+const isValid = (expectedData?: unknown): Assertion<EmptyContext, ValidationResult> => ({
+  name: "accepts the input",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.success).toBe(true);
+    if (expectedData !== undefined) expect(result.value.data).toEqual(expectedData);
+  },
+});
+
+const isInvalid = (expectedPath?: readonly (string | number)[]): Assertion<EmptyContext, ValidationResult> => ({
+  name: "rejects the input",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.success).toBe(false);
+    if (expectedPath) expect(result.value.issuePath).toEqual(expectedPath);
+  },
+});
+
+const createValidationTable = (
+  cases: readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[],
+  schema: ValidationSchema,
+): OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> => ({
+  defaultFixture: noFixture(),
+  cases,
+  execute: (_fixture, input) => parseSchema(schema, input),
+  observe: () => ({}),
+});
+
+function parseSchema(schema: ValidationSchema, input: unknown): ValidationResult {
+  const parsed = schema.safeParse(input) as {
+    success?: boolean;
+    data?: unknown;
+    error?: { issues?: readonly { path?: readonly PropertyKey[] }[] };
+  };
+  if (parsed.success) return { success: true, data: parsed.data };
+  const path = parsed.error?.issues?.[0]?.path?.map((segment) => typeof segment === "symbol" ? segment.toString() : segment);
+  return { success: false, issuePath: path };
+}
+
+const clientCases = [
+  { name: "accepts an attach request", input: { type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 })] },
+  { name: "accepts a mobile claim request", input: { type: "claim", version: terminalProtocolVersion }, assert: [isValid({ type: "claim", version: terminalProtocolVersion })] },
+  { name: "rejects an invalid terminal size", input: { type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 }, assert: [isInvalid(["cols"])] },
+  { name: "accepts a resumed attach with paired credentials", input: { type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" })] },
+  { name: "rejects an attach with only one resume credential", input: { type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1" }, assert: [isInvalid()] },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const serverCases = [
+  { name: "describes the mobile viewport after attach", input: { type: "ready", version: terminalProtocolVersion, sessionId: "terminal-1", resumeToken: "resume-token", resumed: false, target: "project:0.1", paneId: "%3", windowId: "@1", cols: 80, rows: 24 }, assert: [isValid()] },
+  { name: "describes a desktop takeover", input: { type: "viewport", version: terminalProtocolVersion, owner: "desktop", reason: "desktop_activity" }, assert: [isValid()] },
+  { name: "requires a lifecycle reason on a closed frame", input: { type: "closed", version: terminalProtocolVersion, sessionId: "terminal-1", reason: "detached", code: null, signal: null }, assert: [isValid()] },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const eventCases = [
+  { name: "accepts a pane creation invalidation", input: { type: "session_updated", sessionName: "agentd", reason: "pane_created", revision: 1 }, assert: [isValid()] },
+  { name: "rejects an event without a session scope", input: { type: "session_updated", reason: "pane_deleted", revision: 2 }, assert: [isInvalid()] },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+type PairingInput = { kind: "request" | "response"; value: unknown };
+const pairingCases = [
+  { name: "accepts a pairing request", input: { kind: "request", value: { type: "create_pairing", webOrigin: "https://web.example", agentdBaseUrl: "https://agentd.example" } }, assert: [isValid()] },
+  { name: "accepts a pairing response", input: { kind: "response", value: { type: "pairing_result", pairingId: "pairing-1234567890123456", status: "approved", deviceId: "device-1" } }, assert: [isValid()] },
+  { name: "rejects a pairing request without endpoint settings", input: { kind: "request", value: { type: "create_pairing" } }, assert: [isInvalid()] },
+  { name: "rejects an unrecognized control response", input: { kind: "response", value: { type: "unexpected" } }, assert: [isInvalid()] },
+  { name: "accepts an agent session adoption request", input: { kind: "request", value: { type: "adopt_agent_session", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+  { name: "accepts an agent session release request", input: { kind: "request", value: { type: "release_agent_session", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+  { name: "accepts an agent session adopted response", input: { kind: "response", value: { type: "agent_session_adopted", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+  { name: "accepts an agent session released response", input: { kind: "response", value: { type: "agent_session_released", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+] satisfies readonly OperationCase<"default", PairingInput, ValidationResult, EmptyContext>[];
+
+const pairingTable: OperationTable<undefined, "default", PairingInput, ValidationResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: pairingCases,
+  execute: (_fixture, input) => parseSchema(input.kind === "request" ? agentdControlRequestSchema : agentdControlResponseSchema, input.value),
+  observe: () => ({}),
 };
 
-const cases: TableCase[] = [
-  {
-    name: "accepts an attach request",
-    given: () => ({ type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 }),
-    when: (input) => clientControlMessageSchema.safeParse(input),
-    check: [(ctx) => expect(ctx.result?.success).toBe(true)],
-    assert: [(ctx) => expect(ctx.result?.data).toMatchObject({ type: "attach", target: "agentd" })],
-  },
-  {
-    name: "accepts a mobile claim request",
-    given: () => ({ type: "claim", version: terminalProtocolVersion }),
-    when: (input) => clientControlMessageSchema.safeParse(input),
-    check: [(ctx) => expect(ctx.result?.success).toBe(true)],
-    assert: [(ctx) => expect(ctx.result?.data).toEqual({ type: "claim", version: terminalProtocolVersion })],
-  },
-  {
-    name: "rejects an invalid terminal size",
-    given: () => ({ type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 }),
-    when: (input) => clientControlMessageSchema.safeParse(input),
-    check: [(ctx) => expect(ctx.result?.success).toBe(false)],
-    assert: [(ctx) => expect(ctx.result?.error?.issues[0]?.path).toEqual(["cols"])],
-  },
-];
+const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running", title: null, lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
-describe("client control protocol", () => {
-  it.each(cases)("$name", ({ given, when, check, assert }) => {
-    const ctx: { result?: ReturnType<typeof clientControlMessageSchema.safeParse> } = {};
-    const input = given();
-    ctx.result = when(input);
-    check.forEach((checkCase) => checkCase(ctx));
-    assert.forEach((assertCase) => assertCase(ctx));
-  });
-});
+type PaneCreateInput = { placement: "window" | "right" | "bottom"; targetPaneId: string | null };
+const paneCreateCases = [
+  { name: "allows a new tmux window without a target", input: { placement: "window", targetPaneId: null }, assert: [isValid()] },
+  { name: "allows a right split with a target pane", input: { placement: "right", targetPaneId: "%0" }, assert: [isValid()] },
+  { name: "rejects a split without a target pane", input: { placement: "bottom", targetPaneId: null }, assert: [isInvalid()] },
+] satisfies readonly OperationCase<"default", PaneCreateInput, ValidationResult, EmptyContext>[];
+const paneCreateTable: OperationTable<undefined, "default", PaneCreateInput, ValidationResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: paneCreateCases,
+  execute: (_fixture, input) => parseSchema(createPaneRequestSchema, { sessionName: "agentd", kind: "shell", name: "shell", cwd: "/tmp", agentId: null, useWorktree: false, ...input }),
+  observe: () => ({}),
+};
 
-describe("server viewport protocol", () => {
-  it.each([
-    {
-      name: "describes the mobile viewport after attach",
-      input: {
-        type: "ready",
-        version: terminalProtocolVersion,
-        sessionId: "terminal-1",
-        resumeToken: "resume-token",
-        resumed: false,
-        target: "project:0.1",
-        paneId: "%3",
-        windowId: "@1",
-        cols: 80,
-        rows: 24,
-      },
-    },
-    {
-      name: "describes a desktop takeover",
-      input: {
-        type: "viewport",
-        version: terminalProtocolVersion,
-        owner: "desktop",
-        reason: "desktop_activity",
-      },
-    },
-  ])("$name", ({ input }) => {
-    expect(serverControlMessageSchema.safeParse(input).success).toBe(true);
-  });
+type SessionCreateInput = { name: string; workspaceId?: string; cwd?: string };
+const sessionCases = [
+  { name: "accepts the selected workspace for a new session", input: { name: "review", workspaceId: "workspace-1" }, assert: [isValid()] },
+  { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/mobile-agent" }, assert: [isValid()] },
+  { name: "rejects a session without a workspace selection", input: { name: "review" }, assert: [isInvalid()] },
+] satisfies readonly OperationCase<"default", SessionCreateInput, ValidationResult, EmptyContext>[];
+const sessionTable: OperationTable<undefined, "default", SessionCreateInput, ValidationResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: sessionCases,
+  execute: (_fixture, input) => parseSchema(createSessionRequestSchema, input),
+  observe: () => ({}),
+};
 
-  it("accepts a resumed attach with paired credentials", () => {
-    expect(clientControlMessageSchema.safeParse({
-      type: "attach",
-      version: terminalProtocolVersion,
-      target: "%3",
-      cols: 80,
-      rows: 24,
-      sessionId: "terminal-1",
-      resumeToken: "resume-token",
-    }).success).toBe(true);
-  });
+type WorkspaceInput = { workspaceId: string; mode: "workspace" | "worktree" };
+const workspaceCases = [
+  { name: "accepts a direct workspace selection", input: { workspaceId: "workspace-1", mode: "workspace" }, assert: [isValid()] },
+  { name: "accepts a workspace worktree selection", input: { workspaceId: "workspace-1", mode: "worktree" }, assert: [isValid()] },
+] satisfies readonly OperationCase<"default", WorkspaceInput, ValidationResult, EmptyContext>[];
+const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, ValidationResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: workspaceCases,
+  execute: (_fixture, input) => parseSchema(workspaceSelectionSchema, input),
+  observe: () => ({}),
+};
 
-  it("rejects an attach with only one resume credential", () => {
-    expect(clientControlMessageSchema.safeParse({
-      type: "attach",
-      version: terminalProtocolVersion,
-      target: "%3",
-      cols: 80,
-      rows: 24,
-      sessionId: "terminal-1",
-    }).success).toBe(false);
-  });
+const paneWorkspaceCases = [{ name: "accepts a pane request that selects a workspace by id", input: { sessionName: "agentd", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+const paneWorkspaceTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> = createValidationTable(paneWorkspaceCases, createPaneRequestSchema);
 
-  it("requires a lifecycle reason on a closed frame", () => {
-    expect(serverControlMessageSchema.safeParse({
-      type: "closed",
-      version: terminalProtocolVersion,
-      sessionId: "terminal-1",
-      reason: "detached",
-      code: null,
-      signal: null,
-    }).success).toBe(true);
-  });
-});
-
-describe("agentd event protocol", () => {
-  it.each([
-    {
-      name: "accepts a pane creation invalidation",
-      input: { type: "session_updated", sessionName: "agentd", reason: "pane_created", revision: 1 },
-      valid: true,
-    },
-    {
-      name: "rejects an event without a session scope",
-      input: { type: "session_updated", reason: "pane_deleted", revision: 2 },
-      valid: false,
-    },
-  ])("$name", ({ input, valid }) => {
-    expect(agentdEventSchema.safeParse(input).success).toBe(valid);
-  });
-});
-
-describe("agentd pairing control protocol", () => {
-  it("accepts a pairing request and response", () => {
-    expect(agentdControlRequestSchema.safeParse({
-      type: "create_pairing",
-      webOrigin: "https://web.example",
-      agentdBaseUrl: "https://agentd.example",
-    }).success).toBe(true);
-    expect(agentdControlResponseSchema.safeParse({
-      type: "pairing_result",
-      pairingId: "pairing-1234567890123456",
-      status: "approved",
-      deviceId: "device-1",
-    }).success).toBe(true);
-  });
-
-  it("rejects a pairing request with missing endpoint settings", () => {
-    expect(agentdControlRequestSchema.safeParse({ type: "create_pairing" }).success).toBe(false);
-  });
-
-  it("rejects an unrecognized control response", () => {
-    expect(agentdControlResponseSchema.safeParse({ type: "unexpected" }).success).toBe(false);
-  });
-
-  it("accepts agent session adoption and release control frames", () => {
-    const common = { agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" };
-    expect(agentdControlRequestSchema.safeParse({ type: "adopt_agent_session", ...common }).success).toBe(true);
-    expect(agentdControlRequestSchema.safeParse({ type: "release_agent_session", ...common }).success).toBe(true);
-    expect(agentdControlResponseSchema.safeParse({ type: "agent_session_adopted", ...common }).success).toBe(true);
-    expect(agentdControlResponseSchema.safeParse({ type: "agent_session_released", ...common }).success).toBe(true);
-  });
-});
-
-describe("pane board protocol", () => {
-  it("accepts the host pane list DTO", () => {
-    expect(
-      paneListResponseSchema.safeParse({
-        panes: [{
-          id: "pane-1",
-          tmuxPaneId: "%1",
-          sessionName: "agentd",
-          windowId: "@0",
-          kind: "shell",
-          name: "shell",
-          cwd: "/tmp",
-          workspaceId: null,
-          agentId: null,
-          runId: null,
-          state: "running",
-          title: null,
-          lastSeenAt: "2026-08-09T00:00:00.000Z",
-        }],
-      }).success,
-    ).toBe(true);
-  });
-});
-
-describe("pane creation protocol", () => {
-  it.each([
-    {
-      name: "allows a new tmux window without a target",
-      input: { placement: "window", targetPaneId: null },
-      valid: true,
-    },
-    {
-      name: "allows a right split with a target pane",
-      input: { placement: "right", targetPaneId: "%0" },
-      valid: true,
-    },
-    {
-      name: "rejects a split without a target pane",
-      input: { placement: "bottom", targetPaneId: null },
-      valid: false,
-    },
-  ])("$name", ({ input, valid }) => {
-    const result = createPaneRequestSchema.safeParse({
-      sessionName: "agentd",
-      kind: "shell",
-      name: "shell",
-      cwd: "/tmp",
-      agentId: null,
-      useWorktree: false,
-      ...input,
-    });
-    expect(result.success).toBe(valid);
-  });
-});
-
-describe("workspace selection protocol", () => {
-  it.each([
-    {
-      name: "accepts a direct workspace selection",
-      input: { workspaceId: "workspace-1", mode: "workspace" },
-      valid: true,
-    },
-    {
-      name: "accepts a workspace worktree selection",
-      input: { workspaceId: "workspace-1", mode: "worktree" },
-      valid: true,
-    },
-  ])("$name", ({ input, valid }) => {
-    expect(workspaceSelectionSchema.safeParse(input).success).toBe(valid);
-  });
-
-  it.each([
-    { name: "accepts the selected workspace for a new session", input: { name: "review", workspaceId: "workspace-1" }, valid: true },
-    { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/mobile-agent" }, valid: true },
-    { name: "rejects a session without a workspace selection", input: { name: "review" }, valid: false },
-  ])("$name", ({ input, valid }) => {
-    expect(createSessionRequestSchema.safeParse(input).success).toBe(valid);
-  });
-
-  it("accepts a pane request that selects a workspace by id", () => {
-    expect(createPaneRequestSchema.safeParse({
-      sessionName: "agentd",
-      kind: "agent",
-      name: "review",
-      workspaceId: "workspace-1",
-      agentId: "codex",
-      useWorktree: true,
-      placement: "window",
-      targetPaneId: null,
-    }).success).toBe(true);
-  });
+describe("protocol schemas", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, createValidationTable(clientCases, clientControlMessageSchema));
+  runOperationTable(register, createValidationTable(serverCases, serverControlMessageSchema));
+  runOperationTable(register, createValidationTable(eventCases, agentdEventSchema));
+  runOperationTable(register, pairingTable);
+  runOperationTable(register, createValidationTable(paneListCases, paneListResponseSchema));
+  runOperationTable(register, paneCreateTable);
+  runOperationTable(register, sessionTable);
+  runOperationTable(register, workspaceTable);
+  runOperationTable(register, paneWorkspaceTable);
 });

@@ -5,6 +5,8 @@
     "": {
       "name": "mobile-agent",
       "devDependencies": {
+        "@babel/parser": "^7.29.8",
+        "@mobile-agent/test-support": "workspace:*",
         "turbo": "^2.10.8",
       },
     },
@@ -24,6 +26,7 @@
         "@mobile-agent/tailscale": "workspace:*",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "typescript": "^7.0.2",
@@ -40,10 +43,12 @@
         "@mobile-agent/logging": "workspace:*",
         "@mobile-agent/persistence": "workspace:*",
         "@mobile-agent/protocol": "workspace:*",
+        "@mobile-agent/tailscale": "workspace:*",
         "hono": "^4.12.32",
         "ws": "^8.18.3",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "@types/ws": "^8.18.1",
         "bun-types": "^1.3.14",
@@ -71,6 +76,7 @@
       },
       "devDependencies": {
         "@capacitor/cli": "8.4.2",
+        "@mobile-agent/test-support": "workspace:*",
         "@storybook/react-vite": "^10.5.6",
         "@tanstack/router-plugin": "^1.168.23",
         "@types/react": "^19.2.18",
@@ -94,6 +100,7 @@
       },
       "devDependencies": {
         "@mobile-agent/agentd": "workspace:*",
+        "@mobile-agent/test-support": "workspace:*",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -102,6 +109,7 @@
       "name": "@mobile-agent/agents",
       "version": "0.1.0",
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -113,6 +121,7 @@
         "@mobile-agent/domain": "workspace:*",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -127,6 +136,7 @@
         "qrcode": "^1.5.4",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "typescript": "^7.0.2",
@@ -137,6 +147,7 @@
       "name": "@mobile-agent/domain",
       "version": "0.1.0",
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -145,6 +156,7 @@
       "name": "@mobile-agent/logging",
       "version": "0.1.0",
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "typescript": "^7.0.2",
@@ -160,6 +172,7 @@
         "drizzle-orm": "^0.45.2",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "drizzle-kit": "^0.31.10",
@@ -174,12 +187,23 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
+        "@mobile-agent/test-support": "workspace:*",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
     },
     "packages/tailscale": {
       "name": "@mobile-agent/tailscale",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^26.1.2",
+        "@mobile-agent/test-support": "workspace:*",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10",
+      },
+    },
+    "packages/test-support": {
+      "name": "@mobile-agent/test-support",
       "version": "0.1.0",
       "devDependencies": {
         "typescript": "^7.0.2",
@@ -349,6 +373,8 @@
     "@mobile-agent/protocol": ["@mobile-agent/protocol@workspace:packages/protocol"],
 
     "@mobile-agent/tailscale": ["@mobile-agent/tailscale@workspace:packages/tailscale"],
+
+    "@mobile-agent/test-support": ["@mobile-agent/test-support@workspace:packages/test-support"],
 
     "@mobile-agent/web": ["@mobile-agent/web@workspace:apps/web"],
 

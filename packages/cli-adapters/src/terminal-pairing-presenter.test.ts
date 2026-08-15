@@ -1,15 +1,19 @@
 import { Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
+import {
+  hasObserved,
+  runOperationTable,
+  type FixtureHandle,
+  type OperationCase,
+  type OperationTable,
+  type TestRegistrar,
+} from "@mobile-agent/test-support";
 import type { PairingOffer } from "@mobile-agent/application";
 import { TerminalPairingPresenter } from "./terminal-pairing-presenter.js";
 
 class CaptureOutput extends Writable {
   public value = "";
-
-  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void {
-    this.value += chunk.toString();
-    callback();
-  }
+  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void { this.value += chunk.toString(); callback(); }
 }
 
 const offer: PairingOffer = {
@@ -20,25 +24,38 @@ const offer: PairingOffer = {
   expiresAt: Date.now() + 300_000,
 };
 
-describe("TerminalPairingPresenter", () => {
-  it("hands the opaque pairing URL to the terminal QR adapter", async () => {
-    const out = new CaptureOutput();
-    let received: string | undefined;
+type PresenterFixture = { out: CaptureOutput; received: string | undefined };
+type PresenterContext = { received: string | undefined; output: boolean; instruction: boolean };
+const presenterFixture = (): FixtureHandle<PresenterFixture> => ({ fixture: { out: new CaptureOutput(), received: undefined } });
+
+const cases = [
+  {
+    name: "hands the opaque pairing URL to the terminal QR adapter",
+    input: offer,
+    assert: [
+      hasObserved<PresenterContext, undefined>("received", offer.pairingUrl),
+      hasObserved<PresenterContext, undefined>("output", true),
+      hasObserved<PresenterContext, undefined>("instruction", true),
+    ],
+  },
+] satisfies readonly OperationCase<"default", PairingOffer, undefined, PresenterContext>[];
+
+const table: OperationTable<PresenterFixture, "default", PairingOffer, undefined, PresenterContext> = {
+  defaultFixture: presenterFixture,
+  cases,
+  execute: async (fixture, input) => {
     const presenter = new TerminalPairingPresenter({
-      out,
+      out: fixture.out,
       input: process.stdin,
       qrRenderer: {
-        render: async (value) => {
-          received = value;
-          return "rendered-qr";
-        },
+        render: async (value) => { fixture.received = value; return "rendered-qr"; },
       },
     });
+    await presenter.showPairing(input);
+  },
+  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Web UI") }),
+};
 
-    await presenter.showPairing(offer);
-
-    expect(received).toBe(offer.pairingUrl);
-    expect(out.value).toContain("rendered-qr");
-    expect(out.value).toContain("Scan this QR code in the Web UI");
-  });
+describe("TerminalPairingPresenter", () => {
+  runOperationTable(it as unknown as TestRegistrar, table);
 });

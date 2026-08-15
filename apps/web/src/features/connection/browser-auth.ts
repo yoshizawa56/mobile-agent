@@ -8,9 +8,9 @@ import {
   decodePairingCode,
   pairingClaimRequestSchema,
   pairingClaimResponseSchema,
-  pairingQrPayloadSchema,
+  pairingCodePayloadSchema,
   pairingStatusSchema,
-  type PairingQrPayload,
+  type PairingCodePayload,
   type PublicKeyJwk,
 } from "@mobile-agent/protocol";
 import {
@@ -46,20 +46,19 @@ export type BrowserPairingProgress =
   | { phase: "approved" };
 
 export type BrowserPairingResult = {
-  payload: PairingQrPayload;
+  payload: PairingCodePayload;
   serverId: string;
   deviceId: string;
   deviceName: string;
 };
 
-export function parsePairingQrPayload(value: string): PairingQrPayload {
-  let payload: PairingQrPayload;
+export function parsePairingQrPayload(value: string): PairingCodePayload {
+  let payload: PairingCodePayload;
   try {
-    payload = pairingQrPayloadSchema.parse(decodePairingCode(value));
+    payload = pairingCodePayloadSchema.parse(decodePairingCode(value));
   } catch {
     throw new Error("QR code does not contain a valid mobile-agent pairing code");
   }
-  if (payload.expiresAt <= Date.now()) throw new Error("This pairing QR code has expired");
   if (new URL(payload.agentdBaseUrl).protocol !== "http:" && new URL(payload.agentdBaseUrl).protocol !== "https:") {
     throw new Error("Pairing endpoint must use http or https");
   }
@@ -76,7 +75,6 @@ export async function pairBrowserFromQr(
   const payload = parsePairingQrPayload(value);
   const endpoint = payload.agentdBaseUrl.replace(/\/$/, "");
   const info = authInfoSchema.parse(await requestJson(`${endpoint}/auth/v1/info`));
-  if (info.serverId !== payload.serverId) throw new Error("Pairing QR and agentd server identity do not match");
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const parsedPublicKey = publicKeyJwk(publicKey);
@@ -84,7 +82,7 @@ export async function pairBrowserFromQr(
   const clientNonce = randomNonce();
   const pairingSecretHash = await sha256Hex(payload.pairingSecret);
   const claimMessage = pairingClaimMessage({
-    serverId: payload.serverId,
+    serverId: info.serverId,
     pairingId: payload.pairingId,
     pairingSecretHash,
     keyFingerprint: fingerprint,
@@ -106,19 +104,19 @@ export async function pairBrowserFromQr(
       signature: await signEcdsa(keyPair.privateKey, claimMessage),
     })),
   }));
-  if (claim.serverId !== payload.serverId || claim.pairingId !== payload.pairingId) throw new Error("agentd returned an unexpected pairing identity");
+  if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId) throw new Error("agentd returned an unexpected pairing identity");
   options.onProgress?.({ phase: "awaiting_approval", fingerprint: claim.keyFingerprint });
 
   const status = await waitForPairingApproval(endpoint, payload.pairingId, claim.claimToken);
   if (status.status !== "approved" || !status.deviceId) throw new Error(`Pairing was ${status.status}`);
   await saveBrowserDevice({
-    serverId: payload.serverId,
+    serverId: info.serverId,
     deviceId: status.deviceId,
     publicKey: parsedPublicKey,
     privateKey: keyPair.privateKey,
   });
   options.onProgress?.({ phase: "approved" });
-  return { payload, serverId: payload.serverId, deviceId: status.deviceId, deviceName: options.deviceName.trim() || defaultDeviceName() };
+  return { payload, serverId: info.serverId, deviceId: status.deviceId, deviceName: options.deviceName.trim() || defaultDeviceName() };
 }
 
 export function createBrowserAgentdAuth(connection: AgentdConnection): AgentdAuthProvider {

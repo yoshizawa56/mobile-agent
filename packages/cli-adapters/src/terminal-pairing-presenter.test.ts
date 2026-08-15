@@ -18,7 +18,7 @@ class CaptureOutput extends Writable {
 
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
-  pairingCode: "ma2:pairing-code",
+  pairingCode: "ma3:pairing-code",
   agentdBaseUrl: "https://agentd.example",
   expiresAt: Date.now() + 300_000,
 };

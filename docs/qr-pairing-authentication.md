@@ -1,6 +1,6 @@
 # QR pairing and agentd authentication
 
-Status: pairing code v2 implementation baseline.
+Status: pairing code v3 implementation baseline.
 
 Last updated: 2026-08-15
 
@@ -60,7 +60,7 @@ Native clients use the platform key store, preferably with hardware-backed and u
 
 There is no `agentd` server private key in v1.
 
-`serverId` is a random, persistent 128-bit identifier for an authentication realm. It is stored in `auth_metadata` and included in QR data and signed messages so that a device cannot accidentally use a key from another environment. It is not cryptographic proof that a route terminates at the genuine server.
+`serverId` is a random, persistent 128-bit identifier for an authentication realm. It is stored in `auth_metadata`, returned by `/auth/v1/info`, and included in signed messages so that a device cannot accidentally use a key from another environment. It is not cryptographic proof that a route terminates at the genuine server.
 
 Server authenticity in v1 comes from HTTPS/Tailscale/SSH route validation. A persistent server identity key and client pinning are added later if an untrusted route or TLS terminator must be defended against independently of transport authentication.
 
@@ -122,24 +122,25 @@ The command creates a pairing valid for five minutes, displays the QR in the for
 The command is an outer adapter for the `PairDevice` application use case in `packages/application`. The use case depends only on `PairingControlPort` and `PairingPresenterPort`. The CLI's Unix-socket client implements the control port, while the terminal presenter implements the presentation port. `apps/agent-cli/src/index.ts` is the composition root: it wires the use case and concrete adapters into the command registry. Terminal QR rendering and the `qrcode` package are confined to `@mobile-agent/cli-adapters`; the use case, shared protocol, and `@mobile-agent/agent-cli` do not depend directly on terminal rendering.
 
 The QR is a raw in-app pairing code. It is decoded by the client scanner and
-never navigates the browser:
+never navigates the browser. New codes use a compact binary payload so the
+endpoint and enrollment secret fit into fewer QR modules:
 
 ```text
-ma2:<base64url(canonical-json)>
+ma3:<base64url(compact-binary-payload)>
 ```
 
-The decoded payload is:
+The binary payload is `[u16 length + agentdBaseUrl][u16 length + pairingId][pairingSecret]` in UTF-8. The final secret occupies the remaining bytes, avoiding a third length field.
 
-```json
-{
-  "v": 2,
-  "agentdBaseUrl": "https://agent-local.example.ts.net",
-  "serverId": "<base64url-128-bit-id>",
-  "pairingId": "<base64url-128-bit-id>",
-  "pairingSecret": "<base64url-256-bit-secret>",
-  "expiresAt": 1797444800000
-}
+The compact payload contains only the values required before the first claim:
+
+```text
+agentdBaseUrl + pairingId + pairingSecret
 ```
+
+`serverId` is fetched from `/auth/v1/info`, and pairing expiry is enforced by
+agentd, so neither is duplicated in the QR. Clients may continue to decode
+the previous `ma2:<base64url(canonical-json)>` format during migration, but
+the CLI emits only `ma3`.
 
 The QR payload contains no device private key and no long-lived access token. The server stores only `SHA-256(pairingSecret)`. The client must not put the raw pairing code into browser history, navigation, analytics, referrer data, crash reports, or logs.
 
@@ -165,7 +166,8 @@ sequenceDiagram
     CLI-->>User: display QR
 
     User->>W: scan QR inside the client
-    W->>W: decode agentdBaseUrl and pairing secret
+    W->>W: decode agentdBaseUrl, pairingId, and pairing secret
+    W->>A: read server identity from /auth/v1/info
     W->>K: generate non-extractable P-256 key
     W->>A: claim(pairingSecret, public JWK, clientNonce, signature)
     A->>A: verify secret, public key, and signature

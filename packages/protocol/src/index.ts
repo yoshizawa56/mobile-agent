@@ -45,6 +45,13 @@ export const pairingQrPayloadSchema = z.object({
 }).strict();
 export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
 
+export const pairingCodePayloadSchema = z.object({
+  agentdBaseUrl: z.string().url(),
+  pairingId: z.string().min(16).max(256),
+  pairingSecret: base64UrlValueSchema.min(32).max(512),
+}).strict();
+export type PairingCodePayload = z.infer<typeof pairingCodePayloadSchema>;
+
 const pairingClaimNotificationSchema = z.object({
   pairingId: z.string().min(16).max(256),
   serverId: z.string().min(16).max(256),
@@ -89,7 +96,7 @@ export const agentdControlResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("pairing_created"),
     pairingId: z.string().min(16).max(256),
-    pairingCode: z.string().startsWith("ma2:").min(16).max(8_192),
+    pairingCode: z.string().startsWith("ma3:").min(16).max(8_192),
     payload: pairingQrPayloadSchema,
   }).strict(),
   z.object({

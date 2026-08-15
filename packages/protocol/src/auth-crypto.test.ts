@@ -9,14 +9,14 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import type { PairingQrPayload } from "./index.js";
-import { decodePairingCode, encodePairingCode } from "./auth-crypto.js";
+import type { PairingCodePayload, PairingQrPayload } from "./index.js";
+import { decodePairingCode, encodeJsonBase64Url, encodePairingCode } from "./auth-crypto.js";
 
 type EmptyContext = {};
 type PairingCodeInput =
   | { type: "encode"; payload: PairingQrPayload }
   | { type: "decode"; value: string };
-type PairingCodeResult = string | PairingQrPayload;
+type PairingCodeResult = string | PairingCodePayload;
 
 const payload: PairingQrPayload = {
   v: 2,
@@ -26,13 +26,19 @@ const payload: PairingQrPayload = {
   pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-",
   expiresAt: 1_797_444_800_000,
 };
+const codePayload: PairingCodePayload = {
+  agentdBaseUrl: "https://agent-host.tailnet.ts.net:8444",
+  pairingId: payload.pairingId,
+  pairingSecret: payload.pairingSecret,
+};
 
 const hasRawPairingCodeShape = (): Assertion<EmptyContext, PairingCodeResult> => ({
   name: "returns an in-app pairing code",
   check: (_ctx, result) => {
     if (!result.ok) throw result.error;
     if (typeof result.value !== "string") throw new Error("expected an encoded pairing code");
-    if (!/^ma2:[A-Za-z0-9_-]+$/.test(result.value)) throw new Error("pairing code is not a raw ma2 payload");
+    if (!/^ma3:[A-Za-z0-9_-]+$/.test(result.value)) throw new Error("pairing code is not a compact raw ma3 payload");
+    if (result.value.length >= `ma2:${encodeJsonBase64Url(payload)}`.length) throw new Error("pairing code was not shortened");
     if (result.value.includes("/settings") || result.value.includes("http")) throw new Error("pairing code contains a web navigation target");
   },
 });
@@ -46,7 +52,12 @@ const pairingCodeCases = [
   {
     name: "round-trips the agentd endpoint and pairing secret",
     input: { type: "decode", value: encodePairingCode(payload) },
-    assert: [returns<EmptyContext, PairingCodeResult>(payload)],
+    assert: [returns<EmptyContext, PairingCodeResult>(codePayload)],
+  },
+  {
+    name: "reads the previous JSON pairing code format",
+    input: { type: "decode", value: `ma2:${encodeJsonBase64Url(payload)}` },
+    assert: [returns<EmptyContext, PairingCodeResult>(codePayload)],
   },
   {
     name: "rejects a browser navigation URL",

@@ -13,6 +13,7 @@ import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
 import { mobileAgentBridge } from "../../platform/mobile-bridge";
 import { installTerminalFlickInput, terminalMouseWheelInput } from "./terminal-flick";
 import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./terminal-font";
+import { createTerminalInputBatcher, createTerminalOutputScheduler } from "./terminal-scheduler";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -111,6 +112,9 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     fitAddon.fit();
+    const terminalOutputScheduler = createTerminalOutputScheduler({
+      write: (data) => terminal.write(data),
+    });
 
     const endpoint = connection ? getAgentdWebSocketEndpoint(connection) : "mock";
     const storageKey = terminalResumeStorageKey(endpoint, target);
@@ -260,7 +264,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
           return;
         }
 
-        terminal.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+        terminalOutputScheduler.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
       });
 
       socket.addEventListener("error", () => {
@@ -301,7 +305,13 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
     };
+    const scrollInputBatcher = createTerminalInputBatcher(sendTerminalInput);
+    const sendInteractiveTerminalInput = (data: string) => {
+      scrollInputBatcher.flush();
+      sendTerminalInput(data);
+    };
     const scrollTerminal = (deltaY: number, clientX: number, clientY: number) => {
+      terminalOutputScheduler.markScroll();
       const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
       const rect = screen.getBoundingClientRect();
       const cellWidth = terminal.cols > 0 && rect.width > 0 ? rect.width / terminal.cols : 0;
@@ -316,7 +326,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const row = Math.min(terminal.rows, Math.max(1, Math.floor((clientY - rect.top) / cellHeight) + 1));
       const direction = lineDelta > 0 ? "down" : "up";
       const wheelInput = Array.from({ length: Math.abs(lineDelta) }, () => terminalMouseWheelInput(direction, column, row)).join("");
-      sendTerminalInput(wheelInput);
+      scrollInputBatcher.enqueue(wheelInput);
     };
     const flickOptions = {
       onGestureStart: () => {
@@ -350,6 +360,8 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
         window.removeEventListener("resize", sendResize);
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
         flickCleanup();
+        scrollInputBatcher.dispose();
+        terminalOutputScheduler.dispose();
         inputDisposable.dispose();
         terminal.dispose();
       };
@@ -360,16 +372,17 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     window.addEventListener("resize", sendResize);
 
     const inputDisposable = terminal.onData((data) => {
-      sendTerminalInput(data);
+      sendInteractiveTerminalInput(data);
     });
     const binaryInputDisposable = terminal.onBinary((data) => {
+      scrollInputBatcher.flush();
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(binaryStringToBytes(data));
     });
     const flickCleanup = installTerminalFlickInput(
       container,
       (data) => {
-        sendTerminalInput(data);
+        sendInteractiveTerminalInput(data);
       },
       flickOptions,
     );
@@ -398,6 +411,8 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       inputDisposable.dispose();
       binaryInputDisposable.dispose();
       flickCleanup();
+      scrollInputBatcher.dispose();
+      terminalOutputScheduler.dispose();
       resizeDisposable.dispose();
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
       if (cleanupMode === "detach") {

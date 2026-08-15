@@ -138,6 +138,7 @@ agent run codex --worktree review
 agent run claude --no-worktree -n quick-fix
 agent resume review
 agent list --json
+agent list --all --json
 agent list --global
 agent session list --global --json
 agent cleanup review --force
@@ -171,6 +172,10 @@ With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured u
 `build:agent` compiles the agent CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 
 `agent workspace` manages registered workspace directories and their personal worktree hooks and copy patterns. `add` and `register` create a registration; `update` accepts a workspace ID, name, or registered directory; `delete` removes only the registration and never deletes the directory. A workspace directory is its path-derived identity, so changing it requires deleting and adding a new registration. `agent session list|resume|cleanup` is the namespaced form of the lifecycle commands; the existing top-level `agent list|resume|cleanup` forms remain supported.
+
+`agent list` reports derived execution health and resume availability. It checks older worktree-backed records against the filesystem and Git worktree registry, hides exited or interrupted records whose worktrees are missing or unregistered, and includes them with `--all`. Running sessions older than 30 days are marked `long-running`; a running record whose execution process is no longer alive is marked `stale` for explicit recovery.
+
+`agent cleanup` refuses a session whose recorded execution process is still alive. This prevents a long-running session from losing its worktree while it is active; stale sessions can still be resumed or cleaned up explicitly.
 
 ### Running multiple agentd instances
 

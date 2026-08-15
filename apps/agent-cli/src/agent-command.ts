@@ -31,6 +31,12 @@ import {
   type AgentDatabase,
 } from "@mobile-agent/persistence";
 import { manageCodexThread } from "./codex-remote.js";
+import {
+  projectAgentSession,
+  shouldCheckSessionWorktree,
+  type SessionListProjection,
+  type SessionWorktreeState,
+} from "./session-list.js";
 
 export type AgentCommandIO = {
   out: Writable;
@@ -146,6 +152,17 @@ type TmuxNewSessionOptions = {
 type WorkspaceListOptions = {
   json: boolean;
 };
+
+type SessionListOptions = {
+  global: boolean;
+  names: boolean;
+  json: boolean;
+  all: boolean;
+};
+
+type GitWorktreeRegistry =
+  | { ok: true; paths: ReadonlySet<string> }
+  | { ok: false };
 
 type WorkspaceMutationOptions = {
   selector?: string;
@@ -275,7 +292,7 @@ export class AgentCommand {
           break;
         case "list":
           if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: agent list [--global] [--names|--json]\n");
+            this.write("Usage: agent list [--global] [--all] [--names|--json]\n");
             status = 0;
             break;
           }
@@ -516,7 +533,7 @@ export class AgentCommand {
     switch (subcommand) {
       case "list":
         if (hasHelpBeforeDelimiter(rest)) {
-          this.write("Usage: agent session list [--global] [--names|--json]\n");
+          this.write("Usage: agent session list [--global] [--all] [--names|--json]\n");
           return 0;
         }
         return this.listSessions(this.parseListOptions(rest));
@@ -821,21 +838,23 @@ export class AgentCommand {
     return { global, reference, backendArgs };
   }
 
-  private parseListOptions(args: string[]): { global: boolean; names: boolean; json: boolean } {
+  private parseListOptions(args: string[]): SessionListOptions {
     let global = false;
     let names = false;
     let json = false;
+    let all = false;
     for (const argument of args) {
       if (argument === "-g" || argument === "--global") global = true;
+      else if (argument === "--all") all = true;
       else if (argument === "--names") names = true;
       else if (argument === "--json") json = true;
       else if (argument === "-h" || argument === "--help") {
-        this.write("Usage: agent list [--global] [--names|--json]\n");
-        return { global, names: false, json: false };
+        this.write("Usage: agent list [--global] [--all] [--names|--json]\n");
+        return { global, names: false, json: false, all: false };
       } else throw new AgentCommandError(`unknown list option: ${argument}`);
     }
     if (names && json) throw new AgentCommandError("--names and --json cannot be combined");
-    return { global, names, json };
+    return { global, names, json, all };
   }
 
   private parseCleanupOptions(args: string[]): { global: boolean; force: boolean; reference: string } {
@@ -1112,43 +1131,113 @@ export class AgentCommand {
     }
   }
 
-  private async listSessions(options: { global: boolean; names: boolean; json: boolean }): Promise<number> {
+  private async listSessions(options: SessionListOptions): Promise<number> {
     const logger = this.currentLogger.child({ command: "list" });
     const startedAt = Date.now();
     logger.debug("session.list_started", {
       global: options.global,
       names: options.names,
       json: options.json,
+      all: options.all,
     });
     const workspace = options.global ? undefined : (await this.resolveWorkspace()).id;
-    const sessions = await this.sessions.list(workspace);
+    const allViews = this.projectSessionList(await this.sessions.list(workspace));
+    const views = options.all ? allViews : allViews.filter((view) => view.visibleByDefault);
     const finish = (status: number): number => {
       logger.debug("session.list_finished", {
         status,
-        count: sessions.length,
+        count: views.length,
+        hiddenCount: allViews.length - views.length,
         durationMs: Date.now() - startedAt,
       });
       return status;
     };
     if (options.names) {
-      for (const session of sessions) this.write(`${options.global ? `${session.workspaceName}/` : ""}${session.name}\n`);
+      for (const view of views) {
+        const session = view.session;
+        this.write(`${options.global ? `${session.workspaceName}/` : ""}${session.name}\n`);
+      }
       return finish(0);
     }
     if (options.json) {
-      for (const session of sessions) this.write(`${JSON.stringify(toSessionJson(session))}\n`);
+      for (const view of views) this.write(`${JSON.stringify(toSessionJson(view))}\n`);
       return finish(0);
     }
-    if (options.global) this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "BRANCH", "WORKTREE"]));
-    else this.write(padHeader(["NAME", "BACKEND", "STATUS", "BRANCH", "WORKTREE"]));
-    if (sessions.length === 0) {
-      this.info("no managed sessions");
+    if (options.global) this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
+    else this.write(padHeader(["NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
+    if (views.length === 0) {
+      this.info(allViews.length === 0 ? "no managed sessions" : "no visible managed sessions; use --all to include unavailable sessions");
       return finish(0);
     }
-    for (const session of sessions) {
-      const values = [session.name, session.backend, session.status, session.branch ?? "-", session.worktreePath ?? "-"];
+    for (const view of views) {
+      const session = view.session;
+      const values = [
+        session.name,
+        session.backend,
+        session.status,
+        sessionHealthLabel(view.executionHealth),
+        sessionResumeLabel(view.resume),
+        session.branch ?? "-",
+        session.worktreePath ?? "-",
+      ];
       this.write(options.global ? padRow([session.workspaceName, ...values]) : padRow(values));
     }
     return finish(0);
+  }
+
+  private projectSessionList(sessions: AgentSessionRecord[]): SessionListProjection[] {
+    const now = Date.now();
+    const registries = new Map<string, GitWorktreeRegistry>();
+    return sessions.map((session) => {
+      const processAlive = (session.status === "running" || session.status === "resuming")
+        && session.executionPid !== null
+        && session.executionPid !== undefined
+        ? isProcessAlive(session.executionPid)
+        : undefined;
+      return projectAgentSession(session, {
+        now,
+        processAlive,
+        worktreeState: this.inspectSessionWorktree(session, now, registries),
+      });
+    });
+  }
+
+  private inspectSessionWorktree(
+    session: AgentSessionRecord,
+    now: number,
+    registries: Map<string, GitWorktreeRegistry>,
+  ): SessionWorktreeState {
+    if (!session.useWorktree) return "not_applicable";
+    if (!shouldCheckSessionWorktree(session, now)) return "unknown";
+    if (!session.worktreePath || !existsSync(session.worktreePath)) return "missing";
+
+    const workspaceRoot = realpathSafe(session.workspaceRoot);
+    let registry = registries.get(workspaceRoot);
+    if (!registry) {
+      registry = this.readGitWorktreeRegistry(workspaceRoot);
+      registries.set(workspaceRoot, registry);
+    }
+    if (!registry.ok) return "unknown";
+    return registry.paths.has(realpathSafe(session.worktreePath)) ? "available" : "unregistered";
+  }
+
+  private readGitWorktreeRegistry(workspaceRoot: string): GitWorktreeRegistry {
+    try {
+      const output = execFileSync("git", ["-C", workspaceRoot, "worktree", "list", "--porcelain"], {
+        encoding: "utf8",
+        env: this.env,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const paths = new Set(
+        output
+          .split(/\r?\n/u)
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => realpathSafe(line.slice("worktree ".length).trim())),
+      );
+      return { ok: true, paths };
+    } catch {
+      return { ok: false };
+    }
   }
 
   private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
@@ -1162,6 +1251,9 @@ export class AgentCommand {
       workspaceId: session.workspaceId,
       backend: session.backend,
     });
+    if (session.executionPid !== null && session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
+      throw new AgentCommandError(`session '${session.name}' is still running (pid ${session.executionPid})`);
+    }
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
       if (!this.worktreeIsRegistered(session)) throw new AgentCommandError(`managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`);
     }
@@ -2074,11 +2166,11 @@ export class AgentCommand {
   agent workspace add DIRECTORY [OPTIONS]
   agent workspace update WORKSPACE [OPTIONS]
   agent workspace delete WORKSPACE [--force]
-  agent session list [--global] [--names|--json]
+  agent session list [--global] [--all] [--names|--json]
   agent session resume [--global] NAME [-- BACKEND_ARGS...]
   agent session cleanup [--global] [--force] NAME
   agent resume [--global] NAME [-- BACKEND_ARGS...]
-  agent list [--global] [--names|--json]
+  agent list [--global] [--all] [--names|--json]
   agent cleanup [--global] [--force] NAME
   agent doctor [--verbose]
   agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]
@@ -2160,16 +2252,31 @@ function emptyWorktree(): Pick<AgentSessionRecord, "worktreeRoot" | "worktreePat
   return { worktreeRoot: null, worktreePath: null, branch: null, baseCommit: null };
 }
 
-function toSessionJson(session: AgentSessionRecord): Record<string, unknown> {
+function sessionHealthLabel(health: SessionListProjection["executionHealth"]): string {
+  return health === "inactive" ? "-" : health.replaceAll("_", "-");
+}
+
+function sessionResumeLabel(resume: SessionListProjection["resume"]): string {
+  if (resume === "available") return "yes";
+  if (resume === "unavailable") return "no";
+  return "?";
+}
+
+function toSessionJson(view: SessionListProjection): Record<string, unknown> {
+  const { session } = view;
   return {
     id: session.id,
     name: session.name,
     backend: session.backend,
     status: session.status,
+    health: view.executionHealth,
+    resume: view.resume,
+    resume_reason: view.resumeReason,
     workspace: session.workspaceRoot,
     workspace_id: session.workspaceId,
     workspace_name: session.workspaceName,
     worktree: session.worktreePath,
+    worktree_state: view.worktreeState,
     branch: session.branch,
     session_id: session.backendSessionId,
     updated_at: session.updatedAt,

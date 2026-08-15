@@ -187,7 +187,15 @@ agent daemon stop
 
 ### Releases
 
-Pushing a semantic version tag such as `v0.0.1-beta.1` starts the release workflow. It runs the repository checks, builds standalone executables for Linux x64, Linux ARM64, macOS ARM64, and macOS x64, and attaches the binaries and `SHA256SUMS.txt` to the GitHub Release.
+The `preflight` workflow runs when a tag such as `preflight/v0.0.1` is pushed
+at the candidate commit. It runs the repository checks and uploads the signed
+iOS build to TestFlight without creating a GitHub Release. After the build has
+been processed and validated, push the matching semantic version tag, such as
+`v0.0.1`, at the same commit. The separate `release` workflow requires both a
+matching commit and a successful preflight workflow run, then rebuilds the
+commit, builds standalone executables for Linux x64, Linux ARM64, macOS ARM64,
+and macOS x64, and attaches the binaries and `SHA256SUMS.txt` to the GitHub
+Release.
 
 GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
 

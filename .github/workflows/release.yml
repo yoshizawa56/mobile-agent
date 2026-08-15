@@ -17,40 +17,83 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Validate release tag
+      - name: Run repository checks
+        uses: ./.github/actions/repository-checks
+
+      - name: Validate release tag and preflight commit
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "Unsupported release ref: $GITHUB_REF" >&2
+            exit 1
+          fi
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "Unsupported release tag: $RELEASE_TAG" >&2
             echo "Expected a tag such as v0.0.1 or v0.0.1-beta.1" >&2
             exit 1
           fi
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.3.14
+          preflight_tag="preflight/$RELEASE_TAG"
+          if ! git fetch --no-tags origin \
+            "refs/tags/$preflight_tag:refs/tags/$preflight_tag"; then
+            echo "A matching preflight tag is required: $preflight_tag" >&2
+            exit 1
+          fi
+          preflight_sha="$(git rev-parse "$preflight_tag^{commit}")"
+          if [[ "$preflight_sha" != "$GITHUB_SHA" ]]; then
+            echo "Final tag $RELEASE_TAG must point to the same commit as $preflight_tag." >&2
+            echo "Expected $preflight_sha, got $GITHUB_SHA." >&2
+            exit 1
+          fi
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Verify successful preflight workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFLIGHT_TAG: preflight/${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Audit public repository contents
-        run: bun run audit:public
+          runs_path="$RUNNER_TEMP/preflight-runs.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/preflight.yml/runs?event=push&head_sha=$GITHUB_SHA&per_page=100" \
+            > "$runs_path"
 
-      - name: Typecheck
-        run: bun run typecheck
+          preflight_run_id="$(jq -r \
+            --arg expected_ref "$PREFLIGHT_TAG" \
+            --arg expected_sha "$GITHUB_SHA" \
+            '[.workflow_runs[]
+              | select(
+                  .event == "push"
+                  and .head_branch == $expected_ref
+                  and .head_sha == $expected_sha
+                  and .status == "completed"
+                  and .conclusion == "success"
+                )
+            ]
+            | sort_by(.run_started_at)
+            | last
+            | .id // empty' \
+            "$runs_path")"
 
-      - name: Test
-        run: bun run test
-
-      - name: Build packages
-        run: bun run build
+          if [[ -z "$preflight_run_id" ]]; then
+            echo "No successful preflight run exists for $PREFLIGHT_TAG at $GITHUB_SHA." >&2
+            echo "Wait for preflight processing to finish, then rerun this final workflow." >&2
+            exit 1
+          fi
+          echo "Using successful preflight run $preflight_run_id for $PREFLIGHT_TAG."
 
   build-agent:
     name: Build ${{ matrix.name }}
@@ -104,9 +147,38 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-ios:
+    name: Build and upload iOS app
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 45
+    concurrency:
+      group: ios-app-store-connect-upload
+      cancel-in-progress: false
+    environment:
+      name: app-store-connect
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and upload iOS app
+        uses: ./.github/actions/ios-release
+        with:
+          release_http_url: ${{ vars.IOS_RELEASE_HTTP_URL }}
+          release_ws_url: ${{ vars.IOS_RELEASE_WS_URL }}
+          asc_api_key_id: ${{ secrets.IOS_ASC_API_KEY_ID }}
+          asc_issuer_id: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          asc_api_private_key: ${{ secrets.IOS_ASC_API_PRIVATE_KEY }}
+          dist_certificate_base64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          dist_certificate_password: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          app_store_profile_base64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}
+
   release:
     name: Publish GitHub Release
-    needs: build-agent
+    needs: [build-agent, build-ios]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -120,7 +192,31 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Validate standalone release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_assets=(
+            agent-linux-x64
+            agent-linux-arm64
+            agent-darwin-arm64
+            agent-darwin-x64
+          )
+          for asset in "${expected_assets[@]}"; do
+            test -s "dist/$asset"
+          done
+
+          expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | sort)"
+          actual_asset_list="$(find dist -maxdepth 1 -type f -print | sed 's#^dist/##' | sort)"
+          if [[ "$actual_asset_list" != "$expected_asset_list" ]]; then
+            echo "Unexpected standalone release assets." >&2
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_asset_list" "$actual_asset_list" >&2
+            exit 1
+          fi
+
       - name: Generate checksums
+        shell: bash
         run: |
           sha256sum \
             dist/agent-linux-x64 \
@@ -129,31 +225,114 @@ jobs:
             dist/agent-darwin-x64 \
             > dist/SHA256SUMS.txt
 
-      - name: Create or update GitHub Release
+      - name: Create or validate draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
         run: |
+          set -euo pipefail
+
+          release_is_prerelease=false
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_is_prerelease=true
+          fi
+
           release_args=(
             --repo "$GITHUB_REPOSITORY"
             --verify-tag
             --generate-notes
             --title "$RELEASE_TAG"
+            --draft
           )
-
-          if [[ "$RELEASE_TAG" == *-* ]]; then
+          if [[ "$release_is_prerelease" == true ]]; then
             release_args+=(--prerelease)
           fi
 
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload \
-              "$RELEASE_TAG" \
-              dist/* \
+            release_state="$RUNNER_TEMP/release-state.json"
+            gh release view "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --clobber
+              --json isDraft,isPrerelease \
+              > "$release_state"
+            if [[ "$(jq -r '.isDraft' "$release_state")" != true ]]; then
+              echo "Refusing to modify an existing public release: $RELEASE_TAG" >&2
+              exit 1
+            fi
           else
             gh release create \
               "$RELEASE_TAG" \
-              dist/* \
               "${release_args[@]}"
           fi
+
+          if [[ "$release_is_prerelease" == true ]]; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --verify-tag
+          else
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease=false \
+              --verify-tag
+          fi
+
+      - name: Upload draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload \
+            "$RELEASE_TAG" \
+            dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Verify complete draft release asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_assets=(
+            SHA256SUMS.txt
+            agent-linux-x64
+            agent-linux-arm64
+            agent-darwin-arm64
+            agent-darwin-x64
+          )
+          expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | sort)"
+          actual_asset_list="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[].name' | sort)"
+          if [[ "$actual_asset_list" != "$expected_asset_list" ]]; then
+            echo "Draft release asset set is incomplete or contains unexpected assets." >&2
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_asset_list" "$actual_asset_list" >&2
+            exit 1
+          fi
+
+      - name: Publish verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_edit_args=(
+            "$RELEASE_TAG"
+            --repo "$GITHUB_REPOSITORY"
+            --draft=false
+            --verify-tag
+          )
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_edit_args+=(--prerelease)
+          else
+            release_edit_args+=(--prerelease=false)
+          fi
+          gh release edit "${release_edit_args[@]}"

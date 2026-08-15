@@ -20,8 +20,8 @@ const recordingFixture = (): FixtureHandle<RecordingFixture> => ({ fixture: { ad
 
 type SplitInput = { keepZoomed: boolean };
 const splitCases = [
-  { name: "keeps a zoomed window zoomed while inheriting the target cwd", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-Z", "-h", "-t", "%1", "-c", "#{pane_current_path}"])] },
-  { name: "does not zoom an ordinary desktop split and inherits the target cwd", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "#{pane_current_path}"])] },
+  { name: "keeps a zoomed window zoomed while using the resolved target cwd", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-Z", "-h", "-t", "%1", "-c", "/tmp/project"])] },
+  { name: "does not zoom an ordinary desktop split and uses the resolved target cwd", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "/tmp/project"])] },
 ] satisfies readonly OperationCase<"default", SplitInput, string[], EmptyContext>[];
 const splitTable: OperationTable<RecordingFixture, "default", SplitInput, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
@@ -274,7 +274,7 @@ describe("tmux adapter", () => {
 class RecordingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];
   public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
-  public override require(args: string[]): string { this.lastArgs = args; return "%2\n"; }
+  public override require(args: string[]): string { this.lastArgs = args; return "/tmp/project\n"; }
   public override command(args: string[]) { this.lastArgs = args; return { status: 0, stdout: "", stderr: "" }; }
 }
 

@@ -232,7 +232,7 @@ export class TmuxAdapter {
     ];
     if (keepZoomed) args.push("-Z");
     if (placement === "right") args.push("-h");
-    args.push("-t", targetPaneId, "-c", "#{pane_current_path}");
+    args.push("-t", targetPaneId, "-c", this.resolvePaneCwd(targetPaneId));
     if (command) args.push(command);
     return this.require(args).trim();
   }
@@ -297,6 +297,12 @@ export class TmuxAdapter {
       throw new Error(`Could not resolve tmux pane: ${target}`);
     }
     return { paneId, windowId, sessionName };
+  }
+
+  public resolvePaneCwd(target: string): string {
+    const output = this.require(["display-message", "-p", "-t", target, "#{pane_current_path}"]).trim();
+    if (!output) throw new Error(`Could not resolve tmux pane cwd: ${target}`);
+    return resolveTmuxCwd(output);
   }
 
   public listPanes(): TmuxPane[] {

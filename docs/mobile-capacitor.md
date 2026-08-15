@@ -78,14 +78,18 @@ placed in the WebView.
 
 ## Release CI and App Store Connect
 
-The `Release` workflow has two tag paths:
+The `preflight` and `release` workflows are separate. Shared repository checks
+and iOS build/upload processing live in local composite actions under
+`.github/actions/`, while only the final workflow contains standalone agent
+builds and GitHub Release publishing.
 
 - `preflight/v0.1.0` or `preflight/v0.1.0-beta.1` runs repository checks and
   uploads a signed `Release` build to App Store Connect for TestFlight
   validation. It does not build the standalone agent release or create a
   GitHub Release.
 - `v0.1.0` or `v0.1.0-beta.1` requires the matching preflight tag to point to
-  the same commit, rebuilds that commit, uploads the resulting `.ipa`, and
+  the same commit and a successful `preflight` workflow run for that exact tag
+  and commit. It then rebuilds that commit, uploads the resulting `.ipa`, and
   creates the GitHub Release. The workflow does not submit the build to App
   Review or publish it to the public App Store.
 
@@ -94,6 +98,12 @@ Before pushing a release tag, create a GitHub Environment named
 that environment. Required reviewers are not necessary if protected tag
 creation is the release approval; configure the environment's deployment tag
 policy to allow only `preflight/*` and `v*`.
+
+Protect the `preflight/*` and `v*` tag namespaces with repository rules that
+restrict tag creation, updates, and deletion to the release maintainers. The
+rules should cover tag refs, not branch refs. The final workflow also checks
+the completed result of the exact preflight workflow run, so pushing the final
+tag too early fails closed; rerun that final workflow after preflight finishes.
 
 On the Apple side, create the App Store Connect app record for bundle ID
 `com.mobileagent.app`, and prepare an Apple Distribution certificate, an App
@@ -146,9 +156,10 @@ git push origin "v0.1.0"
 ```
 
 The final workflow checks that `preflight/v0.1.0` and `v0.1.0` resolve to the
-same commit before building. Apple still processes the uploaded build
-asynchronously; uploading the build does not submit it to App Review or make
-it available to App Store customers.
+same commit and that the preflight workflow completed successfully before
+building. Apple still processes the uploaded build asynchronously; uploading
+the build does not submit it to App Review or make it available to App Store
+customers.
 
 ## Bridge boundary
 

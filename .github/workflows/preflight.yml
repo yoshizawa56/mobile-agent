@@ -1,0 +1,51 @@
+name: iOS Preflight
+
+on:
+  push:
+    tags:
+      - "preflight/v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run repository checks
+        uses: ./.github/actions/repository-checks
+
+  build-ios:
+    name: Build and upload iOS app
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 45
+    concurrency:
+      group: ios-app-store-connect-upload
+      cancel-in-progress: false
+    environment:
+      name: app-store-connect
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and upload iOS app
+        uses: ./.github/actions/ios-release
+        with:
+          release_http_url: ${{ vars.IOS_RELEASE_HTTP_URL }}
+          release_ws_url: ${{ vars.IOS_RELEASE_WS_URL }}
+          asc_api_key_id: ${{ secrets.IOS_ASC_API_KEY_ID }}
+          asc_issuer_id: ${{ secrets.IOS_ASC_ISSUER_ID }}
+          asc_api_private_key: ${{ secrets.IOS_ASC_API_PRIVATE_KEY }}
+          dist_certificate_base64: ${{ secrets.IOS_DIST_CERTIFICATE_BASE64 }}
+          dist_certificate_password: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          app_store_profile_base64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}

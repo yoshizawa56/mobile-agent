@@ -4,66 +4,77 @@ import { PaneLayoutOverlay, type PaneLayoutOverlayVariant } from "./pane-layout-
 
 export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = false, layoutVariant = "ghost" }: { viewModel: PaneBoardViewModel; alwaysOpen?: boolean; showLayout?: boolean; layoutVariant?: PaneLayoutOverlayVariant }) {
   const waitingCount = viewModel.panes.filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval").length;
+  const mobileBoardClass = alwaysOpen
+    ? showLayout
+      ? "max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-[21] max-[920px]:flex max-[920px]:min-h-0 max-[920px]:border-0 max-[920px]:bg-transparent max-[920px]:p-0 max-[920px]:shadow-none max-[920px]:pointer-events-auto"
+      : "max-[920px]:fixed max-[920px]:inset-[64px_12px_12px] max-[920px]:z-10 max-[920px]:hidden max-[920px]:bg-paper max-[920px]:shadow-[0_24px_70px_rgb(30_36_31_/_24%)] data-[open=true]:max-[920px]:flex"
+    : "";
 
   return (
-    <div className={`pane-board-shell${alwaysOpen ? " pane-board-shell-always" : ""}`}>
-      <button className={`pane-picker-button${viewModel.isOpen ? " pane-picker-button-open" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
-        <span className="button-glyph">⌘</span>
+    <div className="relative min-h-0">
+      <button className={`hidden items-center gap-2 rounded-[10px] border border-line bg-paper px-2.5 py-2 font-bold text-[0.68rem] text-[#4c574f] max-[920px]:max-w-[calc(100vw-36px)] ${alwaysOpen && !showLayout ? "max-[920px]:fixed max-[920px]:right-[18px] max-[920px]:top-[77px] max-[920px]:z-[8] max-[920px]:flex max-[920px]:shadow-[0_9px_20px_rgb(39_46_38_/_12%)]" : ""} ${viewModel.isOpen ? "pointer-events-none invisible" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
+        <span className="text-[0.9rem] text-lime-deep">⌘</span>
         <span>All panes</span>
-        <span className="button-count">{viewModel.panes.length || "—"}</span>
+        <span className="min-w-[17px] rounded-[5px] bg-[#e5e9df] px-1 py-0.5 text-center font-mono text-[0.57rem] text-[#73806f]">{viewModel.panes.length || "—"}</span>
       </button>
-      <aside className={`pane-board${alwaysOpen ? " pane-board-desktop" : ""}${showLayout ? " pane-board-layout" : ""}`} data-open={viewModel.isOpen} aria-label="tmux panes">
+      <aside className={`flex min-h-[480px] flex-col rounded-[15px] border border-line bg-[rgb(248_248_244_/_82%)] p-[18px] text-[#303631] shadow-[0_18px_42px_rgb(39_46_38_/_6%)] max-[1180px]:p-3.5 max-[920px]:min-h-0 ${mobileBoardClass} ${showLayout ? "relative min-h-0 overflow-hidden border-transparent bg-transparent p-0 shadow-none" : ""}`} data-open={viewModel.isOpen} aria-label="tmux panes">
         {showLayout ? (
           <PaneLayoutOverlay id="tmux-window-map" panes={viewModel.panes} selectedTarget={viewModel.selectedTarget} onSelect={viewModel.select} onClose={viewModel.close} variant={layoutVariant} />
         ) : null}
         {!showLayout ? (
           <>
-        <div className="pane-board-header">
+        <div className="flex items-center justify-between gap-2.5">
           <div>
-            <div className="section-kicker"><span className="live-mark" /> WORKSPACE</div>
-            <h2>Command deck</h2>
+            <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(97_143_55_/_12%)]" /> WORKSPACE</div>
+            <h2 className="mt-[9px] text-base font-bold tracking-[-0.04em] text-ink">Command deck</h2>
           </div>
-          <div className="board-actions">
-            <span className="board-count">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
-            <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes">↻</button>
-            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="Close pane list">×</button>
+          <div className="flex items-center gap-1.5 self-start">
+            <span className="mr-0.5 font-mono text-[0.57rem] text-[#8d672e]">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
+            <button className="grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes">↻</button>
+            <button className="hidden grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink max-[920px]:grid" type="button" onClick={viewModel.close} aria-label="Close pane list">×</button>
           </div>
         </div>
-        <div className="board-divider" />
-        {viewModel.status === "loading" ? <p className="pane-picker-message">Reading tmux…</p> : null}
+        <div className="my-[17px] mb-[13px] h-px bg-line" />
+        {viewModel.status === "loading" ? <p className="mb-3 text-[0.7rem] text-muted">Reading tmux…</p> : null}
         {viewModel.status === "error" ? (
-          <div className="pane-picker-message error-text">
+          <div className="mb-3 text-[0.7rem] text-[#a45d51]">
             <p>{viewModel.errorMessage}</p>
-            <button className="text-button" type="button" onClick={viewModel.refresh}>Try again</button>
+            <button className="rounded-[7px] bg-[#d8edf8] px-2.5 py-[7px] text-[0.65rem] font-bold text-[#3f6b84]" type="button" onClick={viewModel.refresh}>Try again</button>
           </div>
         ) : null}
         {viewModel.status === "ready" && viewModel.panes.length === 0 ? (
-          <p className="pane-picker-message">No tmux panes found.</p>
+          <p className="mb-3 text-[0.7rem] text-muted">No tmux panes found.</p>
         ) : null}
-        <div className="pane-list">
+        <div className="mr-[-7px] flex min-h-0 flex-1 flex-col gap-[5px] overflow-auto pr-[7px] overscroll-contain [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
           {viewModel.panes.map((pane) => {
             const selected = pane.tmuxPaneId === viewModel.selectedTarget;
-            const needsAttention = pane.state === "waiting_input" || pane.state === "waiting_approval";
+            const avatarClass = pane.kind === "shell" ? "text-[#53606a] bg-[#dce4e9]" : "text-[#4e713d] bg-[#dcefc8]";
+            const stateClass = pane.state === "waiting_input" || pane.state === "waiting_approval"
+              ? "text-[#9b712d]"
+              : pane.state === "failed" ? "text-[#a45d51]" : "text-[#8b938b]";
+            const stateDotClass = pane.state === "waiting_input" || pane.state === "waiting_approval"
+              ? "bg-amber shadow-[0_0_0_3px_rgb(244_185_94_/_14%)]"
+              : pane.state === "failed" ? "bg-red" : "bg-[#aeb5ad]";
             return (
-              <button className={`pane-list-item${selected ? " pane-list-item-selected" : ""}`} type="button" key={pane.id} onClick={() => viewModel.select(pane)}>
-                <span className={`pane-avatar pane-avatar-${pane.kind}`}>
+              <button className={`flex w-full min-w-0 items-center gap-[9px] rounded-[10px] border p-2 text-left transition-colors hover:border-line hover:bg-white/70 ${selected ? "border-[#c8dfb3] bg-[#edf7e4]" : "border-transparent"}`} type="button" key={pane.id} onClick={() => viewModel.select(pane)}>
+                <span className={`grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[0.7rem] font-extrabold ${avatarClass}`}>
                   {pane.kind === "shell" ? "⌁" : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
                 </span>
-                <span className="pane-list-main">
-                  <span className="pane-list-title"><strong>{pane.name}</strong><span className="pane-index-label">PANE {pane.paneIndex ?? "?"}</span>{selected ? <span className="selected-label">OPEN</span> : null}</span>
-                  <small>{pane.agentId ?? pane.title ?? "shell"} <span>·</span> {pane.cwd}</small>
+                <span className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
+                  <span className="flex min-w-0 items-center gap-1.5"><strong className="min-w-0 overflow-hidden text-[0.69rem] font-bold text-ellipsis whitespace-nowrap text-[#303631]">{pane.name}</strong><span className="shrink-0 font-mono text-[0.48rem] font-bold tracking-[0.04em] text-faint">PANE {pane.paneIndex ?? "?"}</span>{selected ? <span className="shrink-0 font-mono text-[0.49rem] font-extrabold tracking-[0.08em] text-[#689449]">OPEN</span> : null}</span>
+                  <small className="overflow-hidden font-mono text-[0.56rem] text-ellipsis whitespace-nowrap text-faint">{pane.agentId ?? pane.title ?? "shell"} <span className="text-line-strong">·</span> {pane.cwd}</small>
                 </span>
-                <span className={`pane-state pane-state-${pane.state}${needsAttention ? " pane-state-attention" : ""}`}>
-                  <span className="pane-state-dot" />
+                <span className={`flex min-w-[52px] shrink-0 items-center justify-end gap-[5px] whitespace-nowrap text-[0.55rem] ${stateClass}`}>
+                  <span className={`size-[5px] rounded-full ${stateDotClass}`} />
                   {paneStateLabel(pane.state)}
                 </span>
               </button>
             );
           })}
         </div>
-        <div className="board-footer">
-          <span><kbd>⌘</kbd><kbd>K</kbd> quick switch</span>
-          <span className="sync-label"><span className="sync-dot" /> synced</span>
+        <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-line pt-[13px] font-mono text-[0.55rem] text-faint">
+          <span><kbd className="mr-[3px] rounded border border-line-strong bg-[#e6e8e2] px-1 py-0.5 font-inherit text-[0.52rem] text-[#687068]">⌘</kbd><kbd className="mr-[3px] rounded border border-line-strong bg-[#e6e8e2] px-1 py-0.5 font-inherit text-[0.52rem] text-[#687068]">K</kbd> quick switch</span>
+          <span className="inline-flex items-center gap-1.5"><span className="size-[5px] rounded-full bg-lime-deep" /> synced</span>
         </div>
           </>
         ) : null}

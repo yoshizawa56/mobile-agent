@@ -14,7 +14,7 @@ import type { PtyProcess } from "./pty.js";
 import { TerminalSession, TerminalSessionRegistry, type TerminalSessionOptions } from "./terminal-session.js";
 
 type SessionStep =
-  | { type: "connect"; socket: "first" | "second"; credentials?: "resume-first" }
+  | { type: "connect"; socket: "first" | "second"; target?: string; credentials?: "resume-first" }
   | { type: "network-close"; socket: "first" | "second" }
   | { type: "detach"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
@@ -27,6 +27,7 @@ type SessionContext = {
   killed: number;
   registrySize: number;
   secondResumed: boolean;
+  secondReady: boolean;
   secondErrors: readonly string[];
   firstClosedReasons: readonly string[];
   binaryFrames: readonly string[];
@@ -70,6 +71,38 @@ const cases = [
     assert: [hasObserved<SessionContext, undefined>("firstClosedReasons", ["detached"]), hasObserved<SessionContext, undefined>("releaseCalls", 1), hasObserved<SessionContext, undefined>("killed", 1), hasObserved<SessionContext, undefined>("registrySize", 0)],
   },
   {
+    name: "allows a new pane to attach after the previous pane is explicitly detached",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "detach", socket: "first" },
+      { type: "connect", socket: "second" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("prepareCalls", 2),
+      hasObserved<SessionContext, undefined>("spawnCalls", 2),
+      hasObserved<SessionContext, undefined>("releaseCalls", 1),
+      hasObserved<SessionContext, undefined>("secondReady", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("registrySize", 1),
+    ],
+  },
+  {
+    name: "replaces a parked pane session when a different pane needs the same viewport",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", target: "%1" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("prepareCalls", 3),
+      hasObserved<SessionContext, undefined>("spawnCalls", 2),
+      hasObserved<SessionContext, undefined>("releaseCalls", 1),
+      hasObserved<SessionContext, undefined>("secondReady", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("registrySize", 1),
+    ],
+  },
+  {
     name: "does not create a duplicate lease while the original session is parked",
     steps: [{ type: "connect", socket: "first" }, { type: "network-close", socket: "first" }, { type: "connect", socket: "second" }],
     assert: [hasObserved<SessionContext, undefined>("prepareCalls", 2), hasObserved<SessionContext, undefined>("spawnCalls", 1), hasObserved<SessionContext, undefined>("releaseCalls", 0), hasObserved<SessionContext, undefined>("secondErrors", ["attach_failed"])],
@@ -94,7 +127,7 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
         const credentials = step.credentials === "resume-first" && previousReady?.type === "ready"
           ? { sessionId: previousReady.sessionId, resumeToken: previousReady.resumeToken }
           : {};
-        socket.receive(attachFrame(credentials));
+        socket.receive(attachFrame(step.target ?? "%0", credentials));
         await flush();
       }
       if (step.type === "network-close") fixture.sockets[step.socket]?.networkClose();
@@ -117,6 +150,7 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
     killed: fixture.pty.killed,
     registrySize: fixture.registry.size,
     secondResumed: fixture.sockets.second?.controls().some((message) => message.type === "ready" && message.resumed) ?? false,
+    secondReady: fixture.sockets.second?.controls().some((message) => message.type === "ready") ?? false,
     secondErrors: fixture.sockets.second?.controls().filter((message) => message.type === "error").map((message) => message.code) ?? [],
     firstClosedReasons: fixture.sockets.first?.controls().filter((message) => message.type === "closed").map((message) => message.reason) ?? [],
     binaryFrames: fixture.sockets.second?.binaryFrames() ?? [],
@@ -132,16 +166,17 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}) {
   const pty = new FakePty(401);
   const lease = { id: "lease-1", target: "%0", paneId: "%0", windowId: "@0", sessionName: "agentd", claimMobile: vi.fn(), resize: vi.fn(), release: vi.fn() };
   const prepared = { target: "%0", pane: { paneId: "%0", windowId: "@0", sessionName: "agentd" }, snapshot: {} as never, attach: vi.fn(async () => lease), release: vi.fn() };
-  let preparedCount = 0;
-  const manager = { prepare: vi.fn(() => { preparedCount += 1; if (preparedCount > 1) throw new Error("Viewport is already in use for tmux window: @0"); return prepared; }), tmux: { attachArgs: vi.fn(() => ["attach-session", "-t", "agentd"]) } };
+  let leaseActive = false;
+  const manager = { prepare: vi.fn(() => { if (leaseActive) throw new Error("Viewport is already in use for tmux window: @0"); leaseActive = true; return prepared; }), tmux: { attachArgs: vi.fn(() => ["attach-session", "-t", "agentd"]) } };
+  lease.release = vi.fn(() => { leaseActive = false; });
   const spawn = vi.fn(() => pty.asPty());
   const registry = new TerminalSessionRegistry();
   const options: TerminalSessionOptions = { cwd: "/tmp", defaultTarget: "agentd", viewportManager: manager as unknown as TerminalSessionOptions["viewportManager"], spawnPty: spawn as unknown as TerminalSessionOptions["spawnPty"], sessions: registry, ...overrides };
   return { manager, prepared, lease, pty, spawn, registry, options };
 }
 
-function attachFrame(credentials: { sessionId?: string; resumeToken?: string } = {}): string {
-  return JSON.stringify(clientControlMessageSchema.parse({ type: "attach", version: terminalProtocolVersion, target: "%0", cols: 80, rows: 24, ...credentials }));
+function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {
+  return JSON.stringify(clientControlMessageSchema.parse({ type: "attach", version: terminalProtocolVersion, target, cols: 80, rows: 24, ...credentials }));
 }
 
 async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); }

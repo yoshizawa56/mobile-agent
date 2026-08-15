@@ -51,6 +51,14 @@ export class TerminalSessionRegistry {
     if (this.sessions.get(session.sessionId) === session) this.sessions.delete(session.sessionId);
   }
 
+  public releaseParkedForDifferentTarget(target: string, authDeviceId?: string): boolean {
+    let released = false;
+    for (const session of [...this.sessions.values()]) {
+      released = session.releaseIfParkedForDifferentTarget(target, authDeviceId) || released;
+    }
+    return released;
+  }
+
   public closeAll(): void {
     for (const session of [...this.sessions.values()]) session.dispose();
     this.sessions.clear();
@@ -108,6 +116,12 @@ export class TerminalSession {
 
   public matchesAuthContext(authDeviceId?: string): boolean {
     return this.options.authDeviceId === authDeviceId;
+  }
+
+  public releaseIfParkedForDifferentTarget(target: string, authDeviceId?: string): boolean {
+    if (!this.matchesAuthContext(authDeviceId) || this.state !== "parked" || this.target === target) return false;
+    this.finalizeTransport(1000, "replaced");
+    return true;
   }
 
   public dispose(): void {
@@ -314,7 +328,12 @@ export class TerminalSession {
     let lease: ViewportLease | undefined;
 
     try {
-      prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
+      try {
+        prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
+      } catch (error) {
+        if (!isViewportLeaseConflict(error) || !this.registry.releaseParkedForDifferentTarget(target, this.options.authDeviceId)) throw error;
+        prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
+      }
       const spawn = this.options.spawnPty ?? spawnPty;
       pty = spawn(
         "tmux",
@@ -535,6 +554,10 @@ function closeSocket(socket: AgentdSocket, code: number, reason: string): void {
       // The transport may have completed its close handshake already.
     }
   }
+}
+
+function isViewportLeaseConflict(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("Viewport is already in use for tmux window:");
 }
 
 function opaqueId(): string {

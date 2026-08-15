@@ -547,8 +547,9 @@ export class TmuxAdapter {
   }
 
   public readWindowMouse(windowId: string): TmuxWindowMouse {
-    const output = this.require(["show-window-options", "-v", "-t", windowId, "mouse"]).trim();
-    if (output === "on" || output === "off") return output;
+    const output = this.require(["display-message", "-p", "-t", windowId, "#{mouse}"]).trim();
+    if (output === "1") return "on";
+    if (output === "0") return "off";
     throw new Error(`Unsupported tmux mouse value: ${output}`);
   }
 

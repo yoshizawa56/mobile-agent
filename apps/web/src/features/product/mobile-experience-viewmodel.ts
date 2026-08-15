@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@mobile-agent/protocol";
-import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, getAgentdConnection, registerWorkspace } from "../api/agentd-api";
+import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, registerWorkspace } from "../api/agentd-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import { pairBrowserFromQr } from "../connection/browser-auth";
@@ -93,15 +93,25 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   }, [navigate]);
 
   const agentdConnection = useMemo(
-    () => connectionForProfile(connectionProfile) ?? getAgentdConnection(),
+    () => connectionForProfile(connectionProfile),
     [connectionProfile],
   );
-  const connectionKey = `${agentdConnection.route ?? "custom"}:${agentdConnection.httpBaseUrl}`;
+  const connectionKey = agentdConnection ? `${agentdConnection.route ?? "custom"}:${agentdConnection.httpBaseUrl}` : "unconfigured";
+
+  useEffect(() => {
+    if (connectionProfile || stage === "terminals" || stage === "settings") return;
+    navigateTo(terminalsPath());
+  }, [connectionProfile, navigateTo, stage]);
+
   useAgentdEvents(agentdConnection, connectionKey);
 
   const terminalsQuery = useQuery({
     queryKey: ["terminals", connectionKey],
-    queryFn: () => fetchTerminals(agentdConnection),
+    queryFn: () => {
+      if (!agentdConnection) throw new Error("Connection profile is not configured");
+      return fetchTerminals(agentdConnection);
+    },
+    enabled: Boolean(agentdConnection),
     staleTime: 5_000,
     retry: 1,
   });
@@ -110,8 +120,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const workspacesQuery = useQuery({
     queryKey: ["workspaces", connectionKey],
-    queryFn: () => fetchWorkspaces(agentdConnection),
-    enabled: stage === "new-session" || stage === "new-pane",
+    queryFn: () => {
+      if (!agentdConnection) throw new Error("Connection profile is not configured");
+      return fetchWorkspaces(agentdConnection);
+    },
+    enabled: Boolean(agentdConnection) && (stage === "new-session" || stage === "new-pane"),
     staleTime: 5_000,
     retry: 1,
   });
@@ -128,6 +141,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const browseWorkspaceDirectories = useCallback((path?: string) => {
     setWorkspaceBrowserStatus("loading");
     setWorkspaceBrowserError(null);
+    if (!agentdConnection) {
+      setWorkspaceBrowserStatus("error");
+      setWorkspaceBrowserError("Connection profile is not configured");
+      return;
+    }
     void fetchWorkspaceDirectories(path, agentdConnection)
       .then((directories) => {
         setWorkspaceCandidates(directories);
@@ -148,7 +166,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const registerNewWorkspace = useCallback(() => {
     const directory = workspaceRegistrationDirectory.trim();
-    if (!directory || isRegisteringWorkspace) return;
+    if (!directory || isRegisteringWorkspace || !agentdConnection) return;
     setIsRegisteringWorkspace(true);
     setWorkspaceRegistrationError(null);
     void registerWorkspace({
@@ -173,8 +191,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions", connectionKey, terminalId],
-    queryFn: () => fetchSessions(agentdConnection),
-    enabled: Boolean(terminalId),
+    queryFn: () => {
+      if (!agentdConnection) throw new Error("Connection profile is not configured");
+      return fetchSessions(agentdConnection);
+    },
+    enabled: Boolean(agentdConnection) && Boolean(terminalId),
     staleTime: 1_000,
     refetchInterval: stage === "sessions" ? 5_000 : false,
     retry: 1,
@@ -186,8 +207,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const panesQuery = useQuery({
     queryKey: paneQueryKey(agentdConnection, selectedSession?.name),
-    queryFn: () => fetchPanes(selectedSession!.name, agentdConnection),
-    enabled: Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room" || stage === "new-pane"),
+    queryFn: () => {
+      if (!agentdConnection) throw new Error("Connection profile is not configured");
+      return fetchPanes(selectedSession!.name, agentdConnection);
+    },
+    enabled: Boolean(agentdConnection) && Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room" || stage === "new-pane"),
     staleTime: 1_000,
     refetchInterval: stage === "session-overview" ? 3_000 : false,
     retry: 1,
@@ -226,8 +250,8 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     selectedTerminal,
     selectedSession,
     connectionStep: stage === "connecting" ? 2 : 0,
-    status: stage === "terminals" ? queryStatus(terminalsQuery.status) : queryStatus(sessionsQuery.status),
-    errorMessage: stage === "terminals" ? errorMessage(terminalsQuery.error) : errorMessage(sessionsQuery.error),
+    status: agentdConnection ? (stage === "terminals" ? queryStatus(terminalsQuery.status) : queryStatus(sessionsQuery.status)) : undefined,
+    errorMessage: agentdConnection ? (stage === "terminals" ? errorMessage(terminalsQuery.error) : errorMessage(sessionsQuery.error)) : null,
     onSelectTerminal: (terminal) => {
       setCreatedSession(null);
       navigateTo(sessionsPath(terminal.id));
@@ -295,7 +319,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
     onCreate: () => {
       const workspaceId = newSessionWorkspaceId || workspaces[0]?.id;
-      if (!selectedTerminal || isCreatingSession || !workspaceId) return;
+      if (!selectedTerminal || isCreatingSession || !workspaceId || !agentdConnection) return;
       setIsCreatingSession(true);
       setNewSessionError(null);
       void createSession({ name: newSessionName, workspaceId }, agentdConnection)
@@ -371,7 +395,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => {
       const workspaceId = newPaneWorkspaceId || workspaces[0]?.id;
-      if (!selectedSession || !selectedTerminal || isCreatingPane || !workspaceId) return;
+      if (!selectedSession || !selectedTerminal || isCreatingPane || !workspaceId || !agentdConnection) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
       void createPane({

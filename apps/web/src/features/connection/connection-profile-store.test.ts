@@ -14,6 +14,7 @@ import {
 } from "@mobile-agent/test-support";
 import {
   clearBrowserConnectionProfile,
+  connectionForProfile,
   normalizeServeUrl,
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
@@ -43,6 +44,21 @@ const normalizeTable: OperationTable<undefined, "default", string, string, Empty
   defaultFixture: noFixture(),
   cases: normalizeCases,
   execute: (_fixture, input) => normalizeServeUrl(input),
+  observe: () => ({}),
+};
+
+const connectionCases = [
+  {
+    name: "does not create a transport without a saved profile",
+    input: null,
+    assert: [returns<EmptyContext, ReturnType<typeof connectionForProfile>>(undefined)],
+  },
+] satisfies readonly OperationCase<"default", null, ReturnType<typeof connectionForProfile>, EmptyContext>[];
+
+const connectionTable: OperationTable<undefined, "default", null, ReturnType<typeof connectionForProfile>, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: connectionCases,
+  execute: (_fixture, input) => connectionForProfile(input),
   observe: () => ({}),
 };
 
@@ -122,5 +138,6 @@ const profileTable: ScenarioTable<ProfileFixture, "default", ProfileStep, Profil
 describe("browser connection profile", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, normalizeTable);
+  runOperationTable(register, connectionTable);
   runScenarioTable(register, profileTable);
 });

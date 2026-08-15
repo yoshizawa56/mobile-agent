@@ -22,7 +22,6 @@ export type AgentdOptions = {
   host: string;
   port: number;
   databaseFile?: string;
-  corsOrigin?: string;
   allowedRoots?: string[];
   controlSocket?: string;
   webOrigin?: string;
@@ -85,7 +84,6 @@ export function createAgentdServer(options: AgentdOptions) {
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
   const webOrigin = options.webOrigin ?? process.env.AGENTD_WEB_ORIGIN ?? "http://localhost:5173";
-  const corsOrigin = options.corsOrigin ?? process.env.AGENTD_CORS_ORIGIN ?? webOrigin;
   const auth = new AuthService({
     store: new AuthStore(database.sqlite),
     webOrigin,
@@ -127,7 +125,7 @@ export function createAgentdServer(options: AgentdOptions) {
     auth,
     application,
     isReady: () => controlReady,
-    corsOrigin,
+    corsOrigin: webOrigin,
     hookToken,
     onTerminalConnection: (socket: AgentdSocket, context) => {
       auth.trackSocket(context, socket);

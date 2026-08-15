@@ -45,19 +45,11 @@ native project has been prepared. The committed Capacitor config has no
 machine-specific URL, so staging and release builds continue to use bundled
 web assets.
 
-Bundled builds must receive the agentd endpoint before `vite build`. Copy the
-Vite environment example and set the fixed Tailscale Serve URL:
-
-```sh
-cp apps/web/.env.example apps/web/.env.local
-# Edit apps/web/.env.local and set VITE_AGENTD_HTTP_URL and
-# VITE_AGENTD_WS_URL for the agentd-only Serve endpoint.
-bun run --filter @mobile-agent/web cap:sync
-```
-
-`VITE_AGENTD_HTTP_URL` and `VITE_AGENTD_WS_URL` are compiled into the React
-bundle. Changing them requires rebuilding and syncing the web assets; iOS
-build settings do not change these values.
+Bundled builds do not receive an agentd endpoint at build time. The first-run
+screen asks the user to scan the `agent pair` QR code, then stores the Serve
+connection profile in Web Storage and the browser device key in IndexedDB.
+The same flow is used by browser and Capacitor builds, so `cap:sync` needs no
+agentd-related `.env.local` file.
 
 The iOS project has three shared schemes:
 
@@ -72,9 +64,9 @@ Switching the worktree behind the fixed Serve endpoint does not require a
 native rebuild. Only changing the `MOBILE_AGENT_WEB_*` settings themselves
 requires rebuilding the native binary.
 
-The app connects to agentd through the full Tailscale Serve URL compiled into
-the bundle. No Tailscale credentials, SSH private keys, or host-side ports are
-placed in the WebView.
+The app connects to agentd through the full Tailscale Serve URL imported from
+the saved pairing profile. No Tailscale credentials, SSH private keys, or
+host-side ports are placed in the WebView.
 
 ## Release CI and App Store Connect
 
@@ -109,11 +101,6 @@ On the Apple side, create the App Store Connect app record for bundle ID
 `com.mobileagent.app`, and prepare an Apple Distribution certificate, an App
 Store provisioning profile for that bundle ID, and an App Store Connect API key
 with upload permission.
-
-Variables:
-
-- `IOS_RELEASE_HTTP_URL`: the production HTTPS URL served by agentd;
-- `IOS_RELEASE_WS_URL`: the matching `wss://` terminal endpoint.
 
 Secrets:
 

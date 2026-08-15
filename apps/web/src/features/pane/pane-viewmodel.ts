@@ -170,7 +170,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     // above that route, so the DOM ref is the reliable lifecycle signal here;
     // gating on the route stage can race with the ref callback during SPA
     // navigation and leave the surface permanently uninitialized.
-    if (!target || !terminalContainer) return;
+    if (!target || !terminalContainer || (!connection && !isMockMode())) return;
 
     const container = terminalContainer;
     const fontSize = terminalFontSize();
@@ -205,7 +205,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       },
     });
 
-    const endpoint = getAgentdWebSocketEndpoint(connection);
+    const endpoint = connection ? getAgentdWebSocketEndpoint(connection) : "mock";
     const storageKey = terminalResumeStorageKey(endpoint, target);
     resumeRef.current = readTerminalResumeState(storageKey, target);
     terminalClosedRef.current = false;
@@ -262,6 +262,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
 
     const connect = async () => {
       if (disposed || terminalClosedRef.current) return;
+      if (!connection) return;
 
       const previousSocket = socketRef.current;
       if (previousSocket && (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)) {

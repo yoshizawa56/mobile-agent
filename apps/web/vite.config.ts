@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { WebSocketServer } from "ws";
 
-const agentdProxyTarget = process.env.VITE_AGENTD_PROXY_TARGET ?? "http://127.0.0.1:4317";
+const agentdProxyTarget = process.env.VITE_AGENTD_PROXY_TARGET;
 const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(",").map((host) => host.trim()).filter(Boolean);
 const devHost = process.env.VITE_DEV_HOST ?? "0.0.0.0";
 const devPort = Number(process.env.VITE_DEV_PORT ?? 5227);
@@ -19,11 +19,13 @@ export default defineConfig({
     port: devPort,
     strictPort: true,
     ...(allowedHosts?.length ? { allowedHosts } : {}),
-    proxy: {
-      "/api": {
-        target: agentdProxyTarget,
+    ...(agentdProxyTarget ? {
+      proxy: {
+        "/api": {
+          target: agentdProxyTarget,
+        },
       },
-    },
+    } : {}),
   },
   preview: {
     port: previewPort,
@@ -37,6 +39,9 @@ function agentdWebSocketProxy(): Plugin {
     name: "mobile-agent-agentd-websocket-proxy",
     apply: "serve",
     configureServer(server) {
+      const target = agentdProxyTarget;
+      if (!target) return;
+
       const webSocketServer = new WebSocketServer({ noServer: true });
       const httpServer = server.httpServer;
       if (!httpServer) return;
@@ -48,7 +53,7 @@ function agentdWebSocketProxy(): Plugin {
 
           webSocketServer.handleUpgrade(request, socket, head, (client) => {
             webSocketServer.emit("connection", client, request);
-            const upstreamUrl = websocketTarget(requestUrl.pathname, requestUrl.search);
+            const upstreamUrl = websocketTarget(target, requestUrl.pathname, requestUrl.search);
             const upstream = new globalThis.WebSocket(upstreamUrl);
             let upstreamReady = false;
             const pendingFrames: Array<string | ArrayBuffer> = [];
@@ -98,8 +103,8 @@ function agentdWebSocketProxy(): Plugin {
   };
 }
 
-function websocketTarget(pathname: string, search: string): string {
-  const target = new URL(agentdProxyTarget);
+function websocketTarget(proxyTarget: string, pathname: string, search: string): string {
+  const target = new URL(proxyTarget);
   target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
   const basePath = target.pathname.replace(/\/$/, "");
   target.pathname = `${basePath}${pathname}`;

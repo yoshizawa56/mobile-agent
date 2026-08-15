@@ -13,7 +13,7 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
   return (
     <main className="connection-settings-view">
       <header className="connection-settings-toolbar">
-        <button className="connection-flow-back" type="button" onClick={viewModel.onBack}>‹ <span>connections</span></button>
+        {viewModel.hasSavedProfile ? <button className="connection-flow-back" type="button" onClick={viewModel.onBack}>‹ <span>connections</span></button> : <span className="connection-flow-back">connection setup</span>}
         <span className="connection-settings-lockup"><span className="connection-flow-network-dot" /> SERVE ROUTE</span>
       </header>
 
@@ -21,7 +21,7 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
         <div className="connection-flow-intro">
           <span className="connection-flow-step"><span className="connection-flow-step-line" /> CONNECTION SETTINGS</span>
           <h1>Where is agentd?</h1>
-          <p>最初の接続はagent pairのQRで行います。ブラウザ側の秘密鍵はOSのIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
+          <p>ホストでagent pairを実行してQRを表示し、ここで読み取ってください。接続先はビルドに含めず、ブラウザ側の秘密鍵はIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
         </div>
 
         {viewModel.isPairingQr ? <div className="connection-qr-status" role="status">{viewModel.pairingMessage ?? "ペアリング中…"}</div> : null}

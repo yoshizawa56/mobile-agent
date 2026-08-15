@@ -117,7 +117,7 @@ A loopback endpoint with a persistent owner-only control token is an allowed fal
 The CLI command is conceptually:
 
 ```text
-agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
+agent pair --web-origin URL --agentd-base-url URL [--control-socket PATH]
 ```
 
 The command creates a pairing valid for five minutes, displays the QR in the foreground, and waits. It does not ask for approval merely because a QR was scanned. After `agentd` receives and validates a complete claim (pairing secret, public key, and proof-of-possession signature), it sends the pending device name and public-key fingerprint to the waiting CLI through the owner-only control channel. The CLI then asks the host user for explicit approval. Empty input, timeout, rejection, or `Ctrl-C` rejects the pairing. A rejected or consumed pairing cannot be reused.

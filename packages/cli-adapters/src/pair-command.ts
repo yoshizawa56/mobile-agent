@@ -71,8 +71,8 @@ export class PairCommand {
 
 export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv = process.env): ParsedPairCommandOptions {
   let controlSocket = env.AGENTD_CONTROL_SOCKET ?? defaultControlSocket(env);
-  let webOrigin = env.AGENTD_WEB_ORIGIN ?? "http://localhost:5173";
-  let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL ?? "http://127.0.0.1:4317";
+  let webOrigin = env.AGENTD_WEB_ORIGIN;
+  let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -86,6 +86,8 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
   }
 
   validateAgentdControlSocketPath(controlSocket);
+  if (!webOrigin) throw new PairCommandError("agent pair requires --web-origin or AGENTD_WEB_ORIGIN");
+  if (!agentdBaseUrl) throw new PairCommandError("agent pair requires --agentd-base-url or AGENTD_PAIRING_BASE_URL");
   return { controlSocket, webOrigin, agentdBaseUrl };
 }
 

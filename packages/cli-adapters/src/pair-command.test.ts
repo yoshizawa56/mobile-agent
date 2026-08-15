@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 import { describe, it } from "vitest";
 import {
   hasObserved,
+  hasError,
   noFixture,
   returns,
   runOperationTable,
@@ -96,12 +97,17 @@ type ParseInput = { args: string[]; env: NodeJS.ProcessEnv };
 const parseCases = [
   {
     name: "derives the control socket from the instance directory",
-    input: { args: [], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    input: { args: ["--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
     assert: [returns<{}, string>("/tmp/mobile-agent/main/agentd.sock")],
   },
   {
+    name: "rejects pairing without explicit endpoint settings",
+    input: { args: [], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    assert: [hasError<{}, string>({ message: "agent pair requires --web-origin or AGENTD_WEB_ORIGIN" })],
+  },
+  {
     name: "normalizes a relative control socket override",
-    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock")], env: {} },
+    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock"), "--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"], env: {} },
     assert: [returns<{}, string>(resolve("/tmp/mobile-agent-agentd.sock"))],
   },
 ] satisfies readonly OperationCase<"default", ParseInput, string, {}>[];

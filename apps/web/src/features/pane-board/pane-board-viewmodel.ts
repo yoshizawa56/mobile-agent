@@ -20,15 +20,18 @@ export type PaneBoardViewModel = {
 };
 
 export function paneQueryKey(connection?: AgentdConnection, sessionName?: string): readonly [string, string, string] {
-  return ["panes", connection?.httpBaseUrl ?? "default", sessionName ?? "all"];
+  return ["panes", connection?.httpBaseUrl ?? "unconfigured", sessionName ?? "all"];
 }
 
 export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, connection, alwaysOpen = false }: { onSelect: (target: string) => void; selectedTarget: string; sessionName?: string; connection?: AgentdConnection; alwaysOpen?: boolean }): PaneBoardViewModel {
   const [isOpen, setIsOpen] = useState(false);
   const query = useQuery({
     queryKey: paneQueryKey(connection, sessionName),
-    queryFn: () => fetchPanes(sessionName, connection),
-    enabled: alwaysOpen || isOpen,
+    queryFn: () => {
+      if (!connection) throw new Error("Connection profile is not configured");
+      return fetchPanes(sessionName, connection);
+    },
+    enabled: Boolean(connection) && (alwaysOpen || isOpen),
     staleTime: 1_000,
     refetchInterval: isOpen ? 3_000 : false,
   });

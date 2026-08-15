@@ -58,7 +58,7 @@ agentd exposes an HTTP API at `http://127.0.0.1:4317`, a terminal WebSocket at `
 
 The HTTP API is built from the dependency-injected Bun/Hono app in `packages/agentd-http`, returned by `createAgentdApp(deps)`. Its type, `ReturnType<typeof createAgentdApp>`, is shared with the TypeScript client as `AgentdApp`. `apps/agentd` is the composition root: it initializes SQLite, tmux, PTY, auth, and application adapters, then passes them into the app. HTTP validation and error conversion are centralized in the Hono boundary; terminal and event WebSockets use Hono's Bun upgrade helper and a transport-neutral socket contract. Tailscale Serve and SSH port forwarding are connection routes to the same agentd instance; the web client does not need to know which route established the connection.
 
-The browser build stores only a full Tailscale Serve URL as its connection setting. A custom external port belongs in that URL, for example `https://workstation.tailnet.ts.net:8449`; the internal `AGENTD_PORT` is not a mobile setting. It does not store private keys or passwords. Storybook runs with mock data, while the regular Vite development server connects to agentd through the supervisor-managed proxy.
+The browser build stores only a full Tailscale Serve URL as its connection setting. A custom external port belongs in that URL, for example `https://workstation.tailnet.ts.net:8449`; the internal `AGENTD_PORT` is not a mobile setting. It does not store private keys or passwords. The first run shows the QR pairing screen; there is no compiled-in or same-origin fallback connection. Storybook runs with mock data, while `mise run dev-serve` supplies the Vite proxy target explicitly.
 
 ```sh
 bun run --filter @mobile-agent/web dev
@@ -87,6 +87,19 @@ This uses `AGENT_SERVE_PORT` (default `8444`) for the external HTTPS port and `A
 On macOS, `agent serve tailscale` resolves a PATH executable first and automatically detects the App Store CLI at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (or the same path under `~/Applications`). If only an alias or shell function from `.zshrc` or `.bashrc` is available, it falls back to the user's interactive shell. To use the bundled CLI explicitly, set `TAILSCALE_BIN=/Applications/Tailscale.app/Contents/MacOS/Tailscale`; the CLI mode environment is enabled automatically.
 
 After exposing the host-side service, register the full Serve URL from the web app's `settings` screen. The browser's standard route is HTTPS/WSS through Tailscale Serve. SSH bastion routing is reserved as a future native adapter; the current web bundle does not include SSH or private-key management.
+
+Create a pairing QR with explicit public URLs. For a Web Serve route, the two
+values are usually the same; for a bundled Capacitor app, `--web-origin` is the
+app origin and `--agentd-base-url` is the host's Serve URL:
+
+```sh
+agent pair \
+  --web-origin https://workstation.tailnet.ts.net:8449 \
+  --agentd-base-url https://workstation.tailnet.ts.net:8449
+```
+
+The QR payload is the runtime connection handoff. It is not replaced by a
+build-time `VITE_AGENTD_*` value or a localhost default.
 
 To proxy Vite requests to another agentd instance, set `VITE_AGENTD_PROXY_TARGET`. After a native bridge creates an SSH port forward, pass its localhost HTTP and WebSocket URLs to the same `AgentdConnection` abstraction.
 

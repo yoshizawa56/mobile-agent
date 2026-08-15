@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
 import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@mobile-agent/protocol";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
+import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TmuxSession } from "../connection/connection-flow-viewmodel";
 import { NewSessionView } from "../session/new-session-view";
@@ -88,6 +89,19 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const sessionPanes = selectedSession ? panes.filter((pane) => pane.sessionName === selectedSession.name) : [];
   const paneTarget = selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? "%0";
   const terminalViewModel = usePaneViewModel({ target: paneTarget });
+
+  const connectionSettingsViewModel = useMemo<ConnectionSettingsViewModel>(() => ({
+    name: settingsName,
+    serveUrl: settingsUrl,
+    hasSavedProfile: true,
+    isSaving: false,
+    errorMessage: null,
+    onNameChange: setSettingsName,
+    onServeUrlChange: setSettingsUrl,
+    onSave: () => setStage("terminals"),
+    onClear: () => setStage("terminals"),
+    onBack: () => setStage("terminals"),
+  }), [settingsName, settingsUrl]);
 
   useEffect(() => {
     if (!autoAdvance || stage !== "connecting") return;
@@ -276,29 +290,18 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
     refresh: () => undefined,
   }), [mapOpen, selectedPaneId, sessionPanes]);
 
-  if (stage === "settings") return <ConnectionSettingsView viewModel={{
-    name: settingsName,
-    serveUrl: settingsUrl,
-    hasSavedProfile: true,
-    isSaving: false,
-    errorMessage: null,
-    onNameChange: setSettingsName,
-    onServeUrlChange: setSettingsUrl,
-    onSave: () => setStage("terminals"),
-    onClear: () => setStage("terminals"),
-    onBack: () => setStage("terminals"),
-  }} />;
+  if (stage === "settings") return <ConnectionSettingsView viewModel={connectionSettingsViewModel} />;
   if (stage === "new-session") return <NewSessionView viewModel={newSessionViewModel} />;
   if (stage === "new-pane") return <NewPaneView viewModel={newPaneViewModel} />;
   if (stage === "session-overview") return <SessionOverviewView viewModel={sessionOverviewViewModel} />;
   if (stage === "control-room") return <PaneView viewModel={terminalViewModel} paneBoard={sessionPaneBoard} onWorkspaceSwitch={() => setStage("sessions")} onNewPane={() => setStage("new-pane")} />;
-  return <StoryConnectionView viewModel={connectionViewModel} />;
+  return <StoryConnectionView viewModel={connectionViewModel} connectionSettings={connectionSettingsViewModel} />;
 }
 
-function StoryConnectionView({ viewModel }: { viewModel: ConnectionFlowViewModel }) {
+function StoryConnectionView({ viewModel, connectionSettings }: { viewModel: ConnectionFlowViewModel; connectionSettings: ConnectionSettingsViewModel }) {
   switch (viewModel.stage) {
     case "terminals":
-      return <TerminalsView viewModel={{ ...viewModel, stage: "terminals" } satisfies TerminalsViewModel} />;
+      return <TerminalsView viewModel={{ ...viewModel, stage: "terminals", connectionSettings } satisfies TerminalsViewModel} />;
     case "sessions":
       return <SessionsView viewModel={{ ...viewModel, stage: "sessions" } satisfies SessionsViewModel} />;
     case "connecting":
@@ -335,6 +338,25 @@ export const FullExperience: Story = {
 export const TerminalPicker: Story = {
   name: "Setup / terminal picker",
   render: () => <MobileExperience initialStage="terminals" />,
+};
+
+export const ConnectionSetup: Story = {
+  name: "Setup / no connection configured",
+  render: () => <ConnectionSettingsView viewModel={{
+    name: "",
+    serveUrl: "",
+    hasSavedProfile: false,
+    isSaving: false,
+    errorMessage: null,
+    onNameChange: () => undefined,
+    onServeUrlChange: () => undefined,
+    onSave: () => undefined,
+    onClear: () => undefined,
+    onBack: () => undefined,
+    onOpenQrScanner: () => undefined,
+    onCloseQrScanner: () => undefined,
+    onQrValue: () => undefined,
+  }} />,
 };
 
 export const ServeConnectionSettings: Story = {

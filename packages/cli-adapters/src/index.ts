@@ -11,5 +11,7 @@ export {
   type ResolvedPairCommandOptions,
 } from "./pair-command.js";
 export { AgentdPairingControlAdapter, PairingControlError } from "./agentd-pairing-control-adapter.js";
+export { BrowserPairingPresenter, browserLaunchSpec, type BrowserLaunchSpec, type BrowserPairingPresenterOptions } from "./browser-pairing-presenter.js";
 export { TerminalPairingPresenter, type TerminalPairingPresenterOptions } from "./terminal-pairing-presenter.js";
-export { TerminalQrRenderer, type QrRendererPort } from "./terminal-qr-renderer.js";
+export { SvgQrRenderer } from "./svg-qr-renderer.js";
+export { TerminalQrRenderer, type QrRendererPort, type TerminalQrRendererOptions } from "./terminal-qr-renderer.js";

@@ -40,8 +40,6 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const [newSession, setNewSession] = useState<TmuxSession | null>(null);
   const [newSessionName, setNewSessionName] = useState("design-lab");
   const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState("workspace-mobile-agent");
-  const [settingsName, setSettingsName] = useState("MacBook Air");
-  const [settingsUrl, setSettingsUrl] = useState("https://macbook-air.tailnet.ts.net");
   const [newPaneName, setNewPaneName] = useState("review");
   const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("workspace-mobile-agent");
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
@@ -91,17 +89,17 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const terminalViewModel = usePaneViewModel({ target: paneTarget });
 
   const connectionSettingsViewModel = useMemo<ConnectionSettingsViewModel>(() => ({
-    name: settingsName,
-    agentdBaseUrl: settingsUrl,
     hasSavedProfile: true,
-    isSaving: false,
+    isScanningQr: false,
+    isPairingQr: false,
+    pairingMessage: null,
     errorMessage: null,
-    onNameChange: setSettingsName,
-    onAgentdBaseUrlChange: setSettingsUrl,
-    onSave: () => setStage("terminals"),
     onClear: () => setStage("terminals"),
     onBack: () => setStage("terminals"),
-  }), [settingsName, settingsUrl]);
+    onOpenQrScanner: () => undefined,
+    onCloseQrScanner: () => undefined,
+    onQrValue: () => undefined,
+  }), []);
 
   useEffect(() => {
     if (!autoAdvance || stage !== "connecting") return;
@@ -343,14 +341,11 @@ export const TerminalPicker: Story = {
 export const ConnectionSetup: Story = {
   name: "Setup / no connection configured",
   render: () => <ConnectionSettingsView viewModel={{
-    name: "",
-    agentdBaseUrl: "",
     hasSavedProfile: false,
-    isSaving: false,
+    isScanningQr: false,
+    isPairingQr: false,
+    pairingMessage: null,
     errorMessage: null,
-    onNameChange: () => undefined,
-    onAgentdBaseUrlChange: () => undefined,
-    onSave: () => undefined,
     onClear: () => undefined,
     onBack: () => undefined,
     onOpenQrScanner: () => undefined,

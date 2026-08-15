@@ -25,6 +25,7 @@ type PairCommandFixture = {
   closed: boolean;
   constructed: boolean;
   controlSocket: string | null;
+  display: string | null;
 };
 type PairCommandInput = { args: string[] };
 type PairCommandContext = Omit<PairCommandFixture, "out"> & { output: string };
@@ -33,7 +34,7 @@ type CommandFixture = PairCommandFixture & { command: PairCommand };
 
 const createPairCommandFixture = (kind: PairCommandKey): (() => FixtureHandle<CommandFixture>) => () => {
   const out = new CaptureOutput();
-  const fixture: PairCommandFixture = { out, received: undefined, closed: false, constructed: false, controlSocket: null };
+  const fixture: PairCommandFixture = { out, received: undefined, closed: false, constructed: false, controlSocket: null, display: null };
   const runtime: PairDeviceRuntime = {
     useCase: {
       execute: async (input) => {
@@ -50,6 +51,7 @@ const createPairCommandFixture = (kind: PairCommandKey): (() => FixtureHandle<Co
     createRuntime: async (options) => {
       fixture.constructed = true;
       fixture.controlSocket = options.controlSocket ?? null;
+      fixture.display = options.display;
       if (kind === "help") throw new Error("must not be called");
       return runtime;
     },
@@ -68,6 +70,7 @@ const commandCases = [
       hasObserved<PairCommandContext, number>("output", "Approved. deviceId: device-1\n"),
       hasObserved<PairCommandContext, number>("closed", true),
       hasObserved<PairCommandContext, number>("controlSocket", "/tmp/agentd.control.sock"),
+      hasObserved<PairCommandContext, number>("display", "browser"),
     ],
   },
   {
@@ -77,7 +80,7 @@ const commandCases = [
     assert: [
       returns<PairCommandContext, number>(0),
       hasObserved<PairCommandContext, number>("constructed", false),
-      hasObserved<PairCommandContext, number>("output", "Usage: agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n"),
+      hasObserved<PairCommandContext, number>("output", "Usage: agent pair [--open|--terminal] [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n"),
     ],
   },
 ] satisfies readonly OperationCase<PairCommandKey, PairCommandInput, number, PairCommandContext>[];
@@ -90,7 +93,7 @@ const commandTable: OperationTable<CommandFixture, PairCommandKey, PairCommandIn
   },
   cases: commandCases,
   execute: (fixture, input) => fixture.command.execute(input.args),
-  observe: (fixture) => ({ output: fixture.out.value, received: fixture.received, closed: fixture.closed, constructed: fixture.constructed, controlSocket: fixture.controlSocket }),
+  observe: (fixture) => ({ output: fixture.out.value, received: fixture.received, closed: fixture.closed, constructed: fixture.constructed, controlSocket: fixture.controlSocket, display: fixture.display }),
 };
 
 type ParseInput = { args: string[]; env: NodeJS.ProcessEnv };
@@ -98,22 +101,32 @@ const parseCases = [
   {
     name: "derives the control socket from the instance directory",
     input: { args: ["--agentd-base-url", "https://agentd.example"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: "https://agentd.example", withoutServe: false })],
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: "https://agentd.example", withoutServe: false, display: "browser" })],
   },
   {
     name: "allows the default Serve resolver to provide the endpoint",
     input: { args: [], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false })],
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "browser" })],
   },
   {
     name: "selects the local endpoint mode explicitly",
     input: { args: ["--without-serve"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: true })],
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: true, display: "browser" })],
   },
   {
     name: "normalizes a relative control socket override",
     input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock"), "--agentd-base-url", "https://agentd.example"], env: {} },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: resolve("/tmp/mobile-agent-agentd.sock"), agentdBaseUrl: "https://agentd.example", withoutServe: false })],
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: resolve("/tmp/mobile-agent-agentd.sock"), agentdBaseUrl: "https://agentd.example", withoutServe: false, display: "browser" })],
+  },
+  {
+    name: "selects terminal QR output explicitly",
+    input: { args: ["--terminal"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "terminal" })],
+  },
+  {
+    name: "accepts an explicit browser QR option",
+    input: { args: ["--open"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "browser" })],
   },
 ] satisfies readonly OperationCase<"default", ParseInput, ParsedPairCommandOptions, {}>[];
 

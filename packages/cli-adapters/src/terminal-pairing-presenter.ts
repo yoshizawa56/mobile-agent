@@ -14,7 +14,7 @@ export class TerminalPairingPresenter implements PairingPresenterPort {
   private readonly qrRenderer: QrRendererPort;
 
   public constructor(private readonly options: TerminalPairingPresenterOptions) {
-    this.qrRenderer = options.qrRenderer ?? new TerminalQrRenderer();
+    this.qrRenderer = options.qrRenderer ?? new TerminalQrRenderer({ small: false });
   }
 
   public async showPairing(offer: PairingOffer): Promise<void> {

@@ -2,6 +2,7 @@
 import { PairDevice } from "@mobile-agent/application";
 import {
   AgentdPairingControlAdapter,
+  BrowserPairingPresenter,
   PairCommand,
   PairCommandError,
   TerminalPairingPresenter,
@@ -33,12 +34,23 @@ async function createPairDeviceRuntime(
   try {
     const control = await AgentdPairingControlAdapter.connect(options.controlSocket);
     logger?.debug("pair.control_connected", { durationMs: Date.now() - startedAt });
+    if (options.display === "terminal") {
+      return {
+        useCase: new PairDevice(
+          control,
+          new TerminalPairingPresenter({ out: io.out, input: io.input }),
+        ),
+        close: () => control.close(),
+      };
+    }
+
+    const presenter = new BrowserPairingPresenter({ out: io.out, input: io.input });
     return {
-      useCase: new PairDevice(
-        control,
-        new TerminalPairingPresenter({ out: io.out, input: io.input }),
-      ),
-      close: () => control.close(),
+      useCase: new PairDevice(control, presenter),
+      close: async () => {
+        await presenter.close();
+        control.close();
+      },
     };
   } catch (error) {
     logger?.debug("pair.control_connection_failed", { durationMs: Date.now() - startedAt, ...errorFields(error) });

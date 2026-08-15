@@ -4294,6 +4294,7 @@ textarea:focus-visible,
   .connection-settings-view,
   .session-overview,
   .new-session-view {
+    height: var(--app-viewport-height);
     overflow-x: hidden;
     overflow-y: auto;
   }

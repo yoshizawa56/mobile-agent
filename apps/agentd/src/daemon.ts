@@ -10,7 +10,6 @@ export type AgentdCliOptions = {
   port: number;
   pidFile: string;
   controlSocket?: string;
-  webOrigin?: string;
   agentdBaseUrl?: string;
   logLevel?: LogLevel;
   logFile?: string;
@@ -129,7 +128,6 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   const paths = resolveAgentdPaths(process.env);
   let pidFile = paths.pidFile;
   let controlSocket = paths.controlSocket;
-  let webOrigin = process.env.AGENTD_WEB_ORIGIN;
   let agentdBaseUrl = process.env.AGENTD_PAIRING_BASE_URL;
   let logLevel = parseLogLevel(process.env.AGENT_LOG_LEVEL, "info");
   let logFile = process.env.AGENT_LOG_FILE;
@@ -146,8 +144,6 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
     else if (argument.startsWith("--pid-file=")) pidFile = resolve(argument.slice("--pid-file=".length));
     else if (argument === "--control-socket") controlSocket = requireValue(argument, args[++index]);
     else if (argument.startsWith("--control-socket=")) controlSocket = argument.slice("--control-socket=".length);
-    else if (argument === "--web-origin") webOrigin = requireValue(argument, args[++index]);
-    else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
     else if (argument === "--log-level") logLevel = parseRequiredLogLevel(argument, requireValue(argument, args[++index]));
@@ -158,7 +154,7 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   }
 
   validateAgentdControlSocketPath(controlSocket);
-  return { options: { host, port, pidFile, controlSocket, webOrigin, agentdBaseUrl, logLevel, logFile }, foreground };
+  return { options: { host, port, pidFile, controlSocket, agentdBaseUrl, logLevel, logFile }, foreground };
 }
 
 async function statusAgentd(options: AgentdCliOptions): Promise<number> {
@@ -261,7 +257,6 @@ export function buildDaemonSpawnArgs(options: AgentdCliOptions, entry = process.
   const args = sourceEntry ? [entry, "daemon", "start", "--foreground"] : ["daemon", "start", "--foreground"];
   args.push("--host", options.host, "--port", String(options.port), "--pid-file", options.pidFile);
   if (options.controlSocket) args.push("--control-socket", options.controlSocket);
-  if (options.webOrigin) args.push("--web-origin", options.webOrigin);
   if (options.agentdBaseUrl) args.push("--agentd-base-url", options.agentdBaseUrl);
   args.push("--log-level", options.logLevel ?? "info", "--log-file", options.logFile ?? defaultLogFile());
   return args;
@@ -363,7 +358,7 @@ function displayHost(host: string): string {
 
 function printUsage(command: AgentdCommand): void {
   const usage = command === "start"
-    ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--web-origin URL] [--agentd-base-url URL] [--log-level LEVEL] [--log-file PATH]"
+    ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--agentd-base-url URL] [--log-level LEVEL] [--log-file PATH]"
     : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
   const behavior = command === "start"
     ? "Starts agentd in the background and waits until it is healthy by default. Use --foreground when a service manager should own the agentd process."

@@ -502,7 +502,7 @@ function ensureAuthSchema(sqlite: Database): void {
     CREATE TABLE IF NOT EXISTS auth_pairings (
       pairing_id TEXT PRIMARY KEY NOT NULL,
       server_id TEXT NOT NULL,
-      web_origin TEXT NOT NULL,
+      web_origin TEXT NOT NULL DEFAULT '',
       agentd_base_url TEXT NOT NULL,
       secret_hash TEXT NOT NULL UNIQUE,
       claim_token_hash TEXT UNIQUE,

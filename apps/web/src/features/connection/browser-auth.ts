@@ -5,6 +5,7 @@ import {
   authInfoSchema,
   authSessionRequestSchema,
   authSessionResponseSchema,
+  decodePairingCode,
   pairingClaimRequestSchema,
   pairingClaimResponseSchema,
   pairingQrPayloadSchema,
@@ -13,7 +14,6 @@ import {
   type PublicKeyJwk,
 } from "@mobile-agent/protocol";
 import {
-  decodeJsonBase64Url,
   encodeJsonBase64Url,
   pairingClaimMessage,
   publicKeyFingerprint,
@@ -52,20 +52,14 @@ export type BrowserPairingResult = {
   deviceName: string;
 };
 
-export function parsePairingQrPayload(value: string, expectedWebOrigin = typeof window === "undefined" ? undefined : window.location.origin): PairingQrPayload {
-  let url: URL;
+export function parsePairingQrPayload(value: string): PairingQrPayload {
+  let payload: PairingQrPayload;
   try {
-    url = new URL(value);
+    payload = pairingQrPayloadSchema.parse(decodePairingCode(value));
   } catch {
-    throw new Error("QR code does not contain a valid pairing URL");
+    throw new Error("QR code does not contain a valid mobile-agent pairing code");
   }
-  const prefix = "#ma1=";
-  if (!url.hash.startsWith(prefix)) throw new Error("QR code is not a mobile-agent pairing code");
-  const payload = pairingQrPayloadSchema.parse(decodeJsonBase64Url<unknown>(url.hash.slice(prefix.length)));
   if (payload.expiresAt <= Date.now()) throw new Error("This pairing QR code has expired");
-  if (expectedWebOrigin && new URL(payload.webOrigin).origin !== expectedWebOrigin) {
-    throw new Error("This QR code belongs to a different web origin");
-  }
   if (new URL(payload.agentdBaseUrl).protocol !== "http:" && new URL(payload.agentdBaseUrl).protocol !== "https:") {
     throw new Error("Pairing endpoint must use http or https");
   }
@@ -76,11 +70,10 @@ export async function pairBrowserFromQr(
   value: string,
   options: {
     deviceName: string;
-    expectedWebOrigin?: string;
     onProgress?: (progress: BrowserPairingProgress) => void;
   },
 ): Promise<BrowserPairingResult> {
-  const payload = parsePairingQrPayload(value, options.expectedWebOrigin);
+  const payload = parsePairingQrPayload(value);
   const endpoint = payload.agentdBaseUrl.replace(/\/$/, "");
   const info = authInfoSchema.parse(await requestJson(`${endpoint}/auth/v1/info`));
   if (info.serverId !== payload.serverId) throw new Error("Pairing QR and agentd server identity do not match");

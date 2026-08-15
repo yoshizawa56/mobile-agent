@@ -64,17 +64,11 @@ const hookFormSchema = z.object({
  * the narrow dependency object.
  */
 export function createAgentdApp(deps: AgentdHttpDependencies) {
-  const origin = (requestOrigin: string | undefined): string => {
-    if (deps.corsOrigin === "*") return "*";
-    return deps.auth.allowsWebOrigin(requestOrigin) ? requestOrigin ?? deps.corsOrigin : "";
-  };
+  const origin = (): string => deps.corsOrigin;
 
   const authenticateWebSocket = (endpoint: "terminal" | "events") => async (c: Context<AppEnv>, next: Next) => {
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
       return c.json({ error: "upgrade_required", message: "WebSocket upgrade is required" }, 426);
-    }
-    if (!deps.auth.allowsWebOrigin(c.req.header("origin"))) {
-      return c.json({ error: "origin_not_allowed", message: "WebSocket origin is not allowed" }, 403);
     }
     const context = deps.auth.consumeWebSocketTicket(c.req.query("ticket"), endpoint);
     if (!context) {

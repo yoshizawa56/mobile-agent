@@ -241,7 +241,7 @@ type AgentdRoute = {
 ~~~
 
 - serve: the standard browser and Capacitor route using HTTPS/WSS and Tailscale ACLs;
-- same-origin: a Vite proxy or development route where agentd shares the origin;
+- same-origin: a future development route where the client and agentd share an origin;
 - lan: a future explicitly configured LAN route with its own TLS, authentication, CORS, and discovery design;
 - ssh: a future native-only route that creates port forwarding through a bastion.
 
@@ -834,26 +834,24 @@ The WebSocket is for real-time foreground display, not for keeping an iOS backgr
 ### Basic MVP topology
 
 ~~~text
-Browser / Capacitor
-      |
-      v HTTPS / WSS
-Tailscale Serve
-      |
-      v localhost
-agentd: 127.0.0.1:4317
+Web UI Serve                  agentd Serve
+      |                             |
+      v HTTPS                      v HTTPS / WSS
+  Web client  ----------------> agentd: 127.0.0.1:4317
+               agentdBaseUrl
 ~~~
 
 ### Policy
 
 - Use Tailscale ACLs as the first network boundary.
-- The browser build must not require connection settings or credentials beyond a Serve URL.
-- Store only non-sensitive settings such as the Serve URL, display name, and last-connected time in Web Storage.
+- The Web build contains no agentd endpoint; the client receives `agentdBaseUrl` from pairing at runtime.
+- Store only non-sensitive settings such as `agentdBaseUrl`, display name, and last-connected time in Web Storage.
 - Do not bring private keys, SSH passwords, or pairing secrets into the browser build; keep them in the native Keychain when SSH is implemented.
 - Never put a Tailscale administration API token on the iPhone.
 - Treat SSH as a future adapter for bootstrap, starting Serve, recovery, or bastion routing. It is not part of the MVP.
 - Even in a native SSH implementation, keep private keys in Keychain and out of the API client and web bundle.
 - Verify in an early spike that Tailscale Serve supports HTTP upgrades and long-lived WebSocket connections in the target environment.
-- `agent serve tailscale` configures a persistent agentd-only Serve route; `agent dev serve tailscale` starts the source Web/agentd stack and retargets the fixed local development route. Serve setup remains an external transport concern rather than agentd business logic.
+- `agent serve tailscale` configures a persistent agentd-only Serve route; `agent dev serve tailscale` starts the source Web and agentd services independently. Serve setup remains an external transport concern rather than agentd business logic.
 - Verify Serve identity headers such as Tailscale-User-Login at the localhost agentd boundary and combine them with pairing and authorization.
 - If Serve has an operational limitation, first consider SSH port forwarding to the same agentd API.
 
@@ -869,12 +867,12 @@ The browser connection profile stores only:
 type BrowserConnectionProfile = {
   id: string
   name: string
-  serveUrl: string
+  agentdBaseUrl: string
   updatedAt: string
 }
 ~~~
 
-`serveUrl` is a complete base URL, including an external port or path when one is configured. The mobile client must not store or discover the host's internal `AGENTD_PORT`: Tailscale Serve hides that port, and the development supervisor wires it into the Vite proxy. If a native SSH route is added later, its RouteProvider creates a local forwarded URL (which may contain an ephemeral port) and hands that URL to `AgentdClient` without changing the browser profile model.
+`agentdBaseUrl` is a complete base URL, including an external port or path when one is configured. The client must not store or discover the host's internal `AGENTD_PORT` unless `agent pair --without-serve` intentionally produced a local endpoint. If a native SSH route is added later, its RouteProvider creates a local forwarded URL (which may contain an ephemeral port) and hands that URL to `AgentdClient`.
 
 localStorage or another Web Storage implementation is sufficient because no secret is stored. Tailscale authentication and ACLs remain in the Tailscale app and tailnet. agentd continues to bind to localhost. If Serve identity headers or pairing tokens are added later, keep them short-lived and do not turn them into long-lived browser secrets.
 
@@ -1016,7 +1014,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 
 - Bind the WebSocket endpoint to localhost and use Tailscale Serve as the default route.
 - Use Tailscale ACLs to control access by host and user.
-- Store only non-sensitive settings such as the Serve URL in browser storage.
+- Store only non-sensitive settings such as the agentd URL in browser storage.
 - If pairing tokens are added, issue and revoke them per device.
 - Store device tokens, private keys, and refresh tokens in native Keychain or on the host; never include them in the web bundle.
 - Never put complete agent output in Live Activities or notifications.
@@ -1085,7 +1083,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 ### Phase 3: mobile proof of concept
 
 - Web and xterm.js, optionally packaged as iOS with Capacitor;
-- browser connection settings for saving and switching Serve URLs;
+- browser connection settings for saving and switching agentd URLs;
 - WSS connection;
 - one-pane display;
 - keyboard, selection, copy, and scroll;

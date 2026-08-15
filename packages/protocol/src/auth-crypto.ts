@@ -1,4 +1,6 @@
-import type { PublicKeyJwk } from "./index.js";
+import type { PairingQrPayload, PublicKeyJwk } from "./index.js";
+
+const pairingCodePrefix = "ma2:";
 
 export function canonicalPublicJwk(jwk: PublicKeyJwk): string {
   return JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
@@ -83,4 +85,14 @@ export function encodeJsonBase64Url(value: unknown): string {
 
 export function decodeJsonBase64Url<T>(value: string): T {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as T;
+}
+
+export function encodePairingCode(payload: PairingQrPayload): string {
+  return `${pairingCodePrefix}${encodeJsonBase64Url(payload)}`;
+}
+
+export function decodePairingCode(value: string): PairingQrPayload {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(pairingCodePrefix)) throw new Error("QR code is not a mobile-agent pairing code");
+  return decodeJsonBase64Url<PairingQrPayload>(trimmed.slice(pairingCodePrefix.length));
 }

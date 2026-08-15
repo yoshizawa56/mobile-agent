@@ -8,7 +8,7 @@ import {
   type AgentdControlResponse,
   type PairingClaimNotification,
 } from "@mobile-agent/protocol";
-import { AuthService, pairingPayloadUrl } from "./service.js";
+import { AuthService, pairingPayloadCode } from "./service.js";
 
 export type AgentdControlServerOptions = {
   socketPath: string;
@@ -111,9 +111,9 @@ export class AgentdControlServer {
 
     try {
       if (request.type === "create_pairing") {
-        const payload = this.options.auth.createPairing({ webOrigin: request.webOrigin, agentdBaseUrl: request.agentdBaseUrl });
+        const payload = this.options.auth.createPairing({ agentdBaseUrl: request.agentdBaseUrl });
         this.pairingOwners.set(payload.pairingId, socket);
-        this.send(socket, { type: "pairing_created", pairingId: payload.pairingId, pairingUrl: pairingPayloadUrl(payload), payload });
+        this.send(socket, { type: "pairing_created", pairingId: payload.pairingId, pairingCode: pairingPayloadCode(payload), payload });
         return;
       }
       if (request.type === "approve_pairing") {

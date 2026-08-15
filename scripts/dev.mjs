@@ -55,7 +55,6 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
   const webHost = baseEnvironment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
   const webPort = readPort("VITE_DEV_PORT", baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort, baseEnvironment);
   const agentdProbeHost = probeHostForBind(agentdHost);
-  const agentdProxyHost = agentdProbeHost;
   const serveProvider = baseEnvironment.AGENT_DEV_SERVE_PROVIDER;
   const servePort = serveProvider
     ? readPort("AGENT_DEV_SERVE_PORT", baseEnvironment.AGENT_DEV_SERVE_PORT ?? 443, baseEnvironment)
@@ -78,7 +77,6 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
     agentdHost,
     agentdPort,
     agentdProbeHost,
-    agentdProxyTarget: baseEnvironment.VITE_AGENTD_PROXY_TARGET ?? `http://${formatHost(agentdProxyHost)}:${agentdPort}`,
     webHost,
     webPort,
     serveProvider,
@@ -176,7 +174,6 @@ function serviceDefinitions(config) {
         ...config.baseEnvironment,
         VITE_DEV_HOST: config.webHost,
         VITE_DEV_PORT: String(config.webPort),
-        VITE_AGENTD_PROXY_TARGET: config.agentdProxyTarget,
       },
     },
   };
@@ -467,9 +464,15 @@ export async function checkAgentdHealth(config, request = probeHttp) {
 }
 
 export async function checkWebHealth(config, requests = {}) {
-  const health = await checkAgentdHealth(config, requests.http ?? probeHttp);
-  if (!health.ok) return health;
-  return readyHealth("agentd /health is responding; web port is listening", health.evidence);
+  try {
+    const response = await (requests.http ?? probeHttp)(endpoint(browserHost(config.webHost), config.webPort, "/"), {
+      timeoutMs: config.probeTimeoutMs,
+    });
+    if (response.statusCode !== 200) return failedHealth(`Web UI / returned ${responseSummary(response)}`);
+    return readyHealth("Web UI is responding", { statusCode: response.statusCode });
+  } catch (error) {
+    return failedHealth(`Web UI probe failed: ${errorMessage(error)}`, error);
+  }
 }
 
 function errorMessage(error) {
@@ -571,7 +574,6 @@ class DevSupervisor {
     this.spawnProcess = options.spawnProcess ?? spawnChild;
     this.inspectPort = options.inspectPort ?? ((host, port) => inspectPort(host, port));
     this.probeHttp = options.probeHttp ?? probeHttp;
-    this.probeWebSocket = options.probeWebSocket ?? probeWebSocket;
     this.configureServe = options.configureServe ?? configureDevServe;
     this.sleep = options.sleep ?? delay;
     this.signalProcess = options.signalProcess ?? signalProcess;
@@ -598,7 +600,7 @@ class DevSupervisor {
     this.log("info", `[dev] worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
     this.log("info", `[dev] instance=${this.config.baseEnvironment.AGENTD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
     this.log("info", `[dev] agentd target: ${this.services.agentd.url}`);
-    this.log("info", `[dev] web target: ${this.services.web.url} (proxy ${this.config.agentdProxyTarget})`);
+    this.log("info", `[dev] web target: ${this.services.web.url}`);
 
     try {
       await this.ensureService("agentd");
@@ -612,7 +614,7 @@ class DevSupervisor {
       if (serve?.stderr) this.log("warn", `[dev] Tailscale Serve: ${serve.stderr.trim()}`);
       this.state = "running";
       this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
-      this.log("info", `[dev] ready: ${this.services.web.url} serves HTML, proxies /api, /terminal, and /events`);
+      this.log("info", `[dev] ready: ${this.services.web.url} serves the Web UI`);
       if (serve) {
         this.log("info", `[dev] Tailscale Serve: ${serve.url ?? `HTTPS port ${serve.externalPort}`} -> http://127.0.0.1:${serve.localPort}`);
         this.log("info", "[dev] Tailscale Serve is left running; rerun the command to retarget it");
@@ -792,7 +794,7 @@ class DevSupervisor {
 
   async checkHealth(definition) {
     if (definition.name === "agentd") return checkAgentdHealth(this.config, this.probeHttp);
-    return checkWebHealth(this.config, { http: this.probeHttp, websocket: this.probeWebSocket });
+    return checkWebHealth(this.config, { http: this.probeHttp });
   }
 
   async handleUnexpectedExit(record, code, signal) {

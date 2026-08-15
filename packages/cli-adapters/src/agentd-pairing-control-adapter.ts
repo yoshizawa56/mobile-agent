@@ -51,7 +51,6 @@ export class AgentdPairingControlAdapter implements PairingControlPort {
   public async createPairing(input: PairDeviceInput): Promise<PairingOffer> {
     const response = await this.request({
       type: "create_pairing",
-      webOrigin: input.webOrigin,
       agentdBaseUrl: input.agentdBaseUrl,
     });
     if (response.type !== "pairing_created" || response.pairingId !== response.payload.pairingId) {
@@ -60,8 +59,7 @@ export class AgentdPairingControlAdapter implements PairingControlPort {
 
     return {
       pairingId: response.pairingId,
-      pairingUrl: response.pairingUrl,
-      webOrigin: response.payload.webOrigin,
+      pairingCode: response.pairingCode,
       agentdBaseUrl: response.payload.agentdBaseUrl,
       expiresAt: response.payload.expiresAt,
     };

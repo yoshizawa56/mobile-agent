@@ -28,6 +28,15 @@ export type ServeCommandDependencies = {
   logger?: Logger;
 };
 
+export type TailscaleServeResult = {
+  options: ServeCommandOptions;
+  serveArgs: string[];
+  hostname?: string;
+  url?: string;
+  stdout: string;
+  stderr: string;
+};
+
 type CommandRunner = (
   command: string,
   args: string[],
@@ -118,9 +127,25 @@ export async function runServeCommand(
     return 0;
   }
   const options = parseServeOptions(args, environment);
+  const result = await ensureTailscaleServe(options, {
+    ensureAgentd: dependencies.ensureAgentd,
+    runCommand: dependencies.runCommand,
+    logger,
+  }, environment);
+  if (result.stderr) err(result.stderr);
+  out(`agent serve tailscale: ${result.url ?? `HTTPS port ${options.externalPort}`} -> ${localAgentdUrl(options.agentdHost, options.agentdPort)}\n`);
+  if (result.stdout) out(result.stdout);
+  return 0;
+}
+
+export async function ensureTailscaleServe(
+  options: ServeCommandOptions,
+  dependencies: Pick<ServeCommandDependencies, "ensureAgentd" | "runCommand" | "logger"> = {},
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<TailscaleServeResult> {
   const ensureAgentd = dependencies.ensureAgentd ?? ensureLocalAgentd;
   const runCommand = dependencies.runCommand ?? runExternalCommand;
-
+  const logger = dependencies.logger;
   const startedAt = Date.now();
   logger?.debug("serve.started", {
     agentdHost: options.agentdHost,
@@ -130,10 +155,7 @@ export async function runServeCommand(
     logFileConfigured: Boolean(options.logFile),
   });
   const agentdStartedAt = Date.now();
-  logger?.debug("agentd.ensure_started", {
-    host: options.agentdHost,
-    port: options.agentdPort,
-  });
+  logger?.debug("agentd.ensure_started", { host: options.agentdHost, port: options.agentdPort });
   try {
     await ensureAgentd(options);
     logger?.debug("agentd.ensure_finished", { durationMs: Date.now() - agentdStartedAt });
@@ -142,50 +164,29 @@ export async function runServeCommand(
     throw error;
   }
 
-  const serveArgs = buildServeArgs({
-    localPort: options.agentdPort,
-    externalPort: options.externalPort,
-  });
+  const serveArgs = buildServeArgs({ localPort: options.agentdPort, externalPort: options.externalPort });
   const commandStartedAt = Date.now();
-  logger?.debug("serve.subprocess_starting", {
-    kind: "tailscale",
-    executable: options.tailscaleBinary,
-    argumentCount: serveArgs.length,
-  });
-  logger?.debug("serve.subprocess_started", {
-    kind: "tailscale",
-    executable: options.tailscaleBinary,
-  });
+  logger?.debug("serve.subprocess_starting", { kind: "tailscale", executable: options.tailscaleBinary, argumentCount: serveArgs.length });
   const result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
-  logger?.debug("serve.subprocess_finished", {
-    kind: "tailscale",
-    durationMs: Date.now() - commandStartedAt,
-  });
-  if (result.stderr) err(result.stderr);
+  logger?.debug("serve.subprocess_finished", { kind: "tailscale", durationMs: Date.now() - commandStartedAt });
 
   let hostname = options.hostname;
   if (!hostname) {
     const statusStartedAt = Date.now();
     try {
       logger?.debug("serve.hostname_lookup_started", { executable: options.tailscaleBinary });
-      hostname = parseTailscaleHostname(
-        (await runCommand(options.tailscaleBinary, ["status", "--json"], { env: environment })).stdout,
-      );
+      hostname = parseTailscaleHostname((await runCommand(options.tailscaleBinary, ["status", "--json"], { env: environment })).stdout);
       logger?.debug("serve.hostname_lookup_finished", { durationMs: Date.now() - statusStartedAt, resolved: Boolean(hostname) });
     } catch (error) {
       logger?.debug("serve.hostname_lookup_failed", { durationMs: Date.now() - statusStartedAt, ...errorFields(error) });
-      // The Serve upsert already succeeded. A hostname is only needed for the
-      // convenience output, so leave it unavailable when status is blocked.
     }
   }
   const url = hostname ? buildServeHttpUrl(hostname, options.externalPort) : undefined;
-  out(`agent serve tailscale: ${url ?? `HTTPS port ${options.externalPort}`} -> http://127.0.0.1:${options.agentdPort}\n`);
-  if (result.stdout) out(result.stdout);
   logger?.debug("serve.finished", { durationMs: Date.now() - startedAt, hostnameResolved: Boolean(hostname) });
-  return 0;
+  return { options, serveArgs, hostname, url, stdout: result.stdout, stderr: result.stderr };
 }
 
-async function ensureLocalAgentd(options: ServeCommandOptions): Promise<void> {
+export async function ensureLocalAgentd(options: ServeCommandOptions): Promise<void> {
   const args = [
     "ensure",
     "--host", options.agentdHost,
@@ -195,6 +196,12 @@ async function ensureLocalAgentd(options: ServeCommandOptions): Promise<void> {
   if (options.pidFile) args.push("--pid-file", options.pidFile);
   if (options.logFile) args.push("--log-file", options.logFile);
   await runAgentdCommand(args);
+}
+
+export function localAgentdUrl(host: string, port: number): string {
+  const normalizedHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const urlHost = normalizedHost.includes(":") && !normalizedHost.startsWith("[") ? `[${normalizedHost}]` : normalizedHost;
+  return `http://${urlHost}:${port}`;
 }
 
 async function runExternalCommand(

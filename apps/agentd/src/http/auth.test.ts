@@ -22,7 +22,7 @@ type HttpContext = { statuses: Readonly<Record<string, number>>; origins: Readon
 
 const httpFixture = (): FixtureHandle<HttpFixture> => {
   const database = createAgentDatabase();
-  const auth = new AuthService({ store: new AuthStore(database.sqlite), webOrigin: "http://web.example", agentdBaseUrl: "http://agentd.example" });
+  const auth = new AuthService({ store: new AuthStore(database.sqlite), agentdBaseUrl: "http://agentd.example" });
   const app = createAgentdApp({
     auth,
     application: {
@@ -52,7 +52,7 @@ const cases = [
     steps: [{ type: "health" }, { type: "info" }, { type: "protected" }, { type: "preflight" }],
     assert: [
       hasObserved<HttpContext, undefined>("statuses", { health: 200, info: 200, protected: 401, preflight: 204 }),
-      hasObserved<HttpContext, undefined>("origins", { health: null, info: "http://web.example", protected: null, preflight: "http://web.example" }),
+      hasObserved<HttpContext, undefined>("origins", { health: null, info: "http://web.example", protected: "http://web.example", preflight: "http://web.example" }),
     ],
   },
 ] satisfies readonly ScenarioCase<"default", HttpStep, undefined, HttpContext>[];

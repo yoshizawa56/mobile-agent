@@ -1,12 +1,10 @@
 export type PairDeviceInput = {
-  webOrigin: string;
   agentdBaseUrl: string;
 };
 
 export type PairingOffer = {
   pairingId: string;
-  pairingUrl: string;
-  webOrigin: string;
+  pairingCode: string;
   agentdBaseUrl: string;
   expiresAt: number;
 };

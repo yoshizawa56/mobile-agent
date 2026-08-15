@@ -40,7 +40,6 @@ export type AgentdAuthContext = {
 
 export interface AgentdAuthPort {
   readonly serverId: string;
-  allowsWebOrigin(origin: string | undefined): boolean;
   authenticateAccessToken(token: string | undefined): AgentdAuthContext | null;
   claimPairing(pairingId: string, request: PairingClaimRequest): PairingClaimResponse;
   pairingStatus(pairingId: string, claimToken: string): PairingStatus;

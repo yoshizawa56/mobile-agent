@@ -41,7 +41,6 @@ const testAuthContext = {
 };
 const testAuth: AgentdAuthPort = {
   serverId: testAuthContext.serverId,
-  allowsWebOrigin: () => true,
   authenticateAccessToken: () => testAuthContext,
   claimPairing: () => { throw new Error("not used"); },
   pairingStatus: () => { throw new Error("not used"); },

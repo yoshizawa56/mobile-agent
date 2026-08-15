@@ -30,7 +30,6 @@ const fixture = (): FixtureHandle<ControlFixture> => {
   const database = createAgentDatabase();
   const auth = new AuthService({
     store: new AuthStore(database.sqlite),
-    webOrigin: "http://localhost:5173",
     agentdBaseUrl: "http://127.0.0.1:4317",
   });
   const calls: string[] = [];

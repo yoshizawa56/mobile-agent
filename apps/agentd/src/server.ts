@@ -24,7 +24,6 @@ export type AgentdOptions = {
   databaseFile?: string;
   allowedRoots?: string[];
   controlSocket?: string;
-  webOrigin?: string;
   agentdBaseUrl?: string;
   tmuxPollIntervalMs?: number;
   paneCleanupIntervalMs?: number;
@@ -83,10 +82,8 @@ export function createAgentdServer(options: AgentdOptions) {
   const eventHub = new AgentdEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.AGENTD_DEFAULT_TMUX_TARGET ?? "agentd";
-  const webOrigin = options.webOrigin ?? process.env.AGENTD_WEB_ORIGIN ?? "http://localhost:5173";
   const auth = new AuthService({
     store: new AuthStore(database.sqlite),
-    webOrigin,
     agentdBaseUrl: options.agentdBaseUrl ?? process.env.AGENTD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
   });
   const controlServer = new AgentdControlServer({
@@ -125,7 +122,7 @@ export function createAgentdServer(options: AgentdOptions) {
     auth,
     application,
     isReady: () => controlReady,
-    corsOrigin: webOrigin,
+    corsOrigin: "*",
     hookToken,
     onTerminalConnection: (socket: AgentdSocket, context) => {
       auth.trackSocket(context, socket);

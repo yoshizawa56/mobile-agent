@@ -4,7 +4,7 @@ import { createBrowserAgentdAuth } from "./browser-auth";
 export type BrowserConnectionProfile = {
   id: string;
   name: string;
-  serveUrl: string;
+  agentdBaseUrl: string;
   serverId?: string;
   updatedAt: string;
 };
@@ -24,13 +24,13 @@ export function readBrowserConnectionProfile(storage: Storage | undefined = getS
 }
 
 export function saveBrowserConnectionProfile(
-  input: Pick<BrowserConnectionProfile, "name" | "serveUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
+  input: Pick<BrowserConnectionProfile, "name" | "agentdBaseUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
   const profile: BrowserConnectionProfile = {
     id: "default",
-    name: input.name.trim() || new URL(input.serveUrl).hostname,
-    serveUrl: normalizeServeUrl(input.serveUrl),
+    name: input.name.trim() || new URL(input.agentdBaseUrl).hostname,
+    agentdBaseUrl: normalizeAgentdBaseUrl(input.agentdBaseUrl),
     ...(input.serverId ? { serverId: input.serverId } : {}),
     updatedAt: new Date().toISOString(),
   };
@@ -45,15 +45,15 @@ export function clearBrowserConnectionProfile(storage: Storage | undefined = get
 
 export function connectionForProfile(profile: BrowserConnectionProfile | null): AgentdConnection | undefined {
   if (!profile) return undefined;
-  const connection = createServeConnection(profile.serveUrl);
+  const connection = createServeConnection(profile.agentdBaseUrl);
   connection.auth = createBrowserAgentdAuth(connection);
   return connection;
 }
 
-export function normalizeServeUrl(value: string): string {
+export function normalizeAgentdBaseUrl(value: string): string {
   const url = new URL(value.trim());
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Serve URL must use https:// (http:// is allowed only for local development)");
+    throw new Error("agentd URL must use https:// (http:// is allowed only for local development)");
   }
   url.hash = "";
   url.search = "";
@@ -64,13 +64,16 @@ export function normalizeServeUrl(value: string): string {
 function parseProfile(value: unknown): BrowserConnectionProfile {
   if (!value || typeof value !== "object") throw new Error("Invalid connection profile");
   const candidate = value as Record<string, unknown>;
-  if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || typeof candidate.serveUrl !== "string" || typeof candidate.updatedAt !== "string") {
+  const agentdBaseUrl = typeof candidate.agentdBaseUrl === "string"
+    ? candidate.agentdBaseUrl
+    : typeof candidate.serveUrl === "string" ? candidate.serveUrl : undefined;
+  if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || !agentdBaseUrl || typeof candidate.updatedAt !== "string") {
     throw new Error("Invalid connection profile");
   }
   return {
     id: candidate.id,
     name: candidate.name,
-    serveUrl: normalizeServeUrl(candidate.serveUrl),
+    agentdBaseUrl: normalizeAgentdBaseUrl(agentdBaseUrl),
     ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };

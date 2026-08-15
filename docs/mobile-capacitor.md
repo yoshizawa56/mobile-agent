@@ -46,7 +46,7 @@ machine-specific URL, so staging and release builds continue to use bundled
 web assets.
 
 Bundled builds do not receive an agentd endpoint at build time. The first-run
-screen asks the user to scan the `agent pair` QR code, then stores the Serve
+screen asks the user to scan the `agent pair` QR code, then stores the agentd
 connection profile in Web Storage and the browser device key in IndexedDB.
 The same flow is used by browser and Capacitor builds, so `cap:sync` needs no
 agentd-related `.env.local` file.
@@ -64,9 +64,9 @@ Switching the worktree behind the fixed Serve endpoint does not require a
 native rebuild. Only changing the `MOBILE_AGENT_WEB_*` settings themselves
 requires rebuilding the native binary.
 
-The app connects to agentd through the full Tailscale Serve URL imported from
-the saved pairing profile. No Tailscale credentials, SSH private keys, or
-host-side ports are placed in the WebView.
+The app connects to agentd through the full endpoint imported from the saved
+pairing profile. No Tailscale credentials, SSH private keys, or host-side
+ports are placed in the WebView.
 
 ## Release CI and App Store Connect
 

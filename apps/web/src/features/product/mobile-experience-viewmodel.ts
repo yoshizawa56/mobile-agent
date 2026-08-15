@@ -81,7 +81,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [workspaceRegistrationError, setWorkspaceRegistrationError] = useState<string | null>(null);
   const [connectionProfile, setConnectionProfile] = useState<BrowserConnectionProfile | null>(() => readBrowserConnectionProfile());
   const [connectionName, setConnectionName] = useState(() => readBrowserConnectionProfile()?.name ?? "");
-  const [serveUrl, setServeUrl] = useState(() => readBrowserConnectionProfile()?.serveUrl ?? "");
+  const [agentdBaseUrl, setAgentdBaseUrl] = useState(() => readBrowserConnectionProfile()?.agentdBaseUrl ?? "");
   const [connectionSettingsError, setConnectionSettingsError] = useState<string | null>(null);
   const [isSavingConnection, setIsSavingConnection] = useState(false);
   const [isScanningQr, setIsScanningQr] = useState(false);
@@ -450,7 +450,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const connectionSettings = useMemo<ConnectionSettingsViewModel>(() => ({
     name: connectionName,
-    serveUrl,
+    agentdBaseUrl,
     hasSavedProfile: Boolean(connectionProfile),
     isSaving: isSavingConnection,
     errorMessage: connectionSettingsError,
@@ -458,8 +458,8 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     isPairingQr,
     pairingMessage,
     onNameChange: setConnectionName,
-    onServeUrlChange: (value) => {
-      setServeUrl(value);
+    onAgentdBaseUrlChange: (value) => {
+      setAgentdBaseUrl(value);
       if (connectionSettingsError) setConnectionSettingsError(null);
     },
     onSave: () => {
@@ -467,13 +467,13 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setIsSavingConnection(true);
       setConnectionSettingsError(null);
       try {
-        const profile = saveBrowserConnectionProfile({ name: connectionName, serveUrl });
+        const profile = saveBrowserConnectionProfile({ name: connectionName, agentdBaseUrl });
         setConnectionProfile(profile);
         setConnectionName(profile.name);
-        setServeUrl(profile.serveUrl);
+        setAgentdBaseUrl(profile.agentdBaseUrl);
         navigateTo(terminalsPath());
       } catch (error) {
-        setConnectionSettingsError(errorMessage(error) ?? "Invalid Serve URL");
+        setConnectionSettingsError(errorMessage(error) ?? "Invalid agentd URL");
       } finally {
         setIsSavingConnection(false);
       }
@@ -482,7 +482,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       clearBrowserConnectionProfile();
       setConnectionProfile(null);
       setConnectionName("");
-      setServeUrl("");
+      setAgentdBaseUrl("");
       navigateTo(terminalsPath());
     },
     onOpenQrScanner: () => {
@@ -508,12 +508,12 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .then((result) => {
           const profile = saveBrowserConnectionProfile({
             name: connectionName || result.deviceName,
-            serveUrl: result.payload.agentdBaseUrl,
+            agentdBaseUrl: result.payload.agentdBaseUrl,
             serverId: result.serverId,
           });
           setConnectionProfile(profile);
           setConnectionName(profile.name);
-          setServeUrl(profile.serveUrl);
+          setAgentdBaseUrl(profile.agentdBaseUrl);
           navigateTo(terminalsPath());
         })
         .catch((error: unknown) => {
@@ -525,7 +525,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         });
     },
     onBack: () => navigateTo(terminalsPath()),
-  }), [connectionName, connectionProfile, connectionSettingsError, isPairingQr, isSavingConnection, isScanningQr, navigate, pairingMessage, serveUrl]);
+  }), [agentdBaseUrl, connectionName, connectionProfile, connectionSettingsError, isPairingQr, isSavingConnection, isScanningQr, navigate, pairingMessage]);
 
   return {
     stage,

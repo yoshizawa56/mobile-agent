@@ -41,7 +41,7 @@ type AuthContext = Pick<AuthFixture, "keyFingerprint" | "contextDeviceId" | "cla
 
 const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
   const database = createAgentDatabase();
-  const auth = new AuthService({ store: new AuthStore(database.sqlite), webOrigin: "http://localhost:5173", agentdBaseUrl: "http://127.0.0.1:4317" });
+  const auth = new AuthService({ store: new AuthStore(database.sqlite), agentdBaseUrl: "http://127.0.0.1:4317" });
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const exported = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const publicKey = { kty: "EC" as const, crv: "P-256" as const, x: exported.x!, y: exported.y! };

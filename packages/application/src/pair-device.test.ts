@@ -12,8 +12,7 @@ import { PairDevice, type PairingClaim, type PairingControlPort, type PairingOff
 
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
-  pairingUrl: "https://web.example/settings#ma1=secret",
-  webOrigin: "https://web.example",
+  pairingCode: "ma2:pairing-code",
   agentdBaseUrl: "https://agentd.example",
   expiresAt: Date.now() + 300_000,
 };
@@ -45,7 +44,7 @@ class FakePresenter implements PairingPresenterPort {
 }
 
 type PairFixture = { control: FakeControl; presenter: FakePresenter };
-type PairInput = { webOrigin: string; agentdBaseUrl: string };
+type PairInput = { agentdBaseUrl: string };
 type PairContext = { controlCalls: readonly string[]; presenterCalls: readonly string[] };
 type PairKey = "approved" | "rejected";
 
@@ -57,7 +56,7 @@ const pairCases = [
   {
     name: "coordinates offer, claim, approval, and result",
     fixture: "approved",
-    input: { webOrigin: offer.webOrigin, agentdBaseUrl: offer.agentdBaseUrl },
+    input: { agentdBaseUrl: offer.agentdBaseUrl },
     assert: [
       returns<PairContext, PairDeviceResult>({ status: "approved", deviceId: "device-1" }),
       hasObserved<PairContext, PairDeviceResult>("controlCalls", ["create", `wait:${offer.pairingId}`, `approve:${offer.pairingId}`]),
@@ -67,7 +66,7 @@ const pairCases = [
   {
     name: "rejects after a negative presentation decision",
     fixture: "rejected",
-    input: { webOrigin: offer.webOrigin, agentdBaseUrl: offer.agentdBaseUrl },
+    input: { agentdBaseUrl: offer.agentdBaseUrl },
     assert: [
       returns<PairContext, PairDeviceResult>({ status: "rejected" }),
       hasObserved<PairContext, PairDeviceResult>("controlCalls", ["create", `wait:${offer.pairingId}`, `reject:${offer.pairingId}`]),

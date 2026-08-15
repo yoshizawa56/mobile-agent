@@ -3,7 +3,6 @@ import { relative, resolve } from "node:path";
 import { describe, it } from "vitest";
 import {
   hasObserved,
-  hasError,
   noFixture,
   returns,
   runOperationTable,
@@ -13,7 +12,7 @@ import {
   type TestRegistrar,
 } from "@mobile-agent/test-support";
 import type { PairDevice } from "@mobile-agent/application";
-import { PairCommand, parsePairCommandOptions, type PairDeviceRuntime } from "./pair-command.js";
+import { PairCommand, parsePairCommandOptions, type PairDeviceRuntime, type ParsedPairCommandOptions } from "./pair-command.js";
 
 class CaptureOutput extends Writable {
   public value = "";
@@ -47,6 +46,7 @@ const createPairCommandFixture = (kind: PairCommandKey): (() => FixtureHandle<Co
   const command = new PairCommand({
     ...(kind === "approved" ? { env: { AGENTD_CONTROL_SOCKET: "/tmp/agentd.control.sock" } } : {}),
     io: { out, input: Readable.from([]) },
+    resolveAgentdBaseUrl: async () => "https://agentd.example",
     createRuntime: async (options) => {
       fixture.constructed = true;
       fixture.controlSocket = options.controlSocket ?? null;
@@ -61,10 +61,10 @@ const commandCases = [
   {
     name: "maps command options into the injected use case",
     fixture: "approved",
-    input: { args: ["--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"] },
+    input: { args: ["--agentd-base-url", "https://agentd.example"] },
     assert: [
       returns<PairCommandContext, number>(0),
-      hasObserved<PairCommandContext, number>("received", { webOrigin: "https://web.example", agentdBaseUrl: "https://agentd.example" }),
+      hasObserved<PairCommandContext, number>("received", { agentdBaseUrl: "https://agentd.example" }),
       hasObserved<PairCommandContext, number>("output", "Approved. deviceId: device-1\n"),
       hasObserved<PairCommandContext, number>("closed", true),
       hasObserved<PairCommandContext, number>("controlSocket", "/tmp/agentd.control.sock"),
@@ -77,7 +77,7 @@ const commandCases = [
     assert: [
       returns<PairCommandContext, number>(0),
       hasObserved<PairCommandContext, number>("constructed", false),
-      hasObserved<PairCommandContext, number>("output", "Usage: agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]\n"),
+      hasObserved<PairCommandContext, number>("output", "Usage: agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n"),
     ],
   },
 ] satisfies readonly OperationCase<PairCommandKey, PairCommandInput, number, PairCommandContext>[];
@@ -97,25 +97,30 @@ type ParseInput = { args: string[]; env: NodeJS.ProcessEnv };
 const parseCases = [
   {
     name: "derives the control socket from the instance directory",
-    input: { args: ["--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, string>("/tmp/mobile-agent/main/agentd.sock")],
+    input: { args: ["--agentd-base-url", "https://agentd.example"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: "https://agentd.example", withoutServe: false })],
   },
   {
-    name: "rejects pairing without explicit endpoint settings",
+    name: "allows the default Serve resolver to provide the endpoint",
     input: { args: [], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [hasError<{}, string>({ message: "agent pair requires --web-origin or AGENTD_WEB_ORIGIN" })],
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false })],
+  },
+  {
+    name: "selects the local endpoint mode explicitly",
+    input: { args: ["--without-serve"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: true })],
   },
   {
     name: "normalizes a relative control socket override",
-    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock"), "--web-origin", "https://web.example", "--agentd-base-url", "https://agentd.example"], env: {} },
-    assert: [returns<{}, string>(resolve("/tmp/mobile-agent-agentd.sock"))],
+    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock"), "--agentd-base-url", "https://agentd.example"], env: {} },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: resolve("/tmp/mobile-agent-agentd.sock"), agentdBaseUrl: "https://agentd.example", withoutServe: false })],
   },
-] satisfies readonly OperationCase<"default", ParseInput, string, {}>[];
+] satisfies readonly OperationCase<"default", ParseInput, ParsedPairCommandOptions, {}>[];
 
-const parseTable: OperationTable<undefined, "default", ParseInput, string, {}> = {
+const parseTable: OperationTable<undefined, "default", ParseInput, ParsedPairCommandOptions, {}> = {
   defaultFixture: noFixture(),
   cases: parseCases,
-  execute: (_fixture, input) => parsePairCommandOptions(input.args, input.env).controlSocket,
+  execute: (_fixture, input) => parsePairCommandOptions(input.args, input.env),
   observe: () => ({}),
 };
 

@@ -94,11 +94,11 @@ const pureCases = [
     })],
   },
   {
-    name: "uses the unauthenticated agentd health endpoint for Web readiness",
+    name: "uses the Web root for Web readiness",
     input: { kind: "health" },
-    assert: [succeeds("probes only agentd health", (value) => {
+    assert: [succeeds("probes only the Web UI", (value) => {
       assert.equal(value.result.ok, true);
-      assert.deepEqual(value.httpRequests, ["/health"]);
+      assert.deepEqual(value.httpRequests, ["/"]);
       assert.deepEqual(value.websocketRequests, []);
     })],
   },
@@ -154,13 +154,9 @@ const pureTable = {
         http: async (url) => {
           const parsed = new URL(url);
           fixture.healthRuntime.httpRequests.push(parsed.pathname);
-          return parsed.pathname === "/health"
-            ? { statusCode: 200, body: JSON.stringify({ ok: true, service: "agentd", protocolVersion: 1 }) }
+          return parsed.pathname === "/"
+            ? { statusCode: 200, body: "<!doctype html><html><body>dev</body></html>" }
             : { statusCode: 503, body: "service unavailable" };
-        },
-        websocket: async (url) => {
-          fixture.healthRuntime.websocketRequests.push(new URL(url).pathname);
-          return { statusCode: 101 };
         },
       });
       return { result, httpRequests: fixture.healthRuntime.httpRequests, websocketRequests: fixture.healthRuntime.websocketRequests };
@@ -377,7 +373,7 @@ function createPureFixture() {
 }
 
 function createFakeRuntime(overrides = {}) {
-  const config = { agentdHost: "127.0.0.1", agentdProbeHost: "127.0.0.1", agentdPort: 14_317, agentdProxyTarget: "http://127.0.0.1:14317", webHost: "127.0.0.1", webPort: 15_227, repoRoot: "/repo", baseEnvironment: { PATH: "/test/bin" }, readyTimeoutMs: 25, shutdownTimeoutMs: 25, probeTimeoutMs: 5 };
+  const config = { agentdHost: "127.0.0.1", agentdProbeHost: "127.0.0.1", agentdPort: 14_317, webHost: "127.0.0.1", webPort: 15_227, repoRoot: "/repo", baseEnvironment: { PATH: "/test/bin" }, readyTimeoutMs: 25, shutdownTimeoutMs: 25, probeTimeoutMs: 5 };
   const ports = new Map();
   const children = [];
   const spawnCalls = [];

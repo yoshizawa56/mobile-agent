@@ -4,6 +4,7 @@ import type { AgentdSocket } from "@mobile-agent/application";
 import {
   canonicalPublicJwk,
   decodeBase64Url,
+  encodePairingCode,
   pairingClaimMessage,
   sessionMessage,
   type AuthChallengeResponse,
@@ -31,7 +32,6 @@ const WS_TICKET_TTL_MS = 30_000;
 
 export type AuthServiceOptions = {
   store: AuthStore;
-  webOrigin: string;
   agentdBaseUrl: string;
 };
 
@@ -60,7 +60,6 @@ type TrackedSockets = {
 
 export class AuthService {
   public readonly serverId: string;
-  private readonly allowedWebOrigins = new Set<string>();
   private readonly challenges = new Map<string, PendingChallenge>();
   private readonly challengeWindows = new Map<string, { startedAt: number; count: number }>();
   private readonly wsTickets = new Map<string, PendingWsTicket>();
@@ -69,35 +68,21 @@ export class AuthService {
 
   public constructor(private readonly options: AuthServiceOptions) {
     this.serverId = options.store.getServerId();
-    this.allowedWebOrigins.add(normalizeOrigin(options.webOrigin));
   }
 
   public setPairingClaimListener(listener: ((notification: PairingClaimNotification) => void) | undefined): void {
     this.pairingClaimListener = listener;
   }
 
-  public allowsWebOrigin(origin: string | undefined): boolean {
-    if (!origin) return true;
-    try {
-      return this.allowedWebOrigins.has(new URL(origin).origin);
-    } catch {
-      return false;
-    }
-  }
-
-  public createPairing(overrides: Partial<Pick<AuthServiceOptions, "webOrigin" | "agentdBaseUrl">> = {}): PairingQrPayload {
+  public createPairing(overrides: Partial<Pick<AuthServiceOptions, "agentdBaseUrl">> = {}): PairingQrPayload {
     const expiresAt = new Date(Date.now() + PAIRING_TTL_MS);
-    const webOrigin = overrides.webOrigin ?? this.options.webOrigin;
     const pairing = this.options.store.createPairing({
-      webOrigin,
       agentdBaseUrl: overrides.agentdBaseUrl ?? this.options.agentdBaseUrl,
       expiresAt: expiresAt.toISOString(),
       secret: randomOpaque(32),
     });
-    this.allowedWebOrigins.add(normalizeOrigin(webOrigin));
     return {
-      v: 1,
-      webOrigin: pairing.webOrigin,
+      v: 2,
       agentdBaseUrl: pairing.agentdBaseUrl,
       serverId: pairing.serverId,
       pairingId: pairing.pairingId,
@@ -288,13 +273,8 @@ export class AuthService {
   }
 }
 
-export function pairingPayloadUrl(payload: PairingQrPayload): string {
-  const encoded = encodeJsonBase64Url(payload);
-  const webUrl = new URL(payload.webOrigin);
-  webUrl.pathname = `${webUrl.pathname.replace(/\/$/, "")}/settings`;
-  webUrl.search = "";
-  webUrl.hash = `ma1=${encoded}`;
-  return webUrl.toString();
+export function pairingPayloadCode(payload: PairingQrPayload): string {
+  return encodePairingCode(payload);
 }
 
 function parsePublicKey(value: string): PublicKeyJwk {
@@ -330,14 +310,6 @@ function randomOpaque(bytes: number): string {
   return randomBytes(bytes).toString("base64url");
 }
 
-function encodeJsonBase64Url(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
 function isExpired(value: string): boolean {
   return value <= new Date().toISOString();
-}
-
-function normalizeOrigin(value: string): string {
-  return new URL(value).origin;
 }

@@ -36,8 +36,7 @@ export const publicKeyJwkSchema = z.object({
 export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
 
 export const pairingQrPayloadSchema = z.object({
-  v: z.literal(1),
-  webOrigin: z.string().url(),
+  v: z.literal(2),
   agentdBaseUrl: z.string().url(),
   serverId: z.string().min(16).max(256),
   pairingId: z.string().min(16).max(256),
@@ -61,7 +60,6 @@ export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSc
 export const agentdControlRequestSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("create_pairing"),
-    webOrigin: z.string().url(),
     agentdBaseUrl: z.string().url(),
   }).strict(),
   z.object({
@@ -91,7 +89,7 @@ export const agentdControlResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("pairing_created"),
     pairingId: z.string().min(16).max(256),
-    pairingUrl: z.string().url(),
+    pairingCode: z.string().startsWith("ma2:").min(16).max(8_192),
     payload: pairingQrPayloadSchema,
   }).strict(),
   z.object({

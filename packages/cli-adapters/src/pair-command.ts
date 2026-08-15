@@ -10,7 +10,12 @@ export type PairCommandIo = {
 
 export type ParsedPairCommandOptions = {
   controlSocket: string;
-  webOrigin: string;
+  agentdBaseUrl?: string;
+  withoutServe: boolean;
+};
+
+export type ResolvedPairCommandOptions = {
+  controlSocket: string;
   agentdBaseUrl: string;
 };
 
@@ -20,14 +25,17 @@ export type PairDeviceRuntime = {
 };
 
 export type PairDeviceRuntimeFactory = (
-  options: ParsedPairCommandOptions,
+  options: ResolvedPairCommandOptions,
   io: PairCommandIo,
 ) => Promise<PairDeviceRuntime>;
+
+export type PairAgentdUrlResolver = (input: { withoutServe: boolean; environment: NodeJS.ProcessEnv }) => Promise<string>;
 
 export type PairCommandOptions = {
   env?: NodeJS.ProcessEnv;
   io: PairCommandIo;
   createRuntime: PairDeviceRuntimeFactory;
+  resolveAgentdBaseUrl: PairAgentdUrlResolver;
 };
 
 export class PairCommandError extends Error {}
@@ -42,16 +50,19 @@ export class PairCommand {
 
   public async execute(args: string[]): Promise<number> {
     if (args.includes("-h") || args.includes("--help")) {
-      this.write("Usage: agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]\n");
+      this.write("Usage: agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n");
       return 0;
     }
 
     const parsed = parsePairCommandOptions(args, this.env);
-    const runtime = await this.options.createRuntime(parsed, this.options.io);
+    const agentdBaseUrl = parsed.agentdBaseUrl ?? await this.options.resolveAgentdBaseUrl({
+      withoutServe: parsed.withoutServe,
+      environment: this.env,
+    });
+    const runtime = await this.options.createRuntime({ controlSocket: parsed.controlSocket, agentdBaseUrl }, this.options.io);
     try {
       const result = await runtime.useCase.execute({
-        webOrigin: parsed.webOrigin,
-        agentdBaseUrl: parsed.agentdBaseUrl,
+        agentdBaseUrl,
       });
       if (result.status === "approved") {
         this.write(`Approved. deviceId: ${result.deviceId}\n`);
@@ -71,22 +82,21 @@ export class PairCommand {
 
 export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv = process.env): ParsedPairCommandOptions {
   let controlSocket = env.AGENTD_CONTROL_SOCKET ?? defaultControlSocket(env);
-  let webOrigin = env.AGENTD_WEB_ORIGIN ?? "http://localhost:5173";
-  let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL ?? "http://127.0.0.1:4317";
+  let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL;
+  let withoutServe = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--control-socket") controlSocket = resolve(requireValue(argument, args[++index]));
     else if (argument.startsWith("--control-socket=")) controlSocket = resolve(argument.slice("--control-socket=".length));
-    else if (argument === "--web-origin") webOrigin = requireValue(argument, args[++index]);
-    else if (argument.startsWith("--web-origin=")) webOrigin = argument.slice("--web-origin=".length);
+    else if (argument === "--without-serve") withoutServe = true;
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
     else throw new PairCommandError(`unknown agent pair option: ${argument}`);
   }
 
   validateAgentdControlSocketPath(controlSocket);
-  return { controlSocket, webOrigin, agentdBaseUrl };
+  return { controlSocket, agentdBaseUrl, withoutServe };
 }
 
 function defaultControlSocket(env: NodeJS.ProcessEnv): string {

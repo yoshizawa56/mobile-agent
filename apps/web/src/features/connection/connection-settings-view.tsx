@@ -1,27 +1,19 @@
-import { useEffect } from "react";
 import type { ConnectionSettingsViewModel } from "./connection-settings-viewmodel";
 import { QrPairingScanner } from "./qr-pairing-scanner";
 
 export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSettingsViewModel }) {
-  useEffect(() => {
-    if (!window.location.hash.startsWith("#ma1=") || !viewModel.onQrValue) return;
-    const pairingUrl = window.location.href;
-    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
-    viewModel.onQrValue(pairingUrl);
-  }, [viewModel.onQrValue]);
-
   return (
     <main className="connection-settings-view">
       <header className="connection-settings-toolbar">
-        <button className="connection-flow-back" type="button" onClick={viewModel.onBack}>‹ <span>connections</span></button>
-        <span className="connection-settings-lockup"><span className="connection-flow-network-dot" /> SERVE ROUTE</span>
+        {viewModel.hasSavedProfile ? <button className="connection-flow-back" type="button" onClick={viewModel.onBack}>‹ <span>connections</span></button> : <span className="connection-flow-back">connection setup</span>}
+        <span className="connection-settings-lockup"><span className="connection-flow-network-dot" /> AGENTD CONNECTION</span>
       </header>
 
       <section className="connection-settings-content">
         <div className="connection-flow-intro">
           <span className="connection-flow-step"><span className="connection-flow-step-line" /> CONNECTION SETTINGS</span>
           <h1>Where is agentd?</h1>
-          <p>最初の接続はagent pairのQRで行います。ブラウザ側の秘密鍵はOSのIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
+          <p>ホストでagent pairを実行してQRを表示し、ここで読み取ってください。接続先はビルドに含めず、ブラウザ側の秘密鍵はIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
         </div>
 
         {viewModel.isPairingQr ? <div className="connection-qr-status" role="status">{viewModel.pairingMessage ?? "ペアリング中…"}</div> : null}
@@ -43,17 +35,17 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
           </label>
           <label className="new-session-field">
             <span>CONNECTION URL</span>
-            <input value={viewModel.serveUrl} onChange={(event) => viewModel.onServeUrlChange(event.target.value)} placeholder="https://workstation.tailnet.ts.net:8449" autoComplete="url" inputMode="url" spellCheck={false} />
-            <small>Use the full Serve URL. Include <code>:port</code> when Serve uses a non-default port.</small>
+            <input value={viewModel.agentdBaseUrl} onChange={(event) => viewModel.onAgentdBaseUrlChange(event.target.value)} placeholder="https://workstation.tailnet.ts.net:8444" autoComplete="url" inputMode="url" spellCheck={false} />
+            <small>Use the full agentd URL. Include <code>:port</code> when the endpoint uses a non-default port.</small>
           </label>
 
           <div className="connection-settings-note">
             <span className="connection-settings-note-icon">⌁</span>
-            <span><strong>Serve + device key</strong><small>Network access is controlled by your tailnet ACL. SSH forwarding and other routes can reuse the same pairing/auth layer.</small></span>
+            <span><strong>Agentd endpoint + device key</strong><small>Network access is controlled by your route and tailnet ACL. SSH forwarding and other routes can reuse the same pairing/auth layer.</small></span>
           </div>
           {viewModel.errorMessage ? <p className="new-session-error" role="alert">{viewModel.errorMessage}</p> : null}
 
-          <button className="connection-flow-primary" type="submit" disabled={viewModel.isSaving || !viewModel.serveUrl.trim()}>
+          <button className="connection-flow-primary" type="submit" disabled={viewModel.isSaving || !viewModel.agentdBaseUrl.trim()}>
             {viewModel.isSaving ? "Saving…" : "Save and connect"}<span>→</span>
           </button>
           {viewModel.hasSavedProfile ? <button className="connection-flow-secondary connection-settings-clear" type="button" onClick={viewModel.onClear}>Forget saved address</button> : null}

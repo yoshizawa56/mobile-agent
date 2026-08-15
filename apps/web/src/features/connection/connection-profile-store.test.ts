@@ -14,7 +14,8 @@ import {
 } from "@mobile-agent/test-support";
 import {
   clearBrowserConnectionProfile,
-  normalizeServeUrl,
+  connectionForProfile,
+  normalizeAgentdBaseUrl,
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
   type BrowserConnectionProfile,
@@ -42,13 +43,28 @@ const normalizeCases = [
 const normalizeTable: OperationTable<undefined, "default", string, string, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: normalizeCases,
-  execute: (_fixture, input) => normalizeServeUrl(input),
+  execute: (_fixture, input) => normalizeAgentdBaseUrl(input),
+  observe: () => ({}),
+};
+
+const connectionCases = [
+  {
+    name: "does not create a transport without a saved profile",
+    input: null,
+    assert: [returns<EmptyContext, ReturnType<typeof connectionForProfile>>(undefined)],
+  },
+] satisfies readonly OperationCase<"default", null, ReturnType<typeof connectionForProfile>, EmptyContext>[];
+
+const connectionTable: OperationTable<undefined, "default", null, ReturnType<typeof connectionForProfile>, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: connectionCases,
+  execute: (_fixture, input) => connectionForProfile(input),
   observe: () => ({}),
 };
 
 type ProfileFixture = { storage: MemoryStorage };
 type ProfileStep =
-  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "serveUrl"> }
+  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "agentdBaseUrl"> }
   | { type: "set-raw"; value: string }
   | { type: "clear" }
   | { type: "read" };
@@ -67,6 +83,14 @@ const hasProfileName = (expected: string): Assertion<ProfileContext, ProfileResu
   },
 });
 
+const hasProfileEndpoint = (expected: string): Assertion<ProfileContext, ProfileResult> => ({
+  name: `returns endpoint ${expected}`,
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value?.agentdBaseUrl).toBe(expected);
+  },
+});
+
 const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
   name: "persists no credential fields",
   check: (ctx) => {
@@ -79,7 +103,7 @@ const profileCases = [
   {
     name: "round-trips a profile without credentials",
     steps: [
-      { type: "save", input: { name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/" } },
+      { type: "save", input: { name: "Workstation", agentdBaseUrl: "https://workstation.tailnet.ts.net/" } },
       { type: "read" },
     ],
     assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
@@ -93,9 +117,17 @@ const profileCases = [
     assert: [returns<ProfileContext, ProfileResult>(null)],
   },
   {
+    name: "reads the legacy serveUrl field as an agentd endpoint",
+    steps: [
+      { type: "set-raw", value: JSON.stringify({ id: "default", name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/", updatedAt: "2026-08-15T00:00:00.000Z" }) },
+      { type: "read" },
+    ],
+    assert: [hasProfileEndpoint("https://workstation.tailnet.ts.net")],
+  },
+  {
     name: "clears a saved profile",
     steps: [
-      { type: "save", input: { name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net" } },
+      { type: "save", input: { name: "Workstation", agentdBaseUrl: "https://workstation.tailnet.ts.net" } },
       { type: "clear" },
       { type: "read" },
     ],
@@ -122,5 +154,6 @@ const profileTable: ScenarioTable<ProfileFixture, "default", ProfileStep, Profil
 describe("browser connection profile", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, normalizeTable);
+  runOperationTable(register, connectionTable);
   runScenarioTable(register, profileTable);
 });

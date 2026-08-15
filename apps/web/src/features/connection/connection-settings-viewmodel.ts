@@ -1,6 +1,6 @@
 export type ConnectionSettingsViewModel = {
   name: string;
-  serveUrl: string;
+  agentdBaseUrl: string;
   hasSavedProfile: boolean;
   isSaving: boolean;
   errorMessage: string | null;
@@ -8,7 +8,7 @@ export type ConnectionSettingsViewModel = {
   isPairingQr?: boolean;
   pairingMessage?: string | null;
   onNameChange: (value: string) => void;
-  onServeUrlChange: (value: string) => void;
+  onAgentdBaseUrlChange: (value: string) => void;
   onSave: () => void;
   onClear: () => void;
   onBack: () => void;

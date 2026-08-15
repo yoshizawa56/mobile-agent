@@ -24,11 +24,11 @@ export function invalidateAgentdEvent(queryClient: Pick<QueryClient, "invalidate
   }
 }
 
-export function useAgentdEvents(connection: AgentdConnection, connectionKey: string): void {
+export function useAgentdEvents(connection: AgentdConnection | undefined, connectionKey: string): void {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (isMockMode() || !connection.auth) return;
+    if (isMockMode() || !connection?.auth) return;
 
     let disposed = false;
     let socket: WebSocket | undefined;

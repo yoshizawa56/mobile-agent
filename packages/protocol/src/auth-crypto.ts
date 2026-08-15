@@ -1,4 +1,9 @@
-import type { PublicKeyJwk } from "./index.js";
+import { pairingCodePayloadSchema, pairingQrPayloadSchema, type PairingCodePayload, type PairingQrPayload, type PublicKeyJwk } from "./index.js";
+
+const pairingCodePrefix = "ma3:";
+const legacyPairingCodePrefix = "ma2:";
+const pairingCodeLengthBytes = 2;
+const maxPairingCodeFieldBytes = 0xffff;
 
 export function canonicalPublicJwk(jwk: PublicKeyJwk): string {
   return JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
@@ -83,4 +88,58 @@ export function encodeJsonBase64Url(value: unknown): string {
 
 export function decodeJsonBase64Url<T>(value: string): T {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as T;
+}
+
+export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload): string {
+  const fields = [
+    normalizePairingEndpoint(payload.agentdBaseUrl),
+    payload.pairingId,
+    payload.pairingSecret,
+  ].map((value) => new TextEncoder().encode(value));
+  const byteLength = fields.reduce((total, field) => total + field.length, (fields.length - 1) * pairingCodeLengthBytes);
+  if (byteLength > 0xffff_ffff) throw new Error("pairing code is too large");
+  const bytes = new Uint8Array(byteLength);
+  const view = new DataView(bytes.buffer);
+  let offset = 0;
+  for (const field of fields.slice(0, -1)) {
+    if (field.length > maxPairingCodeFieldBytes) throw new Error("pairing code field is too large");
+    view.setUint16(offset, field.length);
+    offset += pairingCodeLengthBytes;
+    bytes.set(field, offset);
+    offset += field.length;
+  }
+  bytes.set(fields[2]!, offset);
+  return `${pairingCodePrefix}${encodeBase64Url(bytes)}`;
+}
+
+export function decodePairingCode(value: string): PairingCodePayload {
+  const trimmed = value.trim();
+  if (trimmed.startsWith(legacyPairingCodePrefix)) {
+    const legacy = pairingQrPayloadSchema.parse(decodeJsonBase64Url<PairingQrPayload>(trimmed.slice(legacyPairingCodePrefix.length)));
+    return pairingCodePayloadSchema.parse({
+      agentdBaseUrl: normalizePairingEndpoint(legacy.agentdBaseUrl),
+      pairingId: legacy.pairingId,
+      pairingSecret: legacy.pairingSecret,
+    });
+  }
+  if (!trimmed.startsWith(pairingCodePrefix)) throw new Error("QR code is not a mobile-agent pairing code");
+  const bytes = decodeBase64Url(trimmed.slice(pairingCodePrefix.length));
+  let offset = 0;
+  const fields: string[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    if (offset + pairingCodeLengthBytes > bytes.length) throw new Error("pairing code is truncated");
+    const length = new DataView(bytes.buffer, bytes.byteOffset + offset, pairingCodeLengthBytes).getUint16(0);
+    offset += pairingCodeLengthBytes;
+    const end = offset + length;
+    if (end > bytes.length) throw new Error("pairing code is truncated");
+    fields.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset, end)));
+    offset = end;
+  }
+  if (offset >= bytes.length) throw new Error("pairing code is missing its secret");
+  fields.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset)));
+  return pairingCodePayloadSchema.parse({ agentdBaseUrl: fields[0], pairingId: fields[1], pairingSecret: fields[2] });
+}
+
+function normalizePairingEndpoint(value: string): string {
+  return value.replace(/\/+$/, "");
 }

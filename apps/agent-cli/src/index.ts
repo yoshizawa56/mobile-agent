@@ -7,7 +7,7 @@ import {
   TerminalPairingPresenter,
   type PairCommandIo,
   type PairDeviceRuntime,
-  type ParsedPairCommandOptions,
+  type ResolvedPairCommandOptions,
 } from "@mobile-agent/cli-adapters";
 import {
   createLogger,
@@ -18,12 +18,13 @@ import {
 } from "@mobile-agent/logging";
 import { AgentCommand, AgentCommandError } from "./agent-command.js";
 import { parseGlobalOptions } from "./global-options.js";
+import { resolvePairAgentdBaseUrl } from "./pair-route.js";
 
 export { parseGlobalOptions } from "./global-options.js";
 export type { ParsedGlobalOptions } from "./global-options.js";
 
 async function createPairDeviceRuntime(
-  options: ParsedPairCommandOptions,
+  options: ResolvedPairCommandOptions,
   io: PairCommandIo,
   logger?: Logger,
 ): Promise<PairDeviceRuntime> {
@@ -79,6 +80,7 @@ export async function runCli(args: string[], logger: Logger): Promise<void> {
       const command = new PairCommand({
         env: process.env,
         io: { out: process.stdout, input: process.stdin },
+        resolveAgentdBaseUrl: resolvePairAgentdBaseUrl,
         createRuntime: (options, io) => createPairDeviceRuntime(options, io, logger),
       });
       try {

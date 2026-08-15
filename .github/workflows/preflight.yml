@@ -41,8 +41,6 @@ jobs:
       - name: Build and upload iOS app
         uses: ./.github/actions/ios-release
         with:
-          release_http_url: ${{ vars.IOS_RELEASE_HTTP_URL }}
-          release_ws_url: ${{ vars.IOS_RELEASE_WS_URL }}
           asc_api_key_id: ${{ secrets.IOS_ASC_API_KEY_ID }}
           asc_issuer_id: ${{ secrets.IOS_ASC_ISSUER_ID }}
           asc_api_private_key: ${{ secrets.IOS_ASC_API_PRIVATE_KEY }}

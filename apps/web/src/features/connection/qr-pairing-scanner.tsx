@@ -38,7 +38,7 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video ref={videoRef} muted playsInline />
         <span className="connection-qr-target" />
       </div>
-      <p>{error ?? "agent pair に表示されたQRを枠内に合わせてください。"}</p>
+      <p>{error ?? "agent pair に表示されたQRをアプリ内で読み取ってください。"}</p>
       <button className="connection-flow-secondary" type="button" onClick={onClose}>カメラを閉じる</button>
     </section>
   );

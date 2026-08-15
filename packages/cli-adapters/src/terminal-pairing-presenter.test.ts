@@ -18,8 +18,7 @@ class CaptureOutput extends Writable {
 
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
-  pairingUrl: "https://web.example/settings#ma1=secret",
-  webOrigin: "https://web.example",
+  pairingCode: "ma3:pairing-code",
   agentdBaseUrl: "https://agentd.example",
   expiresAt: Date.now() + 300_000,
 };
@@ -30,10 +29,10 @@ const presenterFixture = (): FixtureHandle<PresenterFixture> => ({ fixture: { ou
 
 const cases = [
   {
-    name: "hands the opaque pairing URL to the terminal QR adapter",
+    name: "hands the structured pairing code to the terminal QR adapter",
     input: offer,
     assert: [
-      hasObserved<PresenterContext, undefined>("received", offer.pairingUrl),
+      hasObserved<PresenterContext, undefined>("received", offer.pairingCode),
       hasObserved<PresenterContext, undefined>("output", true),
       hasObserved<PresenterContext, undefined>("instruction", true),
     ],
@@ -53,7 +52,7 @@ const table: OperationTable<PresenterFixture, "default", PairingOffer, undefined
     });
     await presenter.showPairing(input);
   },
-  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Web UI") }),
+  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Mobile Agent app") }),
 };
 
 describe("TerminalPairingPresenter", () => {

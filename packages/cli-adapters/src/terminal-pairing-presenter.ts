@@ -18,12 +18,12 @@ export class TerminalPairingPresenter implements PairingPresenterPort {
   }
 
   public async showPairing(offer: PairingOffer): Promise<void> {
-    const qr = await this.qrRenderer.render(offer.pairingUrl);
+    const qr = await this.qrRenderer.render(offer.pairingCode);
     this.write("agent pair\n");
-    this.write(`Web: ${offer.webOrigin}\nagentd: ${offer.agentdBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
+    this.write(`agentd: ${offer.agentdBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
     this.write(qr);
     if (!qr.endsWith("\n")) this.write("\n");
-    this.write("Scan this QR code in the Web UI. Waiting for a connection request.\n");
+    this.write("Scan this QR code in the Mobile Agent app. Waiting for a connection request.\n");
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {

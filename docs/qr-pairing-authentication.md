@@ -1,8 +1,8 @@
 # QR pairing and agentd authentication
 
-Status: v1 implementation baseline.
+Status: pairing code v3 implementation baseline.
 
-Last updated: 2026-08-13
+Last updated: 2026-08-15
 
 ## 1. Goal and scope
 
@@ -34,7 +34,7 @@ The following are normative invariants:
 7. Local, staging, and production are separate authentication realms. They do not share a base authentication database, `serverId`, device keys, or browser key records.
 8. A single active `agentd` instance owns an environment in v1. Running two instances against the same environment database is unsupported.
 9. Non-loopback browser connections require HTTPS/WSS. `http://localhost` is allowed for local development and SSH-forwarded native routes. Plain remote HTTP is not supported.
-10. The stable authenticated browser origin may serve only trusted code. A non-extractable browser key still permits same-origin JavaScript to request signatures.
+10. CORS and `Origin` checks are transport defense-in-depth only; the paired device key is the authorization boundary for every client.
 
 Network access, CORS, and `Origin` checks are defense-in-depth controls. They are not substitutes for device authentication.
 
@@ -60,33 +60,30 @@ Native clients use the platform key store, preferably with hardware-backed and u
 
 There is no `agentd` server private key in v1.
 
-`serverId` is a random, persistent 128-bit identifier for an authentication realm. It is stored in `auth_metadata` and included in QR data and signed messages so that a device cannot accidentally use a key from another environment. It is not cryptographic proof that a route terminates at the genuine server.
+`serverId` is a random, persistent 128-bit identifier for an authentication realm. It is stored in `auth_metadata`, returned by `/auth/v1/info`, and included in signed messages so that a device cannot accidentally use a key from another environment. It is not cryptographic proof that a route terminates at the genuine server.
 
 Server authenticity in v1 comes from HTTPS/Tailscale/SSH route validation. A persistent server identity key and client pinning are added later if an untrusted route or TLS terminator must be defended against independently of transport authentication.
 
 ## 4. Environment, Serve, and worktree rules
 
-Each environment has its own fixed profile:
+Each agentd environment has its own endpoint profile:
 
 ```text
-local: https://<stable-local-origin>:<fixed-serve-port>
-stg:   https://<stable-stg-origin>:<fixed-serve-port>
-prod:  https://<stable-prod-origin>:<fixed-serve-port>
+local: http://127.0.0.1:<agentd-port> or a Tailscale Serve URL
+stg:   https://<stg-agentd-host>:<serve-port>
+prod:  https://<prod-agentd-host>:<serve-port>
 ```
 
-The Serve endpoint is stable. Only its local reverse-proxy target changes when the active worktree changes:
+The Web UI and agentd are independent services. The Web Serve route exposes only the UI, while the agentd Serve route exposes only the authenticated API and WebSockets:
 
 ```text
-stable browser origin
-        |
-        +-- Serve target -> worktree web port
-                              |
-                              +-- VITE_AGENTD_PROXY_TARGET -> worktree agentd port
+Web Serve   -> worktree Web port
+agentd Serve -> worktree agentd port
 ```
 
-The browser key is scoped to the web UI origin. Therefore changing the `agentd` endpoint behind a stable UI origin does not require pairing again. Changing the web UI origin does require a new browser-origin key and normally a new pairing in that origin.
+The client stores the agentd endpoint received from the pairing code. Changing that endpoint normally requires pairing with the new agentd environment again.
 
-The web connection profile may store `webOrigin`, `agentdBaseUrl`, `serverId`, display name, and route metadata. It must not store private keys, access tokens, QR secrets, or WebSocket tickets in `localStorage`.
+The Web connection profile may store `agentdBaseUrl`, `serverId`, display name, and route metadata. It must not store private keys, access tokens, QR secrets, or WebSocket tickets in `localStorage`.
 
 The SQLite database is environment-scoped at its source and worktree-scoped at runtime. Each worktree receives a snapshot copy of the environment database and starts `agentd` with that copy. Give each worktree a distinct `AGENTD_INSTANCE_DIR`; its `agentd.sqlite` is the runtime copy. The recommended source layout is:
 
@@ -117,34 +114,35 @@ A loopback endpoint with a persistent owner-only control token is an allowed fal
 The CLI command is conceptually:
 
 ```text
-agent pair [--web-origin URL] [--agentd-base-url URL] [--control-socket PATH]
+agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]
 ```
 
 The command creates a pairing valid for five minutes, displays the QR in the foreground, and waits. It does not ask for approval merely because a QR was scanned. After `agentd` receives and validates a complete claim (pairing secret, public key, and proof-of-possession signature), it sends the pending device name and public-key fingerprint to the waiting CLI through the owner-only control channel. The CLI then asks the host user for explicit approval. Empty input, timeout, rejection, or `Ctrl-C` rejects the pairing. A rejected or consumed pairing cannot be reused.
 
 The command is an outer adapter for the `PairDevice` application use case in `packages/application`. The use case depends only on `PairingControlPort` and `PairingPresenterPort`. The CLI's Unix-socket client implements the control port, while the terminal presenter implements the presentation port. `apps/agent-cli/src/index.ts` is the composition root: it wires the use case and concrete adapters into the command registry. Terminal QR rendering and the `qrcode` package are confined to `@mobile-agent/cli-adapters`; the use case, shared protocol, and `@mobile-agent/agent-cli` do not depend directly on terminal rendering.
 
-The QR is a URL whose secret is in the fragment:
+The QR is a raw in-app pairing code. It is decoded by the client scanner and
+never navigates the browser. New codes use a compact binary payload so the
+endpoint and enrollment secret fit into fewer QR modules:
 
 ```text
-https://<stable-web-origin>/settings#ma1=<base64url(canonical-json)>
+ma3:<base64url(compact-binary-payload)>
 ```
 
-The decoded payload is:
+The binary payload is `[u16 length + agentdBaseUrl][u16 length + pairingId][pairingSecret]` in UTF-8. The final secret occupies the remaining bytes, avoiding a third length field.
 
-```json
-{
-  "v": 1,
-  "webOrigin": "https://agent-local.example.ts.net",
-  "agentdBaseUrl": "https://agent-local.example.ts.net",
-  "serverId": "<base64url-128-bit-id>",
-  "pairingId": "<base64url-128-bit-id>",
-  "pairingSecret": "<base64url-256-bit-secret>",
-  "expiresAt": 1780000000
-}
+The compact payload contains only the values required before the first claim:
+
+```text
+agentdBaseUrl + pairingId + pairingSecret
 ```
 
-The QR payload contains no device private key and no long-lived access token. The server stores only `SHA-256(pairingSecret)`. The browser must read the fragment and immediately call `history.replaceState` so the raw QR secret is removed from the visible URL and browser history. The secret must not enter analytics, referrer data, crash reports, or logs.
+`serverId` is fetched from `/auth/v1/info`, and pairing expiry is enforced by
+agentd, so neither is duplicated in the QR. Clients may continue to decode
+the previous `ma2:<base64url(canonical-json)>` format during migration, but
+the CLI emits only `ma3`.
+
+The QR payload contains no device private key and no long-lived access token. The server stores only `SHA-256(pairingSecret)`. The client must not put the raw pairing code into browser history, navigation, analytics, referrer data, crash reports, or logs.
 
 The QR secret is an enrollment capability, not a complete login credential. Possession of it permits a claim attempt, but does not grant access without host approval. The device public key is not in the QR payload.
 
@@ -167,7 +165,9 @@ sequenceDiagram
     Control-->>CLI: QR payload
     CLI-->>User: display QR
 
-    User->>W: scan/open QR
+    User->>W: scan QR inside the client
+    W->>W: decode agentdBaseUrl, pairingId, and pairing secret
+    W->>A: read server identity from /auth/v1/info
     W->>K: generate non-extractable P-256 key
     W->>A: claim(pairingSecret, public JWK, clientNonce, signature)
     A->>A: verify secret, public key, and signature

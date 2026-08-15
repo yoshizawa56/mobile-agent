@@ -24,7 +24,6 @@ export type AuthDeviceRecord = {
 export type AuthPairingRecord = {
   pairingId: string;
   serverId: string;
-  webOrigin: string;
   agentdBaseUrl: string;
   status: AuthPairingStatus;
   offeredAt: string;
@@ -51,7 +50,6 @@ export type AuthSessionRecord = {
 };
 
 export type CreatePairingInput = {
-  webOrigin: string;
   agentdBaseUrl: string;
   expiresAt: string;
   secret: string;
@@ -61,7 +59,6 @@ export type CreatePairingResult = {
   pairingId: string;
   serverId: string;
   secret: string;
-  webOrigin: string;
   agentdBaseUrl: string;
   expiresAt: string;
 };
@@ -123,7 +120,9 @@ export class AuthStore {
     `).run(
       pairingId,
       serverId,
-      input.webOrigin,
+      // Keep the legacy NOT NULL column populated for databases created by
+      // v1. It is no longer part of the pairing model or returned to clients.
+      "",
       input.agentdBaseUrl,
       hashOpaque(input.secret),
       timestamp(),
@@ -133,7 +132,6 @@ export class AuthStore {
       pairingId,
       serverId,
       secret: input.secret,
-      webOrigin: input.webOrigin,
       agentdBaseUrl: input.agentdBaseUrl,
       expiresAt: input.expiresAt,
     };
@@ -379,7 +377,6 @@ function toPairingRecord(row: AuthPairingRow): AuthPairingRecord {
   return {
     pairingId: row.pairing_id,
     serverId: row.server_id,
-    webOrigin: row.web_origin,
     agentdBaseUrl: row.agentd_base_url,
     status: row.status as AuthPairingStatus,
     offeredAt: row.offered_at,

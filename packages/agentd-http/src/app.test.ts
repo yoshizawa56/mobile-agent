@@ -81,7 +81,6 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   let eventConnections = 0;
   const auth: AgentdAuthPort = {
     serverId: authContext.serverId,
-    allowsWebOrigin: (origin) => origin === undefined || origin === "http://client.test",
     authenticateAccessToken: () => authContext,
     claimPairing: () => { throw new Error("not used"); },
     pairingStatus: () => { throw new Error("not used"); },

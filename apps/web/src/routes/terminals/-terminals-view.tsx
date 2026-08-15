@@ -1,8 +1,11 @@
 import { ConnectionFlowLayout, FlowIntro } from "../../features/connection/connection-flow-layout";
+import { ConnectionSettingsView } from "../../features/connection/connection-settings-view";
 import type { TerminalEndpoint } from "../../features/connection/connection-flow-viewmodel";
 import type { TerminalsViewModel } from "./-terminals-viewmodel";
 
 export function TerminalsView({ viewModel }: { viewModel: TerminalsViewModel }) {
+  if (!viewModel.connectionSettings.hasSavedProfile) return <ConnectionSettingsView viewModel={viewModel.connectionSettings} />;
+
   return (
     <ConnectionFlowLayout>
       <div className="connection-flow-content">

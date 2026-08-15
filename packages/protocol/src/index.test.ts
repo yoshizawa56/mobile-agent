@@ -19,6 +19,7 @@ import {
   terminalProtocolVersion,
   workspaceSelectionSchema,
 } from "./index.js";
+import { encodePairingCode } from "./auth-crypto.js";
 
 type EmptyContext = {};
 type ValidationResult = { success: boolean; data?: unknown; issuePath?: readonly (string | number)[] };
@@ -84,7 +85,8 @@ const eventCases = [
 
 type PairingInput = { kind: "request" | "response"; value: unknown };
 const pairingCases = [
-  { name: "accepts a pairing request", input: { kind: "request", value: { type: "create_pairing", webOrigin: "https://web.example", agentdBaseUrl: "https://agentd.example" } }, assert: [isValid()] },
+  { name: "accepts a pairing request with an agentd endpoint", input: { kind: "request", value: { type: "create_pairing", agentdBaseUrl: "https://agentd.example" } }, assert: [isValid()] },
+  { name: "accepts a pairing response with a raw pairing code", input: { kind: "response", value: { type: "pairing_created", pairingId: "pairing-1234567890123456", pairingCode: encodePairingCode({ v: 2, agentdBaseUrl: "https://agentd.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 }), payload: { v: 2, agentdBaseUrl: "https://agentd.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 } } }, assert: [isValid()] },
   { name: "accepts a pairing response", input: { kind: "response", value: { type: "pairing_result", pairingId: "pairing-1234567890123456", status: "approved", deviceId: "device-1" } }, assert: [isValid()] },
   { name: "rejects a pairing request without endpoint settings", input: { kind: "request", value: { type: "create_pairing" } }, assert: [isInvalid()] },
   { name: "rejects an unrecognized control response", input: { kind: "response", value: { type: "unexpected" } }, assert: [isInvalid()] },

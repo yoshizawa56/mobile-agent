@@ -43,8 +43,8 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-[1560px] flex-1 min-h-0 grid-cols-[196px_minmax(0,1fr)_316px] gap-7 overflow-hidden p-[28px_32px_32px] max-[1180px]:grid-cols-[170px_minmax(0,1fr)_286px] max-[1180px]:gap-[18px] max-[1180px]:px-[22px] max-[920px]:block max-[920px]:h-full max-[920px]:p-0">
-        <aside className="flex min-h-[calc(var(--app-viewport-height)-132px)] flex-col px-0 py-1.5 max-[920px]:hidden">
+      <div className="mx-auto grid w-full max-w-[1560px] flex-1 min-h-0 grid-cols-[196px_minmax(0,1fr)_316px] gap-7 overflow-hidden p-[28px_32px_32px] max-[1180px]:grid-cols-[170px_minmax(0,1fr)_286px] max-[1180px]:gap-[18px] max-[1180px]:px-[22px] max-[920px]:flex max-[920px]:flex-col max-[920px]:p-0">
+        <aside className="flex min-h-0 flex-col px-0 py-1.5 max-[920px]:hidden">
           <div className="pb-6">
             <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted">WORKSPACE</div>
             <div className="relative mt-[13px] flex items-center gap-2.5 rounded-xl border border-line bg-[rgb(10_22_13_/_72%)] px-2.5 py-3">
@@ -74,7 +74,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
           <div className="flex items-center gap-[7px] border-t border-line pt-[15px] font-mono text-[0.62rem] text-[#596059]"><span className="size-[5px] rounded-full bg-lime-deep" /> agentd <span className="ml-auto text-faint">v0.1</span></div>
         </aside>
 
-        <section className="flex min-w-0 min-h-0 flex-col gap-5 max-[920px]:min-h-[var(--app-viewport-height)] max-[920px]:gap-0 max-[620px]:gap-[7px]">
+        <section className="flex min-w-0 min-h-0 flex-col gap-5 max-[920px]:flex-1 max-[920px]:gap-0 max-[620px]:gap-[7px]">
           <div className="flex min-h-[74px] items-start justify-between gap-5 max-[920px]:hidden">
             <div className="min-w-0">
               <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> LIVE SESSION</div>
@@ -95,8 +95,8 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
             </div>
           </div>
 
-          <section className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:h-[var(--app-viewport-height)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:h-[var(--app-viewport-height)] max-[620px]:rounded-[9px]" aria-label={`${viewModel.target} terminal`}>
-            <div className="flex min-h-[45px] shrink-0 items-center justify-between gap-3 border-b border-[#15351d] bg-[#071008] px-3.5 font-mono text-[0.63rem] text-[#8cb793] max-[920px]:min-h-[calc(44px+var(--safe-area-top))] max-[920px]:gap-[5px] max-[920px]:border-b-[#17391f] max-[920px]:px-[max(8px,var(--safe-area-left))] max-[920px]:pb-0 max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[620px]:min-h-[34px] max-[620px]:gap-[7px] max-[620px]:px-2 max-[620px]:text-[0.5rem]">
+          <section className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]" aria-label={`${viewModel.target} terminal`}>
+            <div className="flex min-h-[45px] shrink-0 items-center justify-between gap-3 border-b border-[#15351d] bg-[#071008] px-3.5 font-mono text-[0.63rem] text-[#8cb793] max-[920px]:min-h-[calc(44px+var(--safe-area-top))] max-[920px]:gap-[5px] max-[920px]:border-b-[#17391f] max-[920px]:px-[max(8px,var(--safe-area-left))] max-[920px]:pb-0 max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[620px]:min-h-[calc(34px+var(--safe-area-top))] max-[620px]:gap-[7px] max-[620px]:text-[0.5rem]">
               {onSessionSelect ? <button className={terminalSessionReturnClass} type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={15} /></button> : null}
               <div className="flex min-w-0 flex-1 items-center justify-start gap-[7px] max-[620px]:gap-[5px]">
                 <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
@@ -113,7 +113,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
                 <button className={terminalActionClass} type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}><AppIcon name="layout" size={16} /></button>
               </div>
             </div>
-            <div ref={viewModel.terminalContainerRef} className="terminal-container flex min-h-0 w-full flex-1 touch-none bg-[#111318] px-6 pb-[18px] pt-[23px] [-webkit-touch-callout:none] max-[920px]:pb-[max(8px,var(--safe-area-bottom))] max-[620px]:px-1.5 max-[620px]:pb-[max(8px,var(--safe-area-bottom))] max-[620px]:pt-[5px]" />
+            <div ref={viewModel.terminalContainerRef} className="terminal-container flex min-h-0 w-full flex-1 touch-none bg-[#111318] px-6 pb-[18px] pt-[23px] [-webkit-touch-callout:none] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3" />
             <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
               <span className="inline-flex items-center gap-1.5 text-[#8cb793]"><span className="size-[5px] rounded-full bg-lime-deep" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>
               <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>

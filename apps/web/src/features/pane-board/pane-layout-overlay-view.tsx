@@ -27,6 +27,9 @@ export function PaneLayoutOverlay({
   const overlayRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeWindow = windows.find((window) => window.id === activeWindowId) ?? windows[0];
+  const activeSessionPaneCount = activeWindow
+    ? panes.filter((pane) => pane.sessionName === activeWindow.sessionName).length
+    : 0;
   const useCompactPaneList = activeWindow
     ? activeWindow.hasGeometry && paneLayoutNeedsCompactTargets(activeWindow.panes, activeWindow.windowWidth, activeWindow.windowHeight)
     : false;
@@ -34,14 +37,14 @@ export function PaneLayoutOverlay({
   const paneGridClass = useCompactPaneList
     ? "grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] content-stretch overflow-auto"
     : activeWindow?.hasGeometry
-      ? "relative block min-h-[220px] overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
+      ? "relative block min-h-0 overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
       : activeWindow?.panes.length === 1
         ? "grid-cols-[minmax(0,1fr)]"
           : activeWindow?.panes.length === 2
             ? "grid-cols-2"
             : "grid-cols-2 [&>button:first-child]:row-span-2";
   const overlayVariantClass = ghost
-    ? "gap-2 rounded-none border-0 bg-[rgb(0_3_1_/_20%)] p-2.5 shadow-none backdrop-blur-[2px] max-[920px]:min-h-[var(--app-viewport-height)] max-[920px]:p-[calc(12px+var(--safe-area-top))_max(12px,var(--safe-area-right))_calc(12px+var(--safe-area-bottom))_max(12px,var(--safe-area-left))] max-[620px]:pt-[calc(8px+var(--safe-area-top))] max-[620px]:px-2"
+    ? "gap-2 rounded-none border-0 bg-[rgb(0_3_1_/_20%)] p-2.5 shadow-none backdrop-blur-[2px] max-[920px]:p-[calc(12px+var(--safe-area-top))_max(12px,var(--safe-area-right))_calc(12px+var(--safe-area-bottom))_max(12px,var(--safe-area-left))] max-[620px]:pt-[calc(8px+var(--safe-area-top))] max-[620px]:px-2"
     : "";
   const headingVariantClass = ghost ? "px-[3px] opacity-80" : "";
   const headingCopyVariantClass = ghost ? "gap-1" : "";
@@ -99,7 +102,7 @@ export function PaneLayoutOverlay({
           <strong className={`overflow-hidden font-mono text-[0.72rem] font-semibold text-ellipsis whitespace-nowrap text-[#dcffe0] ${ghost ? "text-[0.64rem] text-[#c4f3c9] [text-shadow:0_1px_8px_#000]" : ""}`}>{activeWindow ? `${activeWindow.sessionName} · ${activeWindow.name || `window ${activeWindow.index}`}` : "No tmux window"}</strong>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-[0.52rem] text-[#4b7c54] max-[620px]:text-[0.47rem]">{windows.length} windows</span>
+          <span className="shrink-0 font-mono text-[0.52rem] text-[#4b7c54] max-[620px]:text-[0.47rem]">{windows.length} windows · {activeSessionPaneCount} panes</span>
           {onClose ? <button ref={closeButtonRef} className="grid size-7 place-items-center rounded-lg border border-[#26552f] bg-[#0b2110] text-base leading-none text-[#9acba1] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-[25px] max-[620px]:text-[0.85rem]" type="button" onClick={onClose} aria-label="Close window map"><AppIcon name="close" size={16} /></button> : null}
         </div>
       </div>
@@ -134,7 +137,7 @@ export function PaneLayoutOverlay({
           <div className={`flex min-h-[30px] items-center justify-between gap-2.5 border-b border-[#1d4426] px-2.5 font-mono text-[0.53rem] text-[#5d9168] max-[620px]:min-h-[26px] max-[620px]:px-2 max-[620px]:text-[0.47rem] ${ghost ? "hidden" : ""}`}>
             <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[#9fd5a6]">{activeWindow.sessionName}</span>
             <span>window {activeWindow.index}</span>
-            <span>{activeWindow.panes.length} panes</span>
+            <span>{activeWindow.panes.length} panes in window</span>
           </div>
         <div className={`grid min-h-0 flex-1 gap-1 p-1 max-[620px]:gap-[3px] max-[620px]:p-[3px] ${paneGridClass} ${ghost ? "gap-0 p-0" : ""}`}>
             {activeWindow.panes.map((pane) => {

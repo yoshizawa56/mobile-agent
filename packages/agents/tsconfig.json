@@ -3,6 +3,7 @@
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "types": ["node", "bun-types"],
     "outDir": "dist",
     "declaration": true
   },

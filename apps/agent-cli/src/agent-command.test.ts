@@ -201,7 +201,7 @@ const fixtureFactories: Readonly<Record<AgentFixtureKey, () => Promise<FixtureHa
   legacy: async () => {
     const fixture = createFixture({ AGENT_CODEX_REMOTE: "", TEST_AGENT_SESSION_ID: "legacy-codex-session" });
     const fakeCodex = join(fixture.root, "fake-codex");
-    writeExecutable(fakeCodex, `#!/bin/sh\nmkdir -p "$CODEX_HOME/sessions/test"\nprintf '{"type":"session_meta","id":"%s","session_id":"%s","cwd":"%s","originator":"codex_chatgpt_ios_remote","thread_source":"user"}\\n' "$TEST_AGENT_SESSION_ID" "$TEST_AGENT_SESSION_ID" "$PWD" >"$CODEX_HOME/sessions/test/$TEST_AGENT_SESSION_ID.jsonl"\n`);
+    writeExecutable(fakeCodex, `#!/bin/sh\nmkdir -p "$CODEX_HOME/sessions/test"\nprintf '{"type":"session_meta","id":"%s","session_id":"%s","cwd":"%s","originator":"codex_cli_rs","thread_source":"user"}\\n' "$TEST_AGENT_SESSION_ID" "$TEST_AGENT_SESSION_ID" "$PWD" >"$CODEX_HOME/sessions/test/$TEST_AGENT_SESSION_ID.jsonl"\n`);
     fixture.env = { ...fixture.env, AGENT_CODEX_BIN: fakeCodex, CODEX_HOME: join(fixture.root, "codex-home") };
     return toHandle(fixture);
   },

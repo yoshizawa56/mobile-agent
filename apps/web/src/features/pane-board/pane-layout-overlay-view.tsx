@@ -112,12 +112,16 @@ export function PaneLayoutOverlay({
                 type="button"
                 onClick={() => onSelect(pane)}
                 aria-label={`Select pane ${pane.paneIndex ?? "unknown"}: ${pane.name}`}
-                title={pane.tmuxPaneId}
+                title={pane.recentOutput ? `${pane.tmuxPaneId}\n${pane.recentOutput}` : pane.tmuxPaneId}
                 style={activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined}
               >
                 <span className="tmux-layout-pane-id">PANE {pane.paneIndex ?? "?"}</span>
                 <strong>{pane.name}</strong>
-                <small>{pane.agentId ?? "zsh"} · {paneStateLabel(pane.state)}</small>
+                <small className={`tmux-layout-pane-status tmux-layout-pane-status-${pane.state}`}>
+                  <span className="tmux-layout-pane-status-dot" />
+                  {pane.agentId ?? "zsh"} · {paneStateLabel(pane.state)}
+                </small>
+                {pane.recentOutput ? <span className="tmux-layout-pane-output">{pane.recentOutput}</span> : null}
               </button>
             ))}
           </div>

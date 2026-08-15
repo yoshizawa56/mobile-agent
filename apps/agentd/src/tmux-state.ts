@@ -7,9 +7,17 @@ export type TmuxPaneChange = {
   reason: TmuxPaneChangeReason;
 };
 
+export type TmuxSynchronization = {
+  activePaneIds: readonly string[];
+  /** Live state emitted by the provider while synchronizing the pane projection. */
+  paneStates?: ReadonlyMap<string, string>;
+  /** Live provider output tails used to invalidate clients when they change. */
+  paneRecentOutputs?: ReadonlyMap<string, string | undefined>;
+};
+
 export type TmuxStateMonitorOptions = {
   readPanes: () => TmuxLiveSnapshot;
-  synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly string[]>;
+  synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly string[] | TmuxSynchronization>;
   cleanup?: (activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string) => Promise<void>;
   onChange: (changes: TmuxPaneChange[]) => void;
   intervalMs?: number;
@@ -67,8 +75,14 @@ export class TmuxStateMonitor {
     try {
       const live = this.options.readPanes();
       if (!live.available) return;
-      const activePaneIds = await this.options.synchronize(live);
-      const current = snapshot(live.panes);
+      const synchronization = await this.options.synchronize(live);
+      const synchronized = "activePaneIds" in synchronization
+        ? synchronization
+        : { activePaneIds: synchronization };
+      const activePaneIds = synchronized.activePaneIds;
+      const paneStates = "paneStates" in synchronized ? synchronized.paneStates : undefined;
+      const paneRecentOutputs = "paneRecentOutputs" in synchronized ? synchronized.paneRecentOutputs : undefined;
+      const current = snapshot(live.panes, paneStates, paneRecentOutputs);
       if (!this.initialized) {
         this.previous = current;
         this.initialized = true;
@@ -109,11 +123,11 @@ type PaneSnapshot = {
   fingerprint: string;
 };
 
-function snapshot(panes: TmuxPane[]): Map<string, PaneSnapshot> {
-  return new Map(panes.map((pane) => [pane.paneId, { sessionName: pane.sessionName, fingerprint: paneFingerprint(pane) }]));
+function snapshot(panes: TmuxPane[], paneStates?: ReadonlyMap<string, string>, paneRecentOutputs?: ReadonlyMap<string, string | undefined>): Map<string, PaneSnapshot> {
+  return new Map(panes.map((pane) => [pane.paneId, { sessionName: pane.sessionName, fingerprint: paneFingerprint(pane, paneStates?.get(pane.paneId), paneRecentOutputs?.get(pane.paneId)) }]));
 }
 
-function paneFingerprint(pane: TmuxPane): string {
+function paneFingerprint(pane: TmuxPane, state?: string, recentOutput?: string): string {
   return JSON.stringify([
     pane.sessionName,
     pane.tmuxServerId,
@@ -140,6 +154,8 @@ function paneFingerprint(pane: TmuxPane): string {
     pane.agentdRunId,
     pane.agentdManagedSessionId,
     pane.agentdParentRunId,
+    state,
+    recentOutput,
   ]);
 }
 

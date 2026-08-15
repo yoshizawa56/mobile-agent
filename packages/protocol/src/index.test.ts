@@ -92,8 +92,10 @@ const pairingCases = [
   { name: "rejects an unrecognized control response", input: { kind: "response", value: { type: "unexpected" } }, assert: [isInvalid()] },
   { name: "accepts an agent session adoption request", input: { kind: "request", value: { type: "adopt_agent_session", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
   { name: "accepts an agent session release request", input: { kind: "request", value: { type: "release_agent_session", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+  { name: "accepts a provider observation request", input: { kind: "request", value: { type: "observe_agent_session", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456", state: "waiting_input", recentOutput: "recent output" } }, assert: [isValid()] },
   { name: "accepts an agent session adopted response", input: { kind: "response", value: { type: "agent_session_adopted", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
   { name: "accepts an agent session released response", input: { kind: "response", value: { type: "agent_session_released", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" } }, assert: [isValid()] },
+  { name: "accepts a provider observation response", input: { kind: "response", value: { type: "agent_session_observed", agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456", state: "waiting_input" } }, assert: [isValid()] },
 ] satisfies readonly OperationCase<"default", PairingInput, ValidationResult, EmptyContext>[];
 
 const pairingTable: OperationTable<undefined, "default", PairingInput, ValidationResult, EmptyContext> = {
@@ -103,7 +105,7 @@ const pairingTable: OperationTable<undefined, "default", PairingInput, Validatio
   observe: () => ({}),
 };
 
-const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running", title: null, lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running", title: null, recentOutput: "recent pane output", lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 type PaneCreateInput = { placement: "window" | "right" | "bottom"; targetPaneId: string | null };
 const paneCreateCases = [

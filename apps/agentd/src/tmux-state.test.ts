@@ -16,11 +16,15 @@ type StateStep =
   | { type: "add"; paneIds: string[] }
   | { type: "delete" }
   | { type: "change" }
+  | { type: "change-state"; state: string }
+  | { type: "change-output"; output: string }
   | { type: "advance"; milliseconds: number }
   | { type: "set-available"; available: boolean };
 type CleanupRecord = { ids: string[]; olderThan: string };
 type StateFixture = {
   panes: TmuxPane[];
+  paneStates: Map<string, string>;
+  paneRecentOutputs: Map<string, string | undefined>;
   changes: Array<{ sessionName: string; reason: string }>;
   cleanups: CleanupRecord[];
   available: boolean;
@@ -35,6 +39,8 @@ type StateContext = { changes: readonly { sessionName: string; reason: string }[
 const stateFixture = (kind: StateKey): (() => FixtureHandle<StateFixture>) => () => ({
   fixture: {
     panes: [createPane("%1", "work")],
+    paneStates: new Map(),
+    paneRecentOutputs: new Map(),
     changes: [],
     cleanups: [],
     available: true,
@@ -50,6 +56,8 @@ const cases = [
   { name: "reports a pane created after the initial snapshot", steps: [{ type: "reconcile" }, { type: "add", paneIds: ["%2"] }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_created" }])] },
   { name: "reports a pane deleted after the initial snapshot", steps: [{ type: "reconcile" }, { type: "delete" }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_deleted" }])] },
   { name: "reports a changed pane without sending its contents", steps: [{ type: "reconcile" }, { type: "change" }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])] },
+  { name: "reports a pane state change", steps: [{ type: "reconcile" }, { type: "change-state", state: "waiting_input" }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])] },
+  { name: "reports a provider output change", steps: [{ type: "reconcile" }, { type: "change-output", output: "new output" }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])] },
   { name: "coalesces multiple pane changes in one session", steps: [{ type: "reconcile" }, { type: "add", paneIds: ["%2", "%3"] }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_created" }])] },
   { name: "cleans stale records on a slower cadence", fixture: "cleanup-cadence", steps: [{ type: "reconcile" }, { type: "advance", milliseconds: 999 }, { type: "reconcile" }, { type: "advance", milliseconds: 1 }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("cleanups", [{ ids: ["%1"], olderThan: new Date(-9_000).toISOString() }, { ids: ["%1"], olderThan: new Date(-8_000).toISOString() }])] },
   { name: "does not clean while tmux is unavailable", fixture: "unavailable", steps: [{ type: "reconcile" }, { type: "set-available", available: false }, { type: "reconcile" }], assert: [hasObserved<StateContext, undefined>("cleanups", [{ ids: ["%1"], olderThan: new Date(-600_000).toISOString() }]), hasObserved<StateContext, undefined>("changes", [])] },
@@ -63,7 +71,11 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
   execute: async (fixture, steps) => {
     const monitor = new TmuxStateMonitor({
       readPanes: () => fixture.available ? liveSnapshot(fixture.panes) : { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null },
-      synchronize: async (snapshot) => snapshot.panes.map((pane) => pane.paneId),
+      synchronize: async (snapshot) => ({
+        activePaneIds: snapshot.panes.map((pane) => pane.paneId),
+        paneStates: new Map(snapshot.panes.map((pane) => [pane.paneId, fixture.paneStates.get(pane.paneId) ?? "running"])),
+        paneRecentOutputs: new Map(snapshot.panes.map((pane) => [pane.paneId, fixture.paneRecentOutputs.get(pane.paneId)])),
+      }),
       cleanup: fixture.cleanupEnabled ? async (ids, olderThan) => {
         fixture.cleanups.push({ ids: [...ids], olderThan });
         if (fixture.cleanupThrows) throw new Error("database locked");
@@ -86,6 +98,12 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
           break;
         case "change":
           fixture.panes[0] = { ...fixture.panes[0]!, title: "changed" };
+          break;
+        case "change-state":
+          fixture.paneStates.set(fixture.panes[0]!.paneId, step.state);
+          break;
+        case "change-output":
+          fixture.paneRecentOutputs.set(fixture.panes[0]!.paneId, step.output);
           break;
         case "advance":
           fixture.now += step.milliseconds;

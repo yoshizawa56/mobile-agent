@@ -31,7 +31,7 @@ bun run audit:public
 - `packages/domain`: Pane/Run state and agent waiting-state rules
 - `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
 - `packages/persistence`: Drizzle + SQLite persistence for panes, runs, audits, registered workspaces, and agent sessions
-- `packages/agents`: the AgentPlugin API and shell plugin
+- `packages/agents`: the AgentPlugin API and built-in shell, Codex, and Claude plugins
 - `packages/protocol`: Zod definitions for WebSocket and Pane Board DTOs
 
 ```sh

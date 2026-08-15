@@ -2,11 +2,12 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { ApplicationError, type AgentSessionRepository, type AgentdApplication, type PaneRepository, type WorkspaceRepository, WorkspaceCrud } from "@mobile-agent/application";
-import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
+import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type RunState, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TerminalEndpoint, TmuxSession } from "@mobile-agent/protocol";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter, type TmuxPane, type TmuxLiveSnapshot } from "../tmux.js";
 import { TmuxViewportManager } from "../viewport-manager.js";
 import { WorkspaceSelectionCatalog } from "../workspace-selection.js";
+import { agentStatusKey, inferUnmanagedAgentState, normalizeAgentStatusObservation, readManagedAgentObservation, type AgentStatusObservation, type AgentStatusStore } from "./agent-status.js";
 
 export type AgentdApplicationResources = {
   getTerminal: () => Promise<TerminalEndpoint>;
@@ -22,11 +23,13 @@ export type AgentdApplicationResources = {
 export type AgentdApplicationRuntime = AgentdApplication & {
   reconcile(live?: TmuxLiveSnapshot): Promise<PaneRecord[]>;
   adoptAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
+  observeAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string }): Promise<void>;
   releaseAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
 };
 
 export function createAgentdApplication(resources: AgentdApplicationResources): AgentdApplicationRuntime {
   const { tmux, paneRepository, agentSessionRepository, workspaceCatalog, viewportManager, workspaceRepository, workspaceCrud } = resources;
+  const agentStatus: AgentStatusStore = new Map();
   return {
     terminal: { get: resources.getTerminal },
     workspaces: {
@@ -57,17 +60,18 @@ export function createAgentdApplication(resources: AgentdApplicationResources): 
       resolveSelection: (selection) => workspaceCatalog.resolveSelection(selection, (id) => workspaceRepository.findById(id)),
     },
     sessions: {
-      list: () => listSessions(tmux, paneRepository, agentSessionRepository),
-      create: (input) => createSession(input, tmux, paneRepository, agentSessionRepository, workspaceCatalog),
+      list: () => listSessions(tmux, paneRepository, agentSessionRepository, agentStatus),
+      create: (input) => createSession(input, tmux, paneRepository, agentSessionRepository, workspaceCatalog, agentStatus),
     },
     panes: {
-      list: (sessionName) => listCurrentPanes(tmux, paneRepository, agentSessionRepository, sessionName),
-      create: (input, workspace) => createPane(input, tmux, paneRepository, agentSessionRepository, viewportManager, workspaceCatalog, workspace),
+      list: (sessionName) => listCurrentPanes(tmux, paneRepository, agentSessionRepository, agentStatus, sessionName),
+      create: (input, workspace) => createPane(input, tmux, paneRepository, agentSessionRepository, viewportManager, workspaceCatalog, agentStatus, workspace),
     },
     hooks: { handleTmux: (event, client) => viewportManager.handleTmuxHook(event, client) },
-    reconcile: (live) => syncPanes(tmux, paneRepository, agentSessionRepository, live),
-    adoptAgentSession: (request) => adoptAgentSession(tmux, paneRepository, agentSessionRepository, request),
-    releaseAgentSession: (request) => releaseAgentSession(tmux, paneRepository, agentSessionRepository, request),
+    reconcile: (live) => syncPanes(tmux, paneRepository, agentSessionRepository, live, agentStatus),
+    adoptAgentSession: (request) => adoptAgentSession(tmux, paneRepository, agentSessionRepository, agentStatus, request),
+    observeAgentSession: (request) => observeAgentSession(tmux, paneRepository, agentSessionRepository, agentStatus, request),
+    releaseAgentSession: (request) => releaseAgentSession(tmux, paneRepository, agentSessionRepository, agentStatus, request),
   };
 }
 
@@ -75,8 +79,9 @@ async function listSessions(
   tmux: TmuxAdapter,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
+  agentStatus: AgentStatusStore,
 ): Promise<TmuxSession[]> {
-  const panes = await syncPanes(tmux, paneRepository, agentSessionRepository);
+  const panes = await syncPanes(tmux, paneRepository, agentSessionRepository, undefined, agentStatus);
   return summarizeSessions(panes);
 }
 
@@ -86,6 +91,7 @@ async function createSession(
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   workspaceCatalog: WorkspaceSelectionCatalog,
+  agentStatus: AgentStatusStore,
 ): Promise<TmuxSession> {
   const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
   if (tmux.hasSession(input.name)) {
@@ -102,7 +108,7 @@ async function createSession(
     }));
     created = true;
     configureManagedTmuxSession(tmux, input.name, managedSessionId, binary);
-    const panes = await syncPanes(tmux, paneRepository, agentSessionRepository);
+    const panes = await syncPanes(tmux, paneRepository, agentSessionRepository, undefined, agentStatus);
     const initialPane = panes.find((pane) => pane.sessionName === input.name);
     if (initialPane) {
       const shellPane: PaneRecord = {
@@ -145,9 +151,10 @@ async function listCurrentPanes(
   tmux: TmuxAdapter,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
+  agentStatus: AgentStatusStore,
   sessionName?: string,
 ): Promise<PaneRecord[]> {
-  const panes = await syncPanes(tmux, paneRepository, agentSessionRepository);
+  const panes = await syncPanes(tmux, paneRepository, agentSessionRepository, undefined, agentStatus);
   return sessionName ? panes.filter((pane) => pane.sessionName === sessionName) : panes;
 }
 
@@ -158,6 +165,7 @@ async function createPane(
   agentSessionRepository: AgentSessionRepository,
   viewportManager: TmuxViewportManager,
   workspaceCatalog: WorkspaceSelectionCatalog,
+  agentStatus: AgentStatusStore,
   workspace?: WorkspaceRecord,
 ): Promise<PaneSummary> {
   if (!tmux.hasSession(input.sessionName)) {
@@ -188,7 +196,7 @@ async function createPane(
   if (input.placement !== "window" && input.targetPaneId) {
     viewportManager.reassertMobileViewport(input.targetPaneId);
   }
-  const panes = await syncPanes(tmux, repository, agentSessionRepository);
+  const panes = await syncPanes(tmux, repository, agentSessionRepository, undefined, agentStatus);
   const current = panes.find((pane) => pane.tmuxPaneId === tmuxPaneId);
   if (!current) {
     throw new ApplicationError("pane_not_visible", "tmux created the pane but agentd could not read it");
@@ -233,6 +241,7 @@ async function syncPanes(
   repository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   live = tmux.listPanesSnapshot(),
+  agentStatus: AgentStatusStore = new Map(),
 ): Promise<PaneRecord[]> {
   const now = new Date().toISOString();
   const records: PaneRecord[] = [];
@@ -254,6 +263,7 @@ async function syncPanes(
       && Boolean(tmuxPane.agentdRunId)
       && !adoptedSession;
     if (tmuxPane.agentdSessionId && !adoptedSession) {
+      if (tmuxPane.agentdExecutionId) agentStatus.delete(agentStatusKey(tmuxPane.agentdSessionId, tmuxPane.agentdExecutionId));
       try {
         const cleared = tmux.clearAgentExecutionMetadata(tmuxPane.paneId, tmuxPane.agentdExecutionId ?? "");
         if (cleared && tmuxPane.agentdKind === "agent" && tmuxPane.agentdRunId) {
@@ -270,7 +280,11 @@ async function syncPanes(
       : undefined;
     const kind = resolvePaneKind(tmuxPane, existing, adoptedSession !== undefined, staleAgentMetadata);
     const agentId = kind === "agent" ? tmuxPane.agentdAgentId ?? adoptedSession?.backend ?? executableName(tmuxPane.command) ?? existing?.agentId ?? "agent" : null;
-    const state = kind === "agent" ? inferAgentState(tmux, tmuxPane, existing?.state ?? "running") : "running";
+    const observation: AgentStatusObservation = kind !== "agent"
+      ? { state: "running" as const }
+      : adoptedSession?.executionId
+        ? readManagedAgentObservation(adoptedSession.id, adoptedSession.executionId, agentStatus)
+        : readUnmanagedAgentObservation(tmux, tmuxPane, existing?.state ?? "running");
     const name = staleAgentMetadata
       ? tmuxPane.title || tmuxPane.command || tmuxPane.paneId
       : tmuxPane.agentdName ?? adoptedSession?.name ?? (existing?.name && existing.name !== tmuxPane.paneId ? existing.name : tmuxPane.title || tmuxPane.command || tmuxPane.paneId);
@@ -288,8 +302,9 @@ async function syncPanes(
       workspaceId: existing?.workspaceId ?? adoptedSession?.workspaceId ?? null,
       agentId,
       runId: kind === "agent" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : tmuxPane.agentdKind === "shell" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : null,
-      state,
+      state: observation.state,
       title: tmuxPane.title || null,
+      ...(observation.recentOutput ? { recentOutput: observation.recentOutput } : {}),
       lastSeenAt: now,
       windowName: tmuxPane.windowName,
       windowIndex: tmuxPane.windowIndex,
@@ -315,6 +330,7 @@ async function adoptAgentSession(
   tmux: TmuxAdapter,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
+  agentStatus: AgentStatusStore,
   request: { agentSessionId: string; tmuxPaneId: string; executionId: string },
 ): Promise<void> {
   const session = await agentSessionRepository.findById(request.agentSessionId);
@@ -325,13 +341,40 @@ async function adoptAgentSession(
   const pane = live.panes.find((candidate) => candidate.paneId === request.tmuxPaneId);
   if (!pane) throw controlFailure("tmux_pane_not_found", `tmux pane not found: ${request.tmuxPaneId}`);
   tmux.setAgentExecutionMetadata(pane.paneId, session.id, request.executionId);
-  await syncPanes(tmux, paneRepository, agentSessionRepository, tmux.listPanesSnapshot());
+  await syncPanes(tmux, paneRepository, agentSessionRepository, tmux.listPanesSnapshot(), agentStatus);
+}
+
+async function observeAgentSession(
+  tmux: TmuxAdapter,
+  paneRepository: PaneRepository,
+  agentSessionRepository: AgentSessionRepository,
+  agentStatus: AgentStatusStore,
+  request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string },
+): Promise<void> {
+  const session = await agentSessionRepository.findById(request.agentSessionId);
+  if (!session) throw controlFailure("agent_session_not_found", `agent session not found: ${request.agentSessionId}`);
+  if (session.executionId !== request.executionId) throw controlFailure("agent_execution_mismatch", "agent execution is no longer current");
+  const live = tmux.listPanesSnapshot();
+  if (!live.available) throw controlFailure("tmux_unavailable", "tmux is unavailable");
+  const pane = live.panes.find((candidate) => candidate.paneId === request.tmuxPaneId);
+  if (!pane) throw controlFailure("tmux_pane_not_found", `tmux pane not found: ${request.tmuxPaneId}`);
+  if (pane.agentdSessionId !== request.agentSessionId || pane.agentdExecutionId !== request.executionId) {
+    throw controlFailure("agent_execution_not_adopted", "agent execution is not associated with the requested pane");
+  }
+  const key = agentStatusKey(request.agentSessionId, request.executionId);
+  const previous = agentStatus.get(key);
+  agentStatus.set(key, normalizeAgentStatusObservation({
+    state: request.state,
+    recentOutput: request.recentOutput ?? previous?.recentOutput,
+  }));
+  await syncPanes(tmux, paneRepository, agentSessionRepository, live, agentStatus);
 }
 
 async function releaseAgentSession(
   tmux: TmuxAdapter,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
+  agentStatus: AgentStatusStore,
   request: { agentSessionId: string; tmuxPaneId: string; executionId: string },
 ): Promise<void> {
   const live = tmux.listPanesSnapshot();
@@ -339,9 +382,10 @@ async function releaseAgentSession(
   const pane = live.panes.find((candidate) => candidate.paneId === request.tmuxPaneId);
   if (!pane) return;
   if (pane.agentdSessionId === request.agentSessionId && pane.agentdExecutionId === request.executionId) {
+    agentStatus.delete(agentStatusKey(request.agentSessionId, request.executionId));
     if (!tmux.clearAgentExecutionMetadata(pane.paneId, request.executionId)) return;
     tmux.resetAgentPaneMetadata(pane.paneId);
-    await syncPanes(tmux, paneRepository, agentSessionRepository, tmux.listPanesSnapshot());
+    await syncPanes(tmux, paneRepository, agentSessionRepository, tmux.listPanesSnapshot(), agentStatus);
   }
 }
 
@@ -384,17 +428,12 @@ function resolvePaneKind(tmuxPane: TmuxPane, existing: PaneRecord | undefined, a
   return detected;
 }
 
-function inferAgentState(tmux: TmuxAdapter, pane: TmuxPane, fallback: PaneRecord["state"]): PaneRecord["state"] {
-  let output = "";
+function readUnmanagedAgentObservation(tmux: TmuxAdapter, pane: TmuxPane, fallback: RunState): AgentStatusObservation {
   try {
-    output = stripAnsi(tmux.capturePane(pane.paneId));
+    return { state: inferUnmanagedAgentState(tmux.capturePane(pane.paneId), fallback) };
   } catch {
-    return fallback;
+    return { state: fallback };
   }
-  const recent = output.slice(-8_000).toLowerCase();
-  if (/waiting\s+(for\s+)?(approval|permission)|approve|allow this|apply this|do you want/.test(recent)) return "waiting_approval";
-  if (/waiting\s+(for\s+)?input|continue with|press (enter|return)|what should i do|\?\s*[▌_>]?\s*$/.test(recent)) return "waiting_input";
-  return "running";
 }
 
 function executableName(command: string): string | null {
@@ -434,10 +473,6 @@ function agentCommand(input: CreatePaneRequest, workspace?: WorkspaceRecord): st
     if (workspace?.cleanupScriptPath) args.push("--cleanup-hook", workspace.cleanupScriptPath);
   }
   return args.map(shellQuote).join(" ");
-}
-
-function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "");
 }
 
 function displayCwd(cwd: string): string {

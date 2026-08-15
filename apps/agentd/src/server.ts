@@ -90,6 +90,7 @@ export function createAgentdServer(options: AgentdOptions) {
     socketPath: paths.controlSocket,
     auth,
     adoptAgentSession: (request) => application.adoptAgentSession(request),
+    observeAgentSession: (request) => application.observeAgentSession(request),
     releaseAgentSession: (request) => application.releaseAgentSession(request),
   });
   let controlReady = false;
@@ -99,7 +100,11 @@ export function createAgentdServer(options: AgentdOptions) {
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanesSnapshot(),
-    synchronize: (snapshot) => application.reconcile(snapshot).then((records) => records.map((record) => record.id)),
+    synchronize: (snapshot) => application.reconcile(snapshot).then((records) => ({
+      activePaneIds: records.map((record) => record.id),
+      paneStates: new Map(records.map((record) => [record.tmuxPaneId, record.state])),
+      paneRecentOutputs: new Map(records.map((record) => [record.tmuxPaneId, record.recentOutput])),
+    })),
     cleanup: (activePaneIds, olderThan, tmuxServerScope) => paneRepository.pruneStalePanes(activePaneIds, olderThan, tmuxServerScope).then(() => undefined),
     onChange: (changes) => {
       const revision = ++eventRevision;

@@ -225,6 +225,8 @@ export type PaneRecord = {
   runId: RunId | null;
   state: RunState;
   title: string | null;
+  /** Short, live-only tail emitted by the provider plugin. Persisted rows may omit it. */
+  recentOutput?: string;
   lastSeenAt: string;
   windowName?: string;
   windowIndex?: number;

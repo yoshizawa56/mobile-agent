@@ -7,12 +7,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
+import { AgentPluginRegistry, defaultAgentPlugins, type AgentMonitor, type AgentObservation } from "@mobile-agent/agents";
 import { WorkspaceSelectionCatalog, workspaceIdForPath } from "@mobile-agent/agentd/workspace-selection";
 import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
 import { WorkspaceCrud, type UpdateWorkspaceInput } from "@mobile-agent/application";
 import type {
   AgentBackend,
   AgentSessionRecord,
+  RunState,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 import { InvalidAgentSessionNameError, isValidWorktreeCopyPattern, normalizeAgentSessionName, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
@@ -168,6 +170,12 @@ type WorkspaceDeleteOptions = {
 
 const sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
 const defaultCodexProfile = "local-agent";
+const supportedCodexOriginators = new Set([
+  "codex-tui",
+  "codex_cli_rs",
+  "codex_exec",
+  "codex_chatgpt_ios_remote",
+]);
 
 /**
  * Clean TypeScript implementation of the dotfiles `agent` wrapper.
@@ -188,6 +196,7 @@ export class AgentCommand {
   private readonly tmux: TmuxAdapter;
   private readonly logger: Logger;
   private readonly ownsLogger: boolean;
+  private readonly agentPlugins: AgentPluginRegistry;
   private activeLogger: Logger | undefined;
   private remoteOperation: Promise<void> = Promise.resolve();
   private database: AgentDatabase | undefined;
@@ -208,6 +217,8 @@ export class AgentCommand {
       output: this.io.err,
       showStack: options.logLevel === "debug",
     });
+    this.agentPlugins = new AgentPluginRegistry();
+    for (const plugin of defaultAgentPlugins) this.agentPlugins.register(plugin);
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     const paths = resolveAgentdPaths(this.env, { databaseFile: options.databaseFile });
     this.hookOutputRoot = resolveFromRoot(paths.hookOutputDirectory, this.repositoryRoot);
@@ -1001,7 +1012,9 @@ export class AgentCommand {
     this.markCurrentPane({ kind: "agent", agentId: backend, runId: current.id, name: current.name });
     let result: ProcessResult;
     try {
+      await this.publishAgentObservation(current, "running");
       result = await this.runBackend(current, command, runDir, startedAt);
+      await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
@@ -1056,7 +1069,9 @@ export class AgentCommand {
     this.markCurrentPane({ kind: "agent", agentId: session.backend, runId: current.id, name: current.name });
     let result: ProcessResult;
     try {
+      await this.publishAgentObservation(current, "running");
       result = await this.runBackend(current, command, runDir, startedAt);
+      await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
@@ -1109,6 +1124,31 @@ export class AgentCommand {
         return;
       }
       this.warn(`agentd could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async publishAgentObservation(session: AgentSessionRecord, state: RunState, recentOutput?: string): Promise<void> {
+    const tmuxPaneId = currentTmuxPane(this.env);
+    if (!tmuxPaneId || !session.executionId) return;
+    try {
+      const control = await AgentdPairingControlAdapter.connect(defaultControlSocket(this.env, this.databaseFile));
+      try {
+        await control.observeAgentSession({
+          agentSessionId: session.id,
+          tmuxPaneId,
+          executionId: session.executionId,
+          state,
+          ...(recentOutput ? { recentOutput } : {}),
+        });
+      } finally {
+        control.close();
+      }
+    } catch (error) {
+      if (isControlSocketUnavailable(error)) return;
+      this.currentLogger.debug("agent.observation_publish_failed", {
+        state,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1496,8 +1536,18 @@ export class AgentCommand {
     });
     this.setTerminalTitle(session.name);
     const nameWatcher = session.backend === "codex" && session.backendSessionId === null && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
+    const monitor = this.createAgentMonitor(session, runDir, startedAt);
+    let monitorStarted = false;
     let result: ProcessResult;
     try {
+      if (monitor) {
+        try {
+          await monitor.start((observation) => this.publishPluginObservation(session, observation));
+          monitorStarted = true;
+        } catch (error) {
+          logger.debug("agent.monitor_start_failed", errorFields(error));
+        }
+      }
       result = await spawnAttached(command[0]!, command.slice(1), runDir, {
         ...this.env,
         AGENTD_RUN_ID: session.id,
@@ -1524,6 +1574,13 @@ export class AgentCommand {
         }),
       });
     } finally {
+      if (monitorStarted && monitor) {
+        try {
+          await monitor.stop();
+        } catch (error) {
+          logger.debug("agent.monitor_stop_failed", errorFields(error));
+        }
+      }
       if (nameWatcher) {
         try {
           await nameWatcher.stop();
@@ -1542,6 +1599,24 @@ export class AgentCommand {
       durationMs: Date.now() - processStartedAt,
     });
     return result;
+  }
+
+  private createAgentMonitor(session: AgentSessionRecord, runDir: string, startedAt: number): AgentMonitor | undefined {
+    const plugin = this.agentPlugins.get(session.backend);
+    if (!plugin?.createMonitor) return undefined;
+    return plugin.createMonitor({
+      sessionId: session.id,
+      executionId: session.executionId ?? "",
+      cwd: runDir,
+      startedAt: new Date(startedAt * 1_000).toISOString(),
+      backendSessionId: session.backendSessionId,
+      environment: this.env,
+    });
+  }
+
+  private async publishPluginObservation(session: AgentSessionRecord, observation: AgentObservation): Promise<void> {
+    if (observation.type !== "state_changed") return;
+    await this.publishAgentObservation(session, observation.state, observation.recentOutput);
   }
 
   private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
@@ -1893,7 +1968,7 @@ export class AgentCommand {
         reject("cwd_mismatch");
         continue;
       }
-      if (!["codex-tui", "codex_chatgpt_ios_remote"].includes(meta.originator ?? "")) {
+      if (!supportedCodexOriginators.has(meta.originator ?? "")) {
         reject("unsupported_originator");
         continue;
       }

@@ -1,3 +1,5 @@
+import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
+
 export const agentCapabilities = ["input", "approval", "stop", "resume", "structured_events"] as const;
 export type AgentCapability = (typeof agentCapabilities)[number];
 
@@ -40,7 +42,7 @@ export type OutputChunk = {
 };
 
 export type AgentObservation =
-  | { type: "state_changed"; state: "starting" | "running" | "waiting_input" | "waiting_approval" | "failed" | "completed" | "stopped"; reason?: string }
+  | { type: "state_changed"; state: "starting" | "running" | "waiting_input" | "waiting_approval" | "failed" | "completed" | "stopped"; reason?: string; recentOutput?: string }
   | { type: "title_changed"; title: string }
   | { type: "progress"; value?: number; message?: string }
   | { type: "action_requested"; action: ActionDescriptor }
@@ -57,11 +59,28 @@ export interface AgentObserver {
   onExit(result: { code: number | null; signal: string | null }): AgentObservation[];
 }
 
+export type AgentMonitorContext = {
+  sessionId: string;
+  executionId: string;
+  cwd: string;
+  startedAt: string;
+  backendSessionId: string | null;
+  environment: Record<string, string | undefined>;
+};
+
+export type AgentObservationSink = (observation: AgentObservation) => void | Promise<void>;
+
+export interface AgentMonitor {
+  start(sink: AgentObservationSink): Promise<void>;
+  stop(): Promise<void>;
+}
+
 export interface AgentPluginV1 {
   manifest: AgentManifest;
   detect(input: DetectInput): Promise<DetectionResult | null>;
   launch(input: LaunchInput): Promise<LaunchSpec>;
   createObserver(): AgentObserver;
+  createMonitor?(input: AgentMonitorContext): AgentMonitor;
   actions(): ActionDescriptor[];
 }
 
@@ -106,3 +125,50 @@ export const shellPlugin: AgentPluginV1 = {
   },
   actions: () => [],
 };
+
+export const codexPlugin: AgentPluginV1 = createBackendPlugin({
+  id: "codex",
+  displayName: "Codex",
+  executable: "codex",
+  createMonitor: createCodexMonitor,
+});
+
+export const claudePlugin: AgentPluginV1 = createBackendPlugin({
+  id: "claude",
+  displayName: "Claude Code",
+  executable: "claude",
+  createMonitor: createClaudeMonitor,
+});
+
+export const defaultAgentPlugins: readonly AgentPluginV1[] = [shellPlugin, codexPlugin, claudePlugin];
+
+function createBackendPlugin(options: {
+  id: "codex" | "claude";
+  displayName: string;
+  executable: string;
+  createMonitor: NonNullable<AgentPluginV1["createMonitor"]>;
+}): AgentPluginV1 {
+  return {
+    manifest: {
+      id: options.id,
+      version: "1",
+      displayName: options.displayName,
+      capabilities: [...agentCapabilities],
+    },
+    async detect(input) {
+      const command = input.command.split("/").at(-1)?.toLowerCase();
+      return command === options.executable ? { confidence: 1, agentId: options.id, name: options.displayName } : null;
+    },
+    async launch(input) {
+      return { command: options.executable, args: input.args ?? [], cwd: input.cwd, environment: input.environment ?? {} };
+    },
+    createObserver() {
+      return {
+        onOutput: () => [],
+        onExit: ({ code }) => [{ type: "state_changed", state: code === 0 ? "completed" : "failed", reason: `${options.displayName} exited` }],
+      };
+    },
+    createMonitor: options.createMonitor,
+    actions: () => [],
+  };
+}

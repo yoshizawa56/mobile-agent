@@ -8,12 +8,14 @@ import {
   type AgentdControlResponse,
   type PairingClaimNotification,
 } from "@mobile-agent/protocol";
+import type { RunState } from "@mobile-agent/domain";
 import { AuthService, pairingPayloadCode } from "./service.js";
 
 export type AgentdControlServerOptions = {
   socketPath: string;
   auth: AuthService;
   adoptAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
+  observeAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string }) => Promise<void>;
   releaseAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
 };
 
@@ -137,6 +139,13 @@ export class AgentdControlServer {
         if (!this.options.releaseAgentSession) throw controlError("agent_session_release_unavailable", "agent session release is unavailable");
         void this.options.releaseAgentSession(request)
           .then(() => this.send(socket, { ...request, type: "agent_session_released" }))
+          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+        return;
+      }
+      if (request.type === "observe_agent_session") {
+        if (!this.options.observeAgentSession) throw controlError("agent_session_observation_unavailable", "agent session observation is unavailable");
+        void this.options.observeAgentSession(request)
+          .then(() => this.send(socket, { type: "agent_session_observed", agentSessionId: request.agentSessionId, tmuxPaneId: request.tmuxPaneId, executionId: request.executionId, state: request.state }))
           .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
         return;
       }

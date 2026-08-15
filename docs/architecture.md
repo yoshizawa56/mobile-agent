@@ -553,7 +553,7 @@ xterm.js <-> WebSocket <-> agentd <-> Bun.Terminal <-> tmux attach-session -t <t
 ~~~
 
 - agentd forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
-- xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, scrollback, and selection;
+- xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, and selection; tmux owns pane scrollback and copy mode, with mouse-wheel input forwarded through the PTY;
 - WebSocket text frames are reserved for control messages such as attach, resize, and detach;
 - xterm.js cols/rows are sent back to the PTY so the TUI runs at the phone's actual width;
 - while mobile is connected, the target window's window-size is temporarily set to manual and the phone size is applied through resize-window;
@@ -765,7 +765,7 @@ Reasons:
 - retain the fast Vite and HMR web development loop;
 - share agentd protocol types in TypeScript;
 - use the WebSocket Web API;
-- let xterm.js handle ANSI/VT, scrollback, selection, and mouse input as the terminal emulator;
+- let xterm.js handle ANSI/VT, selection, and mouse input as the terminal emulator while tmux owns pane scrollback;
 - keep the UI focused on one pane, where a web implementation is a good fit;
 - limit native work to Swift plugins and Widget Extensions.
 

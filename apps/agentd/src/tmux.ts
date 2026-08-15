@@ -14,6 +14,7 @@ const stableAgentSessionMetadataKey = "@agentd.agent_session_id";
 const stableAgentExecutionMetadataKey = "@agentd.agent_execution_id";
 
 export type TmuxWindowSize = "largest" | "smallest" | "manual" | "latest";
+export type TmuxWindowMouse = "on" | "off";
 
 export type TmuxPaneRef = {
   paneId: string;
@@ -64,6 +65,7 @@ export type TmuxWindowSnapshot = TmuxPaneRef & {
   width: number;
   height: number;
   windowSize: TmuxWindowSize;
+  mouse: TmuxWindowMouse;
 };
 
 export type TmuxClient = {
@@ -424,6 +426,7 @@ export class TmuxAdapter {
 
     const activePaneId = this.findActivePane(pane.windowId);
     const windowSize = this.readWindowSize(pane.windowId);
+    const mouse = this.readWindowMouse(pane.windowId);
 
     return {
       ...pane,
@@ -434,6 +437,7 @@ export class TmuxAdapter {
       width: parseDimension(width, "window width"),
       height: parseDimension(height, "window height"),
       windowSize,
+      mouse,
     };
   }
 
@@ -539,7 +543,21 @@ export class TmuxAdapter {
   }
 
   public setWindowSize(windowId: string, value: TmuxWindowSize): void {
-    this.require(["set-window-option", "-t", windowId, "window-size", value]);
+    this.setWindowOption(windowId, "window-size", value);
+  }
+
+  public readWindowMouse(windowId: string): TmuxWindowMouse {
+    const output = this.require(["show-window-options", "-v", "-t", windowId, "mouse"]).trim();
+    if (output === "on" || output === "off") return output;
+    throw new Error(`Unsupported tmux mouse value: ${output}`);
+  }
+
+  public setWindowMouse(windowId: string, value: TmuxWindowMouse): void {
+    this.setWindowOption(windowId, "mouse", value);
+  }
+
+  public setWindowOption(windowId: string, name: string, value: string): void {
+    this.require(["set-window-option", "-t", windowId, name, value]);
   }
 
   public resizeWindow(windowId: string, width: number, height: number): void {
@@ -589,6 +607,7 @@ export class TmuxAdapter {
       this.zoomPane(snapshot.activePaneId);
     }
     this.restoreWindowSize(snapshot, preferredClient);
+    this.setWindowMouse(snapshot.windowId, snapshot.mouse);
   }
 
   public setHook(name: string, index: number, command: string): void {

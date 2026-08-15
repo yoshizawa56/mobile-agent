@@ -25,21 +25,23 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
   const auth = new AuthService({ store: new AuthStore(database.sqlite), webOrigin: "http://web.example", agentdBaseUrl: "http://agentd.example" });
   const app = createAgentdApp({
     auth,
+    application: {
+      terminal: { get: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online" as const, detail: "test", lastSeen: "now" }) },
+      workspaces: {
+        list: async () => [],
+        browse: async () => [],
+        register: async () => { throw new Error("not used"); },
+        update: async () => { throw new Error("not used"); },
+        delete: async () => { throw new Error("not used"); },
+        resolveDirectory: async () => { throw new Error("not used"); },
+        resolveSelection: async () => { throw new Error("not used"); },
+      },
+      sessions: { list: async () => [], create: async () => { throw new Error("not used"); } },
+      panes: { list: async () => [], create: async () => { throw new Error("not used"); } },
+      hooks: { handleTmux: () => undefined },
+    },
     corsOrigin: "http://web.example",
     hookToken: "hook",
-    getTerminal: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online", detail: "test", lastSeen: "now" }),
-    listWorkspaceDirectories: async () => [],
-    browseWorkspaceDirectories: async () => [],
-    registerWorkspace: async () => { throw new Error("not used"); },
-    updateWorkspace: async () => { throw new Error("not used"); },
-    deleteWorkspace: async () => { throw new Error("not used"); },
-    resolveWorkspaceDirectory: async () => { throw new Error("not used"); },
-    resolveWorkspaceSelection: async () => { throw new Error("not used"); },
-    listSessions: async () => [],
-    createSession: async () => { throw new Error("not used"); },
-    listPanes: async () => [],
-    createPane: async () => { throw new Error("not used"); },
-    handleTmuxHook: () => undefined,
   } satisfies AgentdHttpDependencies);
   return { fixture: { database, app, statuses: {}, origins: {} }, cleanup: () => database.close() };
 };

@@ -7,6 +7,9 @@ import type {
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 
+export { ApplicationError, type AgentdApplication, type AgentdHookEvent } from "./agentd.js";
+export { agentdSocketReadyState, type AgentdSocket, type AgentdSocketData } from "./socket.js";
+
 export {
   PairDevice,
   type ApprovedDevice,

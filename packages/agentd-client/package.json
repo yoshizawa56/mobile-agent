@@ -16,13 +16,13 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@mobile-agent/agentd-http": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
     "hono": "^4.12.32",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@mobile-agent/test-support": "workspace:*",
-    "@mobile-agent/agentd": "workspace:*",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

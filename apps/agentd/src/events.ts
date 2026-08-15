@@ -1,5 +1,5 @@
+import { agentdSocketReadyState, type AgentdSocket } from "@mobile-agent/application";
 import { agentdEventSchema, type AgentdEvent } from "@mobile-agent/protocol";
-import { WebSocket } from "ws";
 
 /**
  * Publishes small, non-authoritative invalidation events to connected clients.
@@ -9,19 +9,29 @@ import { WebSocket } from "ws";
  * read instead of trying to replay an event log.
  */
 export class AgentdEventHub {
-  private readonly clients = new Set<WebSocket>();
+  private readonly clients = new Set<AgentdSocket>();
 
-  public add(socket: WebSocket): void {
+  public add(socket: AgentdSocket): void {
     this.clients.add(socket);
     const remove = () => this.clients.delete(socket);
-    socket.once("close", remove);
-    socket.once("error", remove);
+    let removeCloseListener: () => void = () => undefined;
+    let removeErrorListener: () => void = () => undefined;
+    removeCloseListener = socket.onClose(() => {
+      remove();
+      removeCloseListener();
+      removeErrorListener();
+    });
+    removeErrorListener = socket.onError(() => {
+      remove();
+      removeCloseListener();
+      removeErrorListener();
+    });
   }
 
   public publish(event: AgentdEvent): void {
     const payload = JSON.stringify(agentdEventSchema.parse(event));
     for (const client of this.clients) {
-      if (client.readyState !== WebSocket.OPEN) {
+      if (client.readyState !== agentdSocketReadyState.open) {
         this.clients.delete(client);
         continue;
       }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentdHealthSchema, paneListResponseSchema, sessionListResponseSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema } from "@mobile-agent/protocol";
+import { ApplicationError } from "@mobile-agent/application";
+import { agentdHealthSchema, paneListResponseSchema, sessionListResponseSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, type RegisterWorkspaceRequest, type UpdateWorkspaceRequest } from "@mobile-agent/protocol";
 import {
   runOperationTable,
   hasObserved,
@@ -9,12 +10,46 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { AgentdHttpError, createAgentdApp, type AgentdApp } from "./app.js";
+import { createAgentdApp, type AgentdApp, type AgentdAuthPort } from "./app.js";
 import { InvalidWorkspaceDirectoryError } from "../workspace-selection.js";
 
 const session = { name: "integration", workspace: "mobile-agent", cwd: "~/work/mobile-agent", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" as const };
 const pane = { id: "pane-1", tmuxPaneId: "%0", sessionName: "integration", windowId: "@0", kind: "shell" as const, name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running" as const, title: null, lastSeenAt: "2026-08-10T00:00:00.000Z" };
 const workspace = { id: "workspace-1", name: "mobile-agent", directory: "/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] };
+const testAuthContext = {
+  sessionId: "session-test-000000000000",
+  serverId: "server-test-000000000000",
+  deviceId: "device-test-000000000000",
+  issuedAt: "2026-08-10T00:00:00.000Z",
+  expiresAt: "2099-08-10T00:00:00.000Z",
+  revokedAt: null,
+  device: {
+    deviceId: "device-test-000000000000",
+    serverId: "server-test-000000000000",
+    publicKeyJwk: "{}",
+    keyFingerprint: "fingerprint-test",
+    displayName: "test",
+    deviceType: "browser" as const,
+    platform: null,
+    clientVersion: null,
+    status: "active" as const,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    approvedAt: "2026-08-10T00:00:00.000Z",
+    lastSeenAt: null,
+    revokedAt: null,
+  },
+};
+const testAuth: AgentdAuthPort = {
+  serverId: testAuthContext.serverId,
+  allowsWebOrigin: () => true,
+  authenticateAccessToken: () => testAuthContext,
+  claimPairing: () => { throw new Error("not used"); },
+  pairingStatus: () => { throw new Error("not used"); },
+  createChallenge: () => { throw new Error("not used"); },
+  createSession: () => { throw new Error("not used"); },
+  issueWebSocketTicket: () => { throw new Error("not used"); },
+  consumeWebSocketTicket: () => null,
+};
 
 type RequestInput = { url: string; method?: string; headers?: HeadersInit; body?: string };
 type HttpResult = { status: number; body: unknown };
@@ -48,14 +83,14 @@ const appFixture = (kind: AppKey): (() => FixtureHandle<AppFixture>) => () => {
   const overrides = kind === "not-ready"
     ? { isReady: () => false }
     : kind === "register"
-      ? { registerWorkspace: async (input: { setupScriptPath?: string | null; cleanupScriptPath?: string | null; worktreeCopyPatterns?: string[] }) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? [] }) }
+      ? { application: { workspaces: { register: async (input: RegisterWorkspaceRequest) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? [] }) } } }
       : kind === "update"
-        ? { updateWorkspace: async (workspaceId: string, input: { name?: string; setupScriptPath?: string | null; worktreeCopyPatterns?: string[] }) => ({ ...workspace, id: workspaceId, name: input.name ?? workspace.name, setupScriptPath: input.setupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? workspace.worktreeCopyPatterns }) }
-      : kind === "session-error"
-        ? { createSession: async () => { throw new AgentdHttpError(409, "session_exists", "tmux session already exists: integration"); } }
-        : kind === "directory-error"
-          ? { resolveWorkspaceDirectory: async () => { throw new InvalidWorkspaceDirectoryError("/private/secret", "outside_allowed_root", ["/work"]); } }
-          : {};
+        ? { application: { workspaces: { update: async (workspaceId: string, input: UpdateWorkspaceRequest) => ({ ...workspace, id: workspaceId, name: input.name ?? workspace.name, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? workspace.worktreeCopyPatterns }) } } }
+        : kind === "session-error"
+          ? { application: { sessions: { create: async () => { throw new ApplicationError("session_exists", "tmux session already exists: integration"); } } } }
+          : kind === "directory-error"
+            ? { application: { workspaces: { resolveDirectory: async () => { throw new InvalidWorkspaceDirectoryError("/private/secret", "outside_allowed_root", ["/work"]); } } } }
+            : {};
   return { fixture: { app: createTestApp(events, overrides), events } };
 };
 
@@ -83,6 +118,8 @@ const cases = [
     assert: [responseMatches(204)],
   },
   { name: "filters panes with the session query", input: { url: "http://agentd.local/api/panes?session=integration" }, assert: [responseMatches(200, { panes: [{ tmuxPaneId: "%0" }] }, paneListResponseSchema)] },
+  { name: "returns the shared validation error for invalid request JSON", input: { url: "http://agentd.local/api/sessions", method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "", cwd: "/tmp" }) }, assert: [responseMatches(400, { error: "invalid_request" })] },
+  { name: "returns the shared error shape for an unknown route", input: { url: "http://agentd.local/api/does-not-exist" }, assert: [exactResponse(404, { error: "not_found", message: "Route not found" })] },
   {
     name: "returns a domain error from session creation",
     fixture: "session-error",
@@ -117,7 +154,9 @@ const table: OperationTable<AppFixture, AppKey, RequestInput, HttpResult, HttpCo
   fixtures: { default: appFixture("default"), "not-ready": appFixture("not-ready"), register: appFixture("register"), update: appFixture("update"), "session-error": appFixture("session-error"), "directory-error": appFixture("directory-error") },
   cases,
   execute: async (fixture, input) => {
-    const response = await fixture.app.request(new Request(input.url, { method: input.method, headers: input.headers, body: input.body }));
+    const headers = new Headers(input.headers);
+    if (!headers.has("authorization")) headers.set("authorization", "Bearer test-token");
+    const response = await fixture.app.request(new Request(input.url, { method: input.method, headers, body: input.body }));
     const body = response.status === 204 ? null : await response.json();
     return { status: response.status, body };
   },
@@ -128,24 +167,48 @@ describe("agentd HTTP app", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-function createTestApp(events: Array<{ event: string; client: string }>, overrides: Partial<Parameters<typeof createAgentdApp>[0]> = {}): AgentdApp {
+type AgentdDependencies = Parameters<typeof createAgentdApp>[0];
+type AgentdApplication = AgentdDependencies["application"];
+type ApplicationOverrides = {
+  terminal?: Partial<AgentdApplication["terminal"]>;
+  workspaces?: Partial<AgentdApplication["workspaces"]>;
+  sessions?: Partial<AgentdApplication["sessions"]>;
+  panes?: Partial<AgentdApplication["panes"]>;
+  hooks?: Partial<AgentdApplication["hooks"]>;
+};
+
+type AppOverrides = Omit<Partial<Parameters<typeof createAgentdApp>[0]>, "application"> & { application?: ApplicationOverrides };
+
+function createTestApp(events: Array<{ event: string; client: string }>, overrides: AppOverrides = {}): AgentdApp {
+  const application = {
+    terminal: { get: async () => ({ id: "mac", name: "Mac", host: "mac.local", tailnetIp: "100.64.0.1", state: "online" as const, detail: "agentd · darwin", lastSeen: "online now" }) },
+    workspaces: {
+      list: async () => [workspace],
+      browse: async () => [workspace],
+      register: async () => workspace,
+      update: async (workspaceId: string) => ({ ...workspace, id: workspaceId }),
+      delete: async () => undefined,
+      resolveDirectory: async (workspaceId: string) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
+      resolveSelection: async (selection: { workspaceId: string }) => ({ id: selection.workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
+    },
+    sessions: { list: async () => [session], create: async () => session },
+    panes: { list: async () => [pane], create: async () => pane },
+    hooks: { handleTmux: (event: string, client: string) => events.push({ event, client }) },
+  };
+  const applicationOverrides = overrides.application;
   return createAgentdApp({
-    allowUnauthenticated: true,
+    ...overrides,
+    auth: testAuth,
+    application: {
+      ...application,
+      ...applicationOverrides,
+      terminal: { ...application.terminal, ...applicationOverrides?.terminal },
+      workspaces: { ...application.workspaces, ...applicationOverrides?.workspaces },
+      sessions: { ...application.sessions, ...applicationOverrides?.sessions },
+      panes: { ...application.panes, ...applicationOverrides?.panes },
+      hooks: { ...application.hooks, ...applicationOverrides?.hooks },
+    },
     corsOrigin: "*",
     hookToken: "test-token",
-    getTerminal: async () => ({ id: "mac", name: "Mac", host: "mac.local", tailnetIp: "100.64.0.1", state: "online", detail: "agentd · darwin", lastSeen: "online now" }),
-    listWorkspaceDirectories: async () => [workspace],
-    browseWorkspaceDirectories: async () => [workspace],
-    registerWorkspace: async () => workspace,
-    updateWorkspace: async () => workspace,
-    deleteWorkspace: async () => undefined,
-    resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
-    resolveWorkspaceSelection: async (selection) => ({ id: selection.workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
-    listSessions: async () => [session],
-    createSession: async () => session,
-    listPanes: async () => [pane],
-    createPane: async () => pane,
-    handleTmuxHook: (event, client) => events.push({ event, client }),
-    ...overrides,
   });
 }

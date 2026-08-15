@@ -6,7 +6,7 @@
   "type": "module",
   "exports": {
     "./server": {
-      "types": "./src/server-types.ts",
+      "types": "./src/server.ts",
       "default": "./src/server.ts"
     },
     "./daemon": {
@@ -30,20 +30,17 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.12",
     "@mobile-agent/application": "workspace:*",
+    "@mobile-agent/agentd-http": "workspace:*",
     "@mobile-agent/domain": "workspace:*",
     "@mobile-agent/logging": "workspace:*",
     "@mobile-agent/persistence": "workspace:*",
     "@mobile-agent/protocol": "workspace:*",
-    "@mobile-agent/tailscale": "workspace:*",
-    "hono": "^4.12.32",
-    "ws": "^8.18.3"
+    "@mobile-agent/tailscale": "workspace:*"
   },
   "devDependencies": {
     "@mobile-agent/test-support": "workspace:*",
     "@types/node": "^26.1.2",
-    "@types/ws": "^8.18.1",
     "bun-types": "^1.3.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

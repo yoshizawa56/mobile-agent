@@ -172,6 +172,7 @@ apps/
 
 packages/
   agentd-client/          # Hono RPC, HTTP DTO validation, WebSocket client
+  agentd-http/            # Bun/Hono app factory, validation/error boundary, WebSocket adapter
   cli-adapters/           # CLI infrastructure adapters and composition factories
   domain/                 # entities, value objects, and state machines
   application/            # use cases and ports
@@ -183,6 +184,11 @@ packages/
   notifications/          # NotificationPort implementations
   tailscale/               # Serve, identity, and bootstrap helpers
   config/                 # configuration loading and validation
+
+apps/agentd/src/
+  application/             # host-side application implementation and infrastructure composition
+  http/                    # compatibility exports for existing agentd-internal imports
+  server.ts                # Bun composition root and lifecycle only
 
 ios/
   MobileAgentNative/      # SSH port-forwarding bridge, if needed
@@ -197,20 +203,22 @@ The domain layer does not reference tmux, SQLite, WebSocket, or Capacitor direct
 
 ### agentd HTTP app and dependency injection
 
-createAgentdApp does not start a process. It receives only the dependencies needed by the HTTP API and constructs the Hono app.
+`packages/agentd-http` owns `createAgentdApp`. It does not start a process. It receives only the application/auth ports and transport callbacks needed by the HTTP API and constructs the Hono app. Validation is performed by shared Hono validators, and thrown failures are converted by one `onError` boundary. The app exposes a transport-neutral socket contract; only the Bun adapter knows Hono's `WSContext`.
 
 ~~~
 createAgentdServer()
   |-- SQLite / Drizzle
   |-- TmuxAdapter
   |-- TmuxViewportManager
-  |-- application use cases
-  |-- createAgentdApp({ ...deps })
+  |-- createAgentdApplication({ ...resources })
+  |-- createAgentdApp({ auth, application, ...transportDeps })
        |-- AgentdApp = ReturnType<typeof createAgentdApp>
 
 agentd-client
   |-- hc<AgentdApp>(connection.httpBaseUrl)
 ~~~
+
+The runtime is Bun-only at the HTTP boundary: `apps/agentd` calls `Bun.serve({ fetch: app.fetch, websocket: agentdWebsocket })`. No Node HTTP server or `ws` implementation is part of agentd. The terminal and event endpoints authenticate an origin and one-shot WebSocket ticket during the Hono upgrade; after `onOpen`, the application receives only the neutral socket contract.
 
 Tailscale Serve and SSH port forwarding both reach the same agentd API. The API client and use cases do not know which route is in use. The browser build does not include an SSH adapter; it exposes only the Serve route.
 

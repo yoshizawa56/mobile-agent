@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, it, vi } from "vitest";
-import { WebSocket } from "ws";
+import { agentdSocketReadyState } from "@mobile-agent/application";
 import { clientControlMessageSchema, serverControlMessageSchema, terminalProtocolVersion } from "@mobile-agent/protocol";
 import {
   hasObserved,
@@ -89,7 +89,7 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
       if (step.type === "connect") {
         const socket = new FakeSocket();
         fixture.sockets[step.socket] = socket;
-        new TerminalSession(socket.asWebSocket(), fixture.options);
+        new TerminalSession(socket, fixture.options);
         const previousReady = fixture.sockets.first?.controls().find((message) => message.type === "ready");
         const credentials = step.credentials === "resume-first" && previousReady?.type === "ready"
           ? { sessionId: previousReady.sessionId, resumeToken: previousReady.resumeToken }
@@ -147,15 +147,17 @@ function attachFrame(credentials: { sessionId?: string; resumeToken?: string } =
 async function flush(): Promise<void> { await Promise.resolve(); await Promise.resolve(); }
 
 class FakeSocket extends EventEmitter {
-  public readyState: number = WebSocket.OPEN;
-  public readonly sent: Array<string | Buffer> = [];
-  public send(data: string | Buffer): void { if (this.readyState !== WebSocket.OPEN) throw new Error("socket is closed"); this.sent.push(data); }
-  public receive(data: string | Buffer, isBinary = false): void { this.emit("message", data, isBinary); }
-  public networkClose(): void { this.readyState = WebSocket.CLOSED; this.emit("close", 1006, Buffer.from("network-lost")); }
-  public close(): void { this.readyState = WebSocket.CLOSED; this.emit("close", 1000, Buffer.from("closed")); }
+  public readyState: number = agentdSocketReadyState.open;
+  public readonly sent: Array<string | Uint8Array> = [];
+  public send(data: string | Uint8Array): void { if (this.readyState !== agentdSocketReadyState.open) throw new Error("socket is closed"); this.sent.push(data); }
+  public receive(data: string | Uint8Array, isBinary = false): void { this.emit("message", data, isBinary); }
+  public networkClose(): void { this.readyState = agentdSocketReadyState.closed; this.emit("close"); }
+  public close(): void { this.readyState = agentdSocketReadyState.closed; this.emit("close"); }
+  public onMessage(listener: (data: string | Uint8Array, isBinary: boolean) => void): () => void { this.on("message", listener); return () => this.removeListener("message", listener); }
+  public onClose(listener: () => void): () => void { this.on("close", listener); return () => this.removeListener("close", listener); }
+  public onError(listener: (error: Error) => void): () => void { this.on("error", listener); return () => this.removeListener("error", listener); }
   public controls() { return this.sent.filter((frame): frame is string => typeof frame === "string").map((frame) => serverControlMessageSchema.parse(JSON.parse(frame))); }
-  public binaryFrames(): string[] { return this.sent.filter((frame): frame is Buffer => Buffer.isBuffer(frame)).map((frame) => frame.toString("utf8")); }
-  public asWebSocket(): WebSocket { return this as unknown as WebSocket; }
+  public binaryFrames(): string[] { return this.sent.filter((frame): frame is Uint8Array => typeof frame !== "string").map((frame) => Buffer.from(frame).toString("utf8")); }
 }
 
 class FakePty {

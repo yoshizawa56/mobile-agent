@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import type { AgentdApp } from "@mobile-agent/agentd/server";
+import type { AgentdApp } from "@mobile-agent/agentd-http";
 import {
   agentdCapabilitiesSchema,
   agentdHealthSchema,
@@ -108,7 +108,7 @@ export function createAgentdClient(connection: AgentdConnection) {
     panes: async (sessionName?: string): Promise<PaneSummary[]> => {
       const response = sessionName
         ? await http.api.panes.$get({ query: { session: sessionName } })
-        : await http.api.panes.$get();
+        : await http.api.panes.$get({ query: {} });
       return parseResponse(response, paneListResponseSchema).then((data) => data.panes);
     },
     createPane: async (input: CreatePaneRequest): Promise<PaneSummary> => {

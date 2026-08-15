@@ -1,3 +1,4 @@
+import { AppIcon } from "../../app-icon";
 import type { PaneBoardViewModel } from "./pane-board-viewmodel";
 import { paneStateLabel } from "./pane-board-viewmodel";
 import { PaneLayoutOverlay, type PaneLayoutOverlayVariant } from "./pane-layout-overlay-view";
@@ -13,7 +14,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
   return (
     <div className="relative min-h-0">
       <button className={`hidden items-center gap-2 rounded-[10px] border border-line bg-paper px-2.5 py-2 font-bold text-[0.68rem] text-[#4c574f] max-[920px]:max-w-[calc(100vw-36px)] ${alwaysOpen && !showLayout ? "max-[920px]:fixed max-[920px]:right-[18px] max-[920px]:top-[77px] max-[920px]:z-[8] max-[920px]:flex max-[920px]:shadow-[0_9px_20px_rgb(39_46_38_/_12%)]" : ""} ${viewModel.isOpen ? "pointer-events-none invisible" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
-        <span className="text-[0.9rem] text-lime-deep">⌘</span>
+        <span className="text-lime-deep"><AppIcon name="layout" size={15} /></span>
         <span>All panes</span>
         <span className="min-w-[17px] rounded-[5px] bg-[#e5e9df] px-1 py-0.5 text-center font-mono text-[0.57rem] text-[#73806f]">{viewModel.panes.length || "—"}</span>
       </button>
@@ -30,8 +31,8 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
           </div>
           <div className="flex items-center gap-1.5 self-start">
             <span className="mr-0.5 font-mono text-[0.57rem] text-[#8d672e]">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
-            <button className="grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes">↻</button>
-            <button className="hidden grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink max-[920px]:grid" type="button" onClick={viewModel.close} aria-label="Close pane list">×</button>
+            <button className="grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes"><AppIcon name="refresh" size={15} /></button>
+            <button className="hidden grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink max-[920px]:grid" type="button" onClick={viewModel.close} aria-label="Close pane list"><AppIcon name="close" size={15} /></button>
           </div>
         </div>
         <div className="my-[17px] mb-[13px] h-px bg-line" />
@@ -58,7 +59,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
             return (
               <button className={`flex w-full min-w-0 items-center gap-[9px] rounded-[10px] border p-2 text-left transition-colors hover:border-line hover:bg-white/70 ${selected ? "border-[#c8dfb3] bg-[#edf7e4]" : "border-transparent"}`} type="button" key={pane.id} onClick={() => viewModel.select(pane)}>
                 <span className={`grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[0.7rem] font-extrabold ${avatarClass}`}>
-                  {pane.kind === "shell" ? "⌁" : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
+                  {pane.kind === "shell" ? <AppIcon name="terminal" size={15} /> : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
                   <span className="flex min-w-0 items-center gap-1.5"><strong className="min-w-0 overflow-hidden text-[0.69rem] font-bold text-ellipsis whitespace-nowrap text-[#303631]">{pane.name}</strong><span className="shrink-0 font-mono text-[0.48rem] font-bold tracking-[0.04em] text-faint">PANE {pane.paneIndex ?? "?"}</span>{selected ? <span className="shrink-0 font-mono text-[0.49rem] font-extrabold tracking-[0.08em] text-[#689449]">OPEN</span> : null}</span>

@@ -312,6 +312,9 @@ export class TmuxViewportManager {
     record.mobileCols = cols;
     record.mobileRows = rows;
 
+    // Mobile touch scrolling is forwarded as terminal mouse-wheel input. Keep
+    // tmux mouse handling enabled for the lifetime of this viewport lease.
+    this.adapter.setWindowMouse(record.pane.windowId, "on");
     this.adapter.setWindowSize(record.pane.windowId, "manual");
     this.adapter.resizeWindow(record.pane.windowId, cols, rows);
 
@@ -404,6 +407,7 @@ export class TmuxViewportManager {
         // the desktop client before the hook reached agentd.
         this.adapter.selectLayout(current.windowId, current.layout);
         if (desktopPaneId) this.adapter.selectPane(desktopPaneId);
+        this.adapter.setWindowMouse(record.pane.windowId, record.snapshot.mouse);
       }
       this.restoreDesktopClientFlags(record);
     }
@@ -429,6 +433,7 @@ export class TmuxViewportManager {
         // A desktop takeover is authoritative. Do not put an old pane/layout
         // back over changes the user made after taking control.
         this.adapter.setWindowSize(record.pane.windowId, record.snapshot.windowSize);
+        this.adapter.setWindowMouse(record.pane.windowId, record.snapshot.mouse);
       }
       this.restoreDesktopClientFlags(record);
     } catch {

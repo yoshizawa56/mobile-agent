@@ -14,6 +14,8 @@ import type {
   PairingOffer,
 } from "@mobile-agent/application";
 
+type AgentStatus = Extract<AgentdControlRequest, { type: "observe_agent_session" }>["state"];
+
 export class PairingControlError extends Error {
   public constructor(
     message: string,
@@ -102,6 +104,13 @@ export class AgentdPairingControlAdapter implements PairingControlPort {
     const response = await this.request({ type: "adopt_agent_session", ...input });
     if (response.type !== "agent_session_adopted" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId) {
       throw unexpectedResponse("agent_session_adopted", response.type);
+    }
+  }
+
+  public async observeAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: AgentStatus; recentOutput?: string }): Promise<void> {
+    const response = await this.request({ type: "observe_agent_session", ...input });
+    if (response.type !== "agent_session_observed" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId || response.state !== input.state) {
+      throw unexpectedResponse("agent_session_observed", response.type);
     }
   }
 

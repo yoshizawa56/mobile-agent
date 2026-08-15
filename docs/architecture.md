@@ -464,7 +464,7 @@ Plugins return normalized observations:
 
 ~~~ts
 type AgentObservation =
-  | { type: "state_changed"; state: AgentState; reason?: string }
+  | { type: "state_changed"; state: AgentState; reason?: string; recentOutput?: string }
   | { type: "title_changed"; title: string }
   | { type: "progress"; value?: number; message?: string }
   | { type: "action_requested"; action: ActionDescriptor }
@@ -475,19 +475,27 @@ type AgentObservation =
 
 1. Structured events, JSONL, an app server, or WebSocket exposed by the agent.
 2. Agent process exit, signals, and standard streams.
-3. tmux/PTY output state parsers.
-4. Regular-expression rules declared by a profile.
-5. Manual state changes by the user.
+3. Manual state changes by the user.
 
-Screen-text parsing is fragile when an agent changes its UI, so built-in plugins should prefer structured events.
+The managed path does not infer agent state from rendered terminal text. A provider
+plugin owns the version-specific structured source and emits bounded recent output
+alongside normalized state changes.
+
+The built-in Codex plugin follows the matching rollout JSONL under `CODEX_HOME`,
+while the Claude plugin follows the matching session JSONL under
+`CLAUDE_CONFIG_DIR`. If a provider cannot identify one unambiguous session, the
+plugin emits no guess and the lifecycle fallback remains in effect.
 
 ### 7.3 Plugin execution
 
-- Built-in and trusted plugins run as TypeScript modules inside agentd.
+- Built-in and trusted plugins run as TypeScript modules in the host-side managed
+  agent process; normalized observations reach agentd through its private local
+  control channel.
 - Custom or other-language plugins run as child processes using JSONL over stdin/stdout.
 - Plugins can be installed from npm packages, repository packages, or the user's XDG configuration directory.
 - Plugin code is never distributed to the mobile app.
-- Plugins do not access tmux or SQLite directly; they use Context and Port objects provided by agentd.
+- Plugins do not access tmux or SQLite directly; the managed launcher provides an
+  execution context and an observation sink.
 
 External plugins isolate crashes from the agentd process. They are not fully sandboxed when they can execute host commands or read files. The installation flow must make this trust boundary explicit.
 
@@ -541,8 +549,8 @@ exits. A direct `agent run` or `agent resume` from an unmanaged shell uses the
 same durable adoption path but has no wrapper context to inherit; it still
 returns the pane to shell metadata when it exits. The tmux layer owns only
 infrastructure facts. Provider-specific state and approval detection belong to
-the corresponding plugin; screen parsing is a compatibility fallback for panes
-that predate the managed path.
+the corresponding plugin. The tmux layer never interprets the provider's rendered
+terminal screen; it only tracks pane identity, lifecycle, and geometry.
 
 ### 8.2 Mobile terminal data route
 
@@ -553,7 +561,7 @@ xterm.js <-> WebSocket <-> agentd <-> Bun.Terminal <-> tmux attach-session -t <t
 ~~~
 
 - agentd forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
-- xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, scrollback, and selection;
+- xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, and selection; tmux owns pane scrollback and copy mode, with mouse-wheel input forwarded through the PTY;
 - WebSocket text frames are reserved for control messages such as attach, resize, and detach;
 - xterm.js cols/rows are sent back to the PTY so the TUI runs at the phone's actual width;
 - while mobile is connected, the target window's window-size is temporarily set to manual and the phone size is applied through resize-window;
@@ -765,7 +773,7 @@ Reasons:
 - retain the fast Vite and HMR web development loop;
 - share agentd protocol types in TypeScript;
 - use the WebSocket Web API;
-- let xterm.js handle ANSI/VT, scrollback, selection, and mouse input as the terminal emulator;
+- let xterm.js handle ANSI/VT, selection, and mouse input as the terminal emulator while tmux owns pane scrollback;
 - keep the UI focused on one pane, where a web implementation is a good fit;
 - limit native work to Swift plugins and Widget Extensions.
 
@@ -1125,7 +1133,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 |---|---|---|
 | Tailscale Serve is unstable for WebSocket | Test long-lived connections and reconnects from a real device | SSH port forwarding or another proxy |
 | Terminal interaction is uncomfortable in WKWebView | Test xterm.js IME, selection, and external keyboards first | Replace the terminal portion with SwiftUI or native code |
-| Agent waiting-state detection is unreliable | Investigate structured event support | AgentPlugin observer plus fallback parser |
+| Agent waiting-state detection is unreliable | Investigate structured event support | Provider-specific structured monitor plus explicit lifecycle fallback |
 | Live Activity APIs are insufficient | Build an aggregate Activity proof of concept | Implement a Swift extension |
 | External plugins require too many privileges | Show permissions in install and doctor flows | Child process, dedicated user, or sandbox |
 | tmux and agentd state diverge | Test restart, manual changes, and pane movement | tmux options plus recovery scan |

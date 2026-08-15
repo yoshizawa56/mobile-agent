@@ -292,7 +292,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   if (stage === "new-session") return <NewSessionView viewModel={newSessionViewModel} />;
   if (stage === "new-pane") return <NewPaneView viewModel={newPaneViewModel} />;
   if (stage === "session-overview") return <SessionOverviewView viewModel={sessionOverviewViewModel} />;
-  if (stage === "control-room") return <PaneView viewModel={terminalViewModel} paneBoard={sessionPaneBoard} onWorkspaceSwitch={() => setStage("sessions")} onNewPane={() => setStage("new-pane")} />;
+  if (stage === "control-room") return <PaneView viewModel={terminalViewModel} paneBoard={sessionPaneBoard} onSessionSelect={() => setStage("sessions")} onNewPane={() => setStage("new-pane")} />;
   return <StoryConnectionView viewModel={connectionViewModel} connectionSettings={connectionSettingsViewModel} />;
 }
 
@@ -425,7 +425,7 @@ export const Shell: Story = {
 };
 
 export const GhostMap: Story = {
-  name: "Control room / ghost map",
+  name: "Control room / readable window map",
   render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="mobile-agent" initialPaneId="%2" initialMapOpen />,
 };
 

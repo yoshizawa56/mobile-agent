@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@mobile-agent/agentd": "workspace:*",
+    "@mobile-agent/agents": "workspace:*",
     "@mobile-agent/application": "workspace:*",
     "@mobile-agent/cli-adapters": "workspace:*",
     "@mobile-agent/domain": "workspace:*",

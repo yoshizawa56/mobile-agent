@@ -1,8 +1,9 @@
 export type TerminalFlickDirection = "up" | "down" | "left" | "right";
+export type TerminalMouseWheelDirection = "up" | "down";
 
 export type TerminalFlickInputOptions = {
   onGestureStart?: () => void;
-  onScroll?: (deltaY: number) => void;
+  onScroll?: (deltaY: number, clientX: number, clientY: number) => void;
 };
 
 const TERMINAL_FLICK_MOVE_TOLERANCE_PX = 12;
@@ -20,7 +21,7 @@ export function classifyTerminalFlick({ dx, dy, durationMs }: { dx: number; dy: 
   const duration = Math.max(durationMs, 1);
   const velocity = distance / duration;
 
-  // A slow/short drag belongs to terminal scrolling or text selection.
+  // A slow/short drag belongs to terminal scrolling.
   if (distance < 28 || duration > 420 || velocity < 0.12) return null;
 
   if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? "right" : "left";
@@ -29,6 +30,11 @@ export function classifyTerminalFlick({ dx, dy, durationMs }: { dx: number; dy: 
 
 export function terminalInputForFlick(direction: TerminalFlickDirection): string {
   return ARROW_INPUT[direction];
+}
+
+export function terminalMouseWheelInput(direction: TerminalMouseWheelDirection, column: number, row: number): string {
+  const button = direction === "up" ? 64 : 65;
+  return `\u001b[<${button};${Math.max(1, Math.round(column))};${Math.max(1, Math.round(row))}M`;
 }
 
 export function installTerminalFlickInput(
@@ -69,6 +75,10 @@ export function installTerminalFlickInput(
     if (!direction) return;
 
     event?.preventDefault();
+    if ((direction === "up" || direction === "down") && options.onScroll) {
+      options.onScroll(y - state.y, x, y);
+      return;
+    }
     onInput(terminalInputForFlick(direction));
   };
 
@@ -112,7 +122,7 @@ export function installTerminalFlickInput(
         const wasScrolling = state.didScroll;
         state.didScroll = true;
         event.preventDefault();
-        options.onScroll(event.clientY - (wasScrolling ? previousY : state.y));
+        options.onScroll(event.clientY - (wasScrolling ? previousY : state.y), event.clientX, event.clientY);
       }
     }
 

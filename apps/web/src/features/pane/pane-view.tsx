@@ -1,10 +1,11 @@
 import type { PaneViewModel } from "./pane-viewmodel";
+import { AppIcon } from "../../app-icon";
 import { PaneBoardView } from "../pane-board/pane-board-view";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import type { PaneLayoutOverlayVariant } from "../pane-board/pane-layout-overlay-view";
 import { useWindowMapGesture } from "./window-map-gesture";
 
-export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWorkspaceSwitch, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onWorkspaceSwitch?: () => void; onNewPane?: () => void }) {
+export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSessionSelect, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onSessionSelect?: () => void; onNewPane?: () => void }) {
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
@@ -20,12 +21,14 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
   const ownerPillClass = viewModel.viewportOwner === "desktop"
     ? "border-[#735c2c] text-amber bg-[#231b0b]"
     : "border-[#2b6838] text-lime bg-[#0b2110] shadow-[0_0_20px_rgb(57_214_91_/_9%)]";
-  const selectionActionClass = viewModel.selectionMode ? "border-lime bg-lime text-[#061008]" : "";
+ const terminalActionClass = "grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem]";
+  const terminalSessionReturnClass = `${terminalActionClass} hidden max-[920px]:grid`;
 
   return (
     <main ref={windowMapSurfaceRef} className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-hidden text-ink [touch-action:pan-x_pan-y]">
       <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-line bg-[rgb(6_13_8_/_88%)] px-8 backdrop-blur-[18px] max-[920px]:h-16 max-[920px]:px-[18px] max-[620px]:h-[50px] max-[620px]:px-[14px]">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-4">
+          {onSessionSelect ? <button className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-[rgb(10_22_13_/_86%)] px-2 py-1.5 font-mono text-[0.62rem] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:hidden" type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={16} /><span>Sessions</span></button> : null}
           <span className="grid size-7 rotate-[-8deg] place-items-center rounded-[9px] border border-[#2c6b38] bg-[#071309] font-mono text-lg leading-none text-lime shadow-[inset_0_0_0_1px_rgb(139_255_154_/_8%),0_0_24px_rgb(57_214_91_/_12%)]">⌁</span>
           <span className="text-base font-bold tracking-[-0.035em]">agent<span className="text-lime-deep">.</span></span>
           <span className="ml-0.5 border-l border-line-strong pl-3 text-[0.72rem] tracking-[0.04em] text-muted max-[920px]:hidden">control room</span>
@@ -35,7 +38,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
             <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
             <span className="max-[920px]:hidden">{viewModel.status === "connected" ? "Tailnet connected" : viewModel.status}</span>
           </div>
-          <button className="grid size-8 place-items-center rounded-[10px] border border-line-strong bg-[rgb(10_22_13_/_86%)] text-[0.8rem] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[620px]:hidden" type="button" aria-label="Settings">⌘</button>
+          <button className="grid size-8 place-items-center rounded-[10px] border border-line-strong bg-[rgb(10_22_13_/_86%)] text-[0.8rem] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[620px]:hidden" type="button" aria-label="Settings" title="Settings"><AppIcon name="settings" size={17} /></button>
           <span className="grid size-[30px] place-items-center rounded-[10px] bg-lime text-[0.66rem] font-extrabold text-[#041006] shadow-[0_0_18px_rgb(139_255_154_/_18%)]">TY</span>
         </div>
       </header>
@@ -45,7 +48,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
           <div className="pb-6">
             <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted">WORKSPACE</div>
             <div className="relative mt-[13px] flex items-center gap-2.5 rounded-xl border border-line bg-[rgb(10_22_13_/_72%)] px-2.5 py-3">
-              <span className="grid size-7 place-items-center rounded-lg bg-[#12301a] text-[0.9rem] text-lime">⌂</span>
+              <span className="grid size-7 place-items-center rounded-lg bg-[#12301a] text-lime"><AppIcon name="folder" size={17} /></span>
               <span className="flex min-w-0 flex-1 flex-col gap-1">
                 <strong className="overflow-hidden text-[0.75rem] text-ellipsis whitespace-nowrap">{sessionName}</strong>
                 <small className="overflow-hidden text-[0.65rem] leading-[1.45] text-muted text-ellipsis whitespace-nowrap">{cwd}</small>
@@ -94,9 +97,10 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
 
           <section className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:h-[var(--app-viewport-height)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:h-[var(--app-viewport-height)] max-[620px]:rounded-[9px]" aria-label={`${viewModel.target} terminal`}>
             <div className="flex min-h-[45px] shrink-0 items-center justify-between gap-3 border-b border-[#15351d] bg-[#071008] px-3.5 font-mono text-[0.63rem] text-[#8cb793] max-[920px]:min-h-[calc(44px+var(--safe-area-top))] max-[920px]:gap-[5px] max-[920px]:border-b-[#17391f] max-[920px]:px-[max(8px,var(--safe-area-left))] max-[920px]:pb-0 max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[620px]:min-h-[34px] max-[620px]:gap-[7px] max-[620px]:px-2 max-[620px]:text-[0.5rem]">
+              {onSessionSelect ? <button className={terminalSessionReturnClass} type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={15} /></button> : null}
               <div className="flex min-w-0 flex-1 items-center justify-start gap-[7px] max-[620px]:gap-[5px]">
                 <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
-                <span className="text-lime">⌁</span>
+                <span className="text-lime"><AppIcon name="terminal" size={15} /></span>
                 <strong className="overflow-hidden text-ellipsis whitespace-nowrap">{shellMode ? "zsh" : agentName}</strong>
                 <span className="text-[#3e6547]">·</span>
                 <span className="max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap">{sessionName}</span>
@@ -105,23 +109,10 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
               <div className="flex shrink-0 items-center gap-2 max-[920px]:gap-0">
                 <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">{viewModel.target}</span>
                 <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">80 × 24</span>
-                {onNewPane ? <button className="grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem]" type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane">＋</button> : null}
-                {onWorkspaceSwitch ? <button className="grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem]" type="button" onClick={onWorkspaceSwitch} aria-label="Open workspace switcher">☰</button> : null}
-                <button className={`grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem] ${selectionActionClass}`} type="button" onClick={viewModel.selectionMode ? viewModel.exitSelectionMode : viewModel.enterSelectionMode} aria-pressed={viewModel.selectionMode} aria-label={viewModel.selectionMode ? "Exit terminal selection mode" : "Select terminal text"} title={viewModel.selectionMode ? "Exit selection mode" : "Select terminal text"}>⌗</button>
-                <button className="grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem]" type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"}>⌄</button>
+                {onNewPane ? <button className={terminalActionClass} type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane"><AppIcon name="new-pane" size={16} /></button> : null}
+                <button className={terminalActionClass} type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}><AppIcon name="layout" size={16} /></button>
               </div>
             </div>
-            {viewModel.selectionMode || viewModel.hasSelection || viewModel.selectionNotice ? (
-              <div className="absolute inset-x-0 top-[45px] z-20 flex min-h-[42px] items-center gap-2.5 border-b border-[#15351d] bg-[#0a160d] px-2.5 py-[5px] text-[#a8c8ad] shadow-[0_12px_24px_rgb(0_0_0_/_28%)] max-[920px]:top-[calc(44px+var(--safe-area-top))] max-[920px]:min-h-12 max-[920px]:px-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[620px]:items-stretch max-[620px]:flex-col max-[620px]:gap-[3px] max-[620px]:py-[5px]" role="toolbar" aria-label="Terminal text selection">
-                <span className="min-w-0 flex-1 overflow-hidden font-mono text-[0.62rem] text-[#8cb793] text-ellipsis whitespace-nowrap max-[620px]:flex-none max-[620px]:text-[0.58rem]" role="status" aria-live="polite">{viewModel.selectionNotice ?? (viewModel.selectionMode ? "Drag to select a range" : "Selection active")}</span>
-                <div className="flex shrink-0 gap-1.5 overflow-x-auto max-[620px]:grid max-[620px]:grid-cols-4 max-[620px]:gap-1 max-[620px]:overflow-visible">
-                  <button className="min-h-8 whitespace-nowrap rounded-lg border border-[#286039] bg-[#102417] px-2.5 text-[0.66rem] font-bold text-[#baf5c1] transition-colors hover:border-lime hover:bg-lime hover:text-[#061008] disabled:cursor-not-allowed disabled:opacity-40 max-[920px]:min-h-10 max-[920px]:px-3 max-[620px]:min-w-0 max-[620px]:px-1 max-[620px]:text-[0.62rem]" type="button" onClick={() => void viewModel.copySelection()} disabled={!viewModel.hasSelection}>Copy</button>
-                  <button className="min-h-8 whitespace-nowrap rounded-lg border border-[#286039] bg-[#102417] px-2.5 text-[0.66rem] font-bold text-[#baf5c1] transition-colors hover:border-lime hover:bg-lime hover:text-[#061008] disabled:cursor-not-allowed disabled:opacity-40 max-[920px]:min-h-10 max-[920px]:px-3 max-[620px]:min-w-0 max-[620px]:px-1 max-[620px]:text-[0.62rem]" type="button" onClick={viewModel.selectAll}>Select all</button>
-                  <button className="min-h-8 whitespace-nowrap rounded-lg border border-[#286039] bg-[#102417] px-2.5 text-[0.66rem] font-bold text-[#baf5c1] transition-colors hover:border-lime hover:bg-lime hover:text-[#061008] disabled:cursor-not-allowed disabled:opacity-40 max-[920px]:min-h-10 max-[920px]:px-3 max-[620px]:min-w-0 max-[620px]:px-1 max-[620px]:text-[0.62rem]" type="button" onClick={() => void viewModel.pasteFromClipboard()}>Paste</button>
-                  <button className="min-h-8 whitespace-nowrap rounded-lg border border-[#1d4c29] bg-transparent px-2.5 text-[0.66rem] font-bold text-[#81a986] transition-colors hover:border-lime hover:bg-lime hover:text-[#061008] disabled:cursor-not-allowed disabled:opacity-40 max-[920px]:min-h-10 max-[920px]:px-3 max-[620px]:min-w-0 max-[620px]:px-1 max-[620px]:text-[0.62rem]" type="button" onClick={viewModel.clearSelection}>Clear</button>
-                </div>
-              </div>
-            ) : null}
             <div ref={viewModel.terminalContainerRef} className="terminal-container flex min-h-0 w-full flex-1 touch-none bg-[#111318] px-6 pb-[18px] pt-[23px] [-webkit-touch-callout:none] max-[920px]:pb-[max(8px,var(--safe-area-bottom))] max-[620px]:px-1.5 max-[620px]:pb-[max(8px,var(--safe-area-bottom))] max-[620px]:pt-[5px]" />
             <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
               <span className="inline-flex items-center gap-1.5 text-[#8cb793]"><span className="size-[5px] rounded-full bg-lime-deep" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>

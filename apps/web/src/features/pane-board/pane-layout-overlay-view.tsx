@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PaneSummary } from "@mobile-agent/protocol";
+import { AppIcon } from "../../app-icon";
 import { paneStateLabel } from "./pane-board-viewmodel";
 
 export type PaneLayoutOverlayVariant = "ghost";
@@ -56,6 +57,13 @@ export function PaneLayoutOverlay({
     if (!onClose) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const onPointerDownOutside = (event: PointerEvent) => {
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const target = event.target;
+      if (target instanceof Node && overlay.contains(target)) return;
+      onClose();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -73,16 +81,18 @@ export function PaneLayoutOverlay({
       event.preventDefault();
       focusable[nextIndex]?.focus();
     };
+    document.addEventListener("pointerdown", onPointerDownOutside);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", onPointerDownOutside);
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus({ preventScroll: true });
     };
   }, [onClose]);
 
   return (
-    <section ref={overlayRef} id={id} className={`relative flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden rounded-[15px] border border-[rgb(139_255_154_/_24%)] bg-[rgb(2_8_4_/_78%)] p-[18px] text-ink shadow-[0_24px_80px_rgb(0_0_0_/_52%),inset_0_0_0_1px_rgb(139_255_154_/_4%)] backdrop-blur-[20px] max-[920px]:rounded-xl max-[620px]:gap-2 max-[620px]:rounded-[10px] max-[620px]:p-3 ${overlayVariantClass}`} role={onClose ? "dialog" : "region"} aria-modal={onClose ? true : undefined} aria-label="tmux window layout" tabIndex={onClose ? -1 : undefined}>
+    <section ref={overlayRef} id={id} className={`relative flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden rounded-[15px] border border-[rgb(139_255_154_/_24%)] bg-[rgb(2_8_4_/_78%)] p-[18px] text-ink shadow-[0_24px_80px_rgb(0_0_0_/_52%),inset_0_0_0_1px_rgb(139_255_154_/_4%)] backdrop-blur-[20px] max-[920px]:rounded-xl max-[620px]:gap-2 max-[620px]:rounded-[10px] max-[620px]:p-3 ${overlayVariantClass}`} role={onClose ? "dialog" : "region"} aria-modal={onClose ? true : undefined} aria-label="tmux window layout" tabIndex={onClose ? -1 : undefined} onPointerDown={onClose ? (event) => { if (isOverlayBackdropTarget(event.target, event.currentTarget)) onClose(); } : undefined}>
       <div className={`flex min-w-0 items-center justify-between gap-3 ${headingVariantClass}`}>
         <div className={`flex min-w-0 flex-col items-start gap-[7px] ${headingCopyVariantClass}`}>
           <span className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(97_143_55_/_12%)]" /> WINDOW MAP</span>
@@ -90,7 +100,7 @@ export function PaneLayoutOverlay({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="font-mono text-[0.52rem] text-[#4b7c54] max-[620px]:text-[0.47rem]">{windows.length} windows</span>
-          {onClose ? <button ref={closeButtonRef} className="grid size-7 place-items-center rounded-lg border border-[#26552f] bg-[#0b2110] text-base leading-none text-[#9acba1] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-[25px] max-[620px]:text-[0.85rem]" type="button" onClick={onClose} aria-label="Close window map">×</button> : null}
+          {onClose ? <button ref={closeButtonRef} className="grid size-7 place-items-center rounded-lg border border-[#26552f] bg-[#0b2110] text-base leading-none text-[#9acba1] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-[25px] max-[620px]:text-[0.85rem]" type="button" onClick={onClose} aria-label="Close window map"><AppIcon name="close" size={16} /></button> : null}
         </div>
       </div>
 
@@ -127,21 +137,27 @@ export function PaneLayoutOverlay({
             <span>{activeWindow.panes.length} panes</span>
           </div>
         <div className={`grid min-h-0 flex-1 gap-1 p-1 max-[620px]:gap-[3px] max-[620px]:p-[3px] ${paneGridClass} ${ghost ? "gap-0 p-0" : ""}`}>
-            {activeWindow.panes.map((pane) => (
+            {activeWindow.panes.map((pane) => {
+              const waiting = pane.state === "waiting_input" || pane.state === "waiting_approval";
+              const statusClass = waiting ? "text-amber" : pane.state === "failed" ? "text-[#f07e7e]" : "text-[#8fcf98]";
+              const statusDotClass = waiting ? "bg-amber shadow-[0_0_0_3px_rgb(241_199_109_/_12%)]" : pane.state === "failed" ? "bg-[#f07e7e]" : "bg-lime-deep";
+              return (
               <button
                 className={`flex min-w-0 min-h-[72px] flex-col items-start justify-end overflow-hidden rounded-[7px] border border-[#1b4526] bg-pane-grid bg-[#071409] bg-[length:100%_16px] p-[9px] text-left text-[#89bd91] transition-[border-color,background,box-shadow] hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)] max-[620px]:min-h-[62px] max-[620px]:p-[7px] ${activeWindow.hasGeometry && !useCompactPaneList ? "absolute min-h-0 rounded-none" : useCompactPaneList ? "relative min-h-14" : ""} ${pane.tmuxPaneId === selectedTarget ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]" : ""} ${ghost ? "min-h-0 justify-end rounded-[3px] border-[rgb(139_255_154_/_42%)] bg-[rgb(3_14_6_/_18%)] p-[9px] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_14%)] backdrop-blur-[1px] [text-shadow:0_1px_8px_#000] hover:bg-[rgb(57_214_91_/_31%)]" : ""}`}
                 key={pane.id}
                 type="button"
                 onClick={() => onSelect(pane)}
                 aria-label={`Select pane ${pane.paneIndex ?? "unknown"}: ${pane.name}`}
-                title={pane.tmuxPaneId}
+                title={pane.recentOutput ? `${pane.tmuxPaneId}\n${pane.recentOutput}` : pane.tmuxPaneId}
                 style={activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined}
               >
                 <span className="font-mono text-[0.52rem] text-lime max-[620px]:text-[0.45rem]">PANE {pane.paneIndex ?? "?"}</span>
                 <strong className="mt-1 block max-w-full overflow-hidden text-[0.64rem] font-bold text-[#d8ffdc] text-ellipsis whitespace-nowrap max-[620px]:text-[0.54rem]">{pane.name}</strong>
-                <small className="mt-1 block max-w-full overflow-hidden font-mono text-[0.52rem] text-[#5d9168] text-ellipsis whitespace-nowrap max-[620px]:text-[0.45rem]">{pane.agentId ?? "zsh"} · {paneStateLabel(pane.state)}</small>
+                <small className={`mt-1 flex max-w-full items-center gap-1 overflow-hidden font-mono text-[0.52rem] text-ellipsis whitespace-nowrap max-[620px]:text-[0.45rem] ${statusClass}`}><span className={`size-[5px] shrink-0 rounded-full ${statusDotClass}`} />{pane.agentId ?? "zsh"} · {paneStateLabel(pane.state)}</small>
+                {pane.recentOutput ? <span className="mt-[5px] max-w-full overflow-hidden font-mono text-[0.48rem] leading-[1.35] text-[#87b78e] whitespace-pre-line [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] max-[620px]:text-[0.45rem]">{pane.recentOutput}</span> : null}
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -154,6 +170,10 @@ export function PaneLayoutOverlay({
       </div>
     </section>
   );
+}
+
+export function isOverlayBackdropTarget(target: unknown, currentTarget: unknown): boolean {
+  return target !== null && target === currentTarget;
 }
 
 const FOCUSABLE_SELECTOR = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";

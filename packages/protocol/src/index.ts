@@ -89,6 +89,14 @@ export const agentdControlRequestSchema = z.discriminatedUnion("type", [
     tmuxPaneId: z.string().regex(/^%[0-9]+$/),
     executionId: z.string().min(16).max(128),
   }).strict(),
+  z.object({
+    type: z.literal("observe_agent_session"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+    state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
+    recentOutput: z.string().max(2_000).optional(),
+  }).strict(),
 ]);
 export type AgentdControlRequest = z.infer<typeof agentdControlRequestSchema>;
 
@@ -120,6 +128,13 @@ export const agentdControlResponseSchema = z.discriminatedUnion("type", [
     agentSessionId: z.string().min(1).max(128),
     tmuxPaneId: z.string().regex(/^%[0-9]+$/),
     executionId: z.string().min(16).max(128),
+  }).strict(),
+  z.object({
+    type: z.literal("agent_session_observed"),
+    agentSessionId: z.string().min(1).max(128),
+    tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+    executionId: z.string().min(16).max(128),
+    state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
   }).strict(),
   z.object({
     type: z.literal("error"),
@@ -335,6 +350,9 @@ export const paneSummarySchema = z.object({
   runId: z.string().nullable(),
   state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
   title: z.string().nullable(),
+  // Live-only output tail. It is intentionally bounded and omitted from
+  // persisted pane rows so the pane list remains a small status projection.
+  recentOutput: z.string().max(2_000).optional(),
   lastSeenAt: z.string(),
   // Present for live tmux snapshots. Older persisted rows may omit geometry;
   // the client falls back to a readable stacked layout in that case.

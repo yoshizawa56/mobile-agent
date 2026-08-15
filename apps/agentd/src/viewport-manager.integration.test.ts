@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   hasObserved,
   runScenarioTable,
+  type Assertion,
   type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
@@ -33,13 +34,21 @@ type IntegrationFixture = {
   afterSplitZoomed: boolean;
   afterSplitSelected: boolean;
   afterSplitVisible: boolean;
+  afterSplitCwd: string;
+  expectedCwd: string;
   output: string;
 };
 type IntegrationContext = Omit<IntegrationFixture, "tmux" | "pty" | "manager" | "selectedPaneId" | "output">;
 
+const splitInheritsCwd: Assertion<IntegrationContext, undefined> = {
+  name: "creates the split in the target pane cwd",
+  check: (ctx) => expect(ctx.afterSplitCwd).toBe(ctx.expectedCwd),
+};
+
 const integrationFixture = (): FixtureHandle<IntegrationFixture> => {
   const tmux = new RealTmuxFixture();
-  const fixture: IntegrationFixture = { tmux, stagedZoomed: false, stagedSelected: false, stagedVisible: false, finalZoomed: false, finalSelected: false, finalVisible: false, clientSelected: false, outputHasErase: false, afterSplitZoomed: false, afterSplitSelected: false, afterSplitVisible: false, output: "" };
+  const fixture: IntegrationFixture = { tmux, stagedZoomed: false, stagedSelected: false, stagedVisible: false, finalZoomed: false, finalSelected: false, finalVisible: false, clientSelected: false, outputHasErase: false, afterSplitZoomed: false, afterSplitSelected: false, afterSplitVisible: false, afterSplitCwd: "", expectedCwd: "", output: "" };
+  fixture.expectedCwd = realpathSync(tmux.directory);
   return {
     fixture,
     cleanup: () => {
@@ -51,7 +60,7 @@ const integrationFixture = (): FixtureHandle<IntegrationFixture> => {
 };
 
 const cases = [
-  { name: "attaches a selected split pane as one fully redrawn viewport", steps: [{ type: "run" }], assert: [hasObserved<IntegrationContext, undefined>("stagedZoomed", true), hasObserved<IntegrationContext, undefined>("stagedSelected", true), hasObserved<IntegrationContext, undefined>("stagedVisible", true), hasObserved<IntegrationContext, undefined>("finalZoomed", true), hasObserved<IntegrationContext, undefined>("finalSelected", true), hasObserved<IntegrationContext, undefined>("finalVisible", true), hasObserved<IntegrationContext, undefined>("clientSelected", true), hasObserved<IntegrationContext, undefined>("outputHasErase", true), hasObserved<IntegrationContext, undefined>("afterSplitZoomed", true), hasObserved<IntegrationContext, undefined>("afterSplitSelected", true), hasObserved<IntegrationContext, undefined>("afterSplitVisible", true)] },
+  { name: "attaches a selected split pane as one fully redrawn viewport", steps: [{ type: "run" }], assert: [hasObserved<IntegrationContext, undefined>("stagedZoomed", true), hasObserved<IntegrationContext, undefined>("stagedSelected", true), hasObserved<IntegrationContext, undefined>("stagedVisible", true), hasObserved<IntegrationContext, undefined>("finalZoomed", true), hasObserved<IntegrationContext, undefined>("finalSelected", true), hasObserved<IntegrationContext, undefined>("finalVisible", true), hasObserved<IntegrationContext, undefined>("clientSelected", true), hasObserved<IntegrationContext, undefined>("outputHasErase", true), hasObserved<IntegrationContext, undefined>("afterSplitZoomed", true), hasObserved<IntegrationContext, undefined>("afterSplitSelected", true), hasObserved<IntegrationContext, undefined>("afterSplitVisible", true), splitInheritsCwd] },
 ] satisfies readonly ScenarioCase<"default", IntegrationStep, undefined, IntegrationContext>[];
 
 const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undefined, IntegrationContext> = {
@@ -78,17 +87,18 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.finalVisible = !final.visibleLayout.includes("{");
       fixture.clientSelected = client?.paneId === fixture.selectedPaneId;
       fixture.outputHasErase = fixture.output.includes("\u001b[K");
-      fixture.tmux.adapter.splitWindow("/tmp", undefined, "right", fixture.selectedPaneId, true);
+      fixture.tmux.adapter.splitWindow(undefined, "right", fixture.selectedPaneId, true);
       fixture.manager.reassertMobileViewport(fixture.selectedPaneId);
       await delay(100);
       const afterSplit = fixture.tmux.adapter.snapshotWindow(prepared.pane);
+      fixture.afterSplitCwd = fixture.tmux.adapter.listPanesSnapshot().panes.find((pane) => pane.paneId === fixture.tmux.splitPaneId)?.cwd ?? "";
       fixture.afterSplitZoomed = afterSplit.zoomed;
       fixture.afterSplitSelected = afterSplit.activePaneId === fixture.selectedPaneId;
       fixture.afterSplitVisible = !afterSplit.visibleLayout.includes("{");
       lease.release();
     }
   },
-  observe: (fixture) => ({ stagedZoomed: fixture.stagedZoomed, stagedSelected: fixture.stagedSelected, stagedVisible: fixture.stagedVisible, finalZoomed: fixture.finalZoomed, finalSelected: fixture.finalSelected, finalVisible: fixture.finalVisible, clientSelected: fixture.clientSelected, outputHasErase: fixture.outputHasErase, afterSplitZoomed: fixture.afterSplitZoomed, afterSplitSelected: fixture.afterSplitSelected, afterSplitVisible: fixture.afterSplitVisible }),
+  observe: (fixture) => ({ expectedCwd: fixture.expectedCwd, stagedZoomed: fixture.stagedZoomed, stagedSelected: fixture.stagedSelected, stagedVisible: fixture.stagedVisible, finalZoomed: fixture.finalZoomed, finalSelected: fixture.finalSelected, finalVisible: fixture.finalVisible, clientSelected: fixture.clientSelected, outputHasErase: fixture.outputHasErase, afterSplitZoomed: fixture.afterSplitZoomed, afterSplitSelected: fixture.afterSplitSelected, afterSplitVisible: fixture.afterSplitVisible, afterSplitCwd: fixture.afterSplitCwd }),
 };
 
 describe.skipIf(!canUseRealTmux)("real tmux mobile viewport fixture", () => {
@@ -99,8 +109,9 @@ class RealTmuxFixture {
   public readonly directory = mkdtempSync(join(tmpdir(), "mobile-agent-tmux-"));
   public readonly socketPath = join(this.directory, "server.sock");
   public readonly adapter = new TmuxAdapter(this.socketPath, "/dev/null");
-  public constructor() { this.require(["new-session", "-d", "-s", "issue11", "-x", "120", "-y", "40", "-c", "/tmp"]); }
-  public createSplitWindow(): string { const original = this.adapter.resolvePane("issue11:0.0"); const split = this.adapter.splitWindow("/tmp", undefined, "right", original.paneId); this.require(["send-keys", "-t", original.paneId, "printf LEFT_LAYOUT", "Enter"]); this.require(["send-keys", "-t", split, "printf SELECTED_PANE", "Enter"]); return split; }
+  public splitPaneId?: string;
+  public constructor() { this.require(["new-session", "-d", "-s", "issue11", "-x", "120", "-y", "40", "-c", this.directory]); }
+  public createSplitWindow(): string { const original = this.adapter.resolvePane("issue11:0.0"); const split = this.adapter.splitWindow(undefined, "right", original.paneId); this.splitPaneId = split; this.require(["send-keys", "-t", original.paneId, "printf LEFT_LAYOUT", "Enter"]); this.require(["send-keys", "-t", split, "printf SELECTED_PANE", "Enter"]); return split; }
   public dispose(): void { try { this.adapter.require(["kill-server"]); } catch { /* tmux may already be gone */ } rmSync(this.directory, { recursive: true, force: true }); }
   private require(args: string[]): void { this.adapter.require(args); }
 }

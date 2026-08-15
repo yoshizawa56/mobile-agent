@@ -23,7 +23,6 @@ const pane: PaneRecord = {
   cwd: "/tmp",
   workspaceId: null,
   agentId: null,
-  runId: null,
   state: "running",
   title: null,
   lastSeenAt: "2026-08-09T00:00:00.000Z",

@@ -58,6 +58,7 @@ type AgentContext = {
   remoteLog: string;
   nameLog: string;
   worktreeList: string;
+  worktreeRoot: string;
   stateEntries: readonly string[];
   elapsedMs: number;
   backendSessionId: string | null;
@@ -68,6 +69,7 @@ type AgentFixture = {
   setupHook: string;
   cleanupHook: string;
   worktree: string;
+  worktreeRoot: string;
   state: string;
   log: string;
   database: string;
@@ -106,7 +108,10 @@ const agentCases = [
       hasObserved<AgentContext, AgentResult>("codes", { run: 0 }),
       containsText("log", "setup cwd="),
       containsText("log", "setup env=secret-from-workspace nested=local-config"),
-      containsText("log", "backend cwd="),
+      {
+        name: "runs the backend inside the managed worktree",
+        check: (ctx: AgentContext) => expect(ctx.log).toContain(`backend cwd=${ctx.worktreeRoot}/session`),
+      },
       containsText("log", "cleanup cwd="),
       excludesText("worktreeList", "/session"),
       hasObserved<AgentContext, AgentResult>("stateEntries", []),
@@ -246,25 +251,28 @@ const agentTable: ScenarioTable<AgentFixture, AgentFixtureKey, AgentStep, AgentR
     remoteLog: safeRead(fixture.remoteLog),
     nameLog: safeRead(fixture.nameLog),
     worktreeList: safeExec(["git", "-C", fixture.workspace, "worktree", "list", "--porcelain"]),
+    worktreeRoot: fixture.worktreeRoot,
     stateEntries: safeReadDirectory(fixture.state),
     elapsedMs: fixture.elapsedMs,
     backendSessionId: fixture.backendSessionIdOverride ?? (fixture.sessionName ? await readBackendSessionId(fixture) : null),
   }),
 };
 
-type ExtendedFixtureKey = "managed-session" | "shell-context" | "unmanaged-pane" | "rollback" | "log-level" | "diagnostics";
+type ExtendedFixtureKey = "managed-session" | "shell-context" | "worktree-shell" | "unmanaged-pane" | "rollback" | "log-level" | "diagnostics";
 type ExtendedStep = { [Key in ExtendedFixtureKey]: { type: Key } }[ExtendedFixtureKey];
 type ExtendedResult = { code: number };
 type ExtendedFixture = AgentFixture & {
   tmux: RecordingTmuxAdapter;
   outputStream: Writable & { value: () => string };
   records: LogRecord[];
+  shellWorktree?: string;
   logger?: ReturnType<typeof createLogger>;
 };
 type ExtendedContext = {
   output: string;
   log: string;
   workspace: string;
+  shellWorktree: string;
   created?: { name: string; cwd: string; command?: string };
   options: readonly { name: string; key: string; value: string }[];
   environments: readonly { name: string; key: string; value: string }[];
@@ -294,9 +302,9 @@ const managedSessionAssertion: Assertion<ExtendedContext, ExtendedResult> = {
 };
 
 const shellContextAssertion: Assertion<ExtendedContext, ExtendedResult> = {
-  name: "passes and restores the wrapped shell metadata",
+  name: "passes and restores the wrapped shell metadata without a run identity",
   check: (ctx) => {
-    expect(ctx.log).toMatch(/parent=[0-9a-f-]+ shell=[0-9a-f-]+/);
+    expect(ctx.log).toMatch(/wrapped=1 managed=work/);
     expect(ctx.paneMetadata.filter((entry) => entry.field === "kind").map((entry) => entry.value)).toEqual(["shell", "shell"]);
     expect(ctx.paneMetadata.some((entry) => entry.field === "managed_session_id" && entry.value === "managed-session")).toBe(true);
     expect(ctx.paneMetadata.some((entry) => entry.field === "pane_name" && entry.value === "terminal-shell")).toBe(true);
@@ -308,7 +316,7 @@ const unmanagedPaneAssertion: Assertion<ExtendedContext, ExtendedResult> = {
   check: (ctx) => {
     expect(ctx.paneMetadata.filter((entry) => entry.field === "kind").map((entry) => entry.value)).toEqual(["agent", "shell"]);
     expect(ctx.paneMetadata.filter((entry) => entry.field === "agent_id").map((entry) => entry.value)).toEqual(["claude", ""]);
-    expect(ctx.paneMetadata.filter((entry) => entry.field === "run_id").at(-1)?.value).toBe("");
+    expect(ctx.paneMetadata.some((entry) => entry.field === "run_id")).toBe(false);
   },
 };
 
@@ -330,6 +338,18 @@ const diagnosticsAssertion: Assertion<ExtendedContext, ExtendedResult> = {
 const extendedCases = [
   { name: "creates a managed tmux session with an agent shell default", fixture: "managed-session", steps: [{ type: "managed-session" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), managedSessionAssertion] },
   { name: "passes the wrapped shell context to a child agent command", fixture: "shell-context", steps: [{ type: "shell-context" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), shellContextAssertion] },
+  {
+    name: "starts the shell after a worktree agent in that worktree",
+    fixture: "worktree-shell",
+    steps: [{ type: "worktree-shell" }],
+    assert: [
+      returns<ExtendedContext, ExtendedResult>({ code: 0 }),
+      {
+        name: "uses the AgentSession worktree as the interactive shell cwd",
+        check: (ctx: ExtendedContext) => expect(ctx.log).toContain(`shell cwd=${ctx.shellWorktree} session=`),
+      },
+    ],
+  },
   { name: "returns an unmanaged pane to shell metadata after the agent exits", fixture: "unmanaged-pane", steps: [{ type: "unmanaged-pane" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), unmanagedPaneAssertion] },
   { name: "rolls back a partially configured managed tmux session", fixture: "rollback", steps: [{ type: "rollback" }], assert: [hasError<ExtendedContext, ExtendedResult>({ message: /simulated tmux option failure/ }), rollbackAssertion] },
   { name: "keeps daemon log-level configuration out of attached CLI verbosity", fixture: "log-level", steps: [{ type: "log-level" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), { name: "does not emit command diagnostics", check: (ctx: ExtendedContext) => expect(ctx.output).not.toContain("command.started") }] },
@@ -345,8 +365,34 @@ const extendedFixtureFactories: Readonly<Record<ExtendedFixtureKey, () => Promis
   "shell-context": async () => {
     const fixture = createExtendedFixture();
     const child = join(fixture.root, "child-command");
-    writeExecutable(child, "#!/bin/sh\nprintf 'parent=%s shell=%s\\n' \"$AGENTD_PARENT_RUN_ID\" \"$AGENTD_SHELL_RUN_ID\" >>\"$TEST_AGENT_LOG\"\n");
+    writeExecutable(child, "#!/bin/sh\nprintf 'wrapped=%s managed=%s\\n' \"$AGENTD_WRAPPED_SHELL\" \"$AGENTD_MANAGED_SESSION_NAME\" >>\"$TEST_AGENT_LOG\"\n");
     fixture.env = { ...fixture.env, TMUX_PANE: "%7", AGENTD_MANAGED_SESSION_ID: "managed-session", AGENTD_MANAGED_SESSION_NAME: "work", AGENTD_PANE_NAME: "terminal-shell" };
+    return toExtendedHandle(fixture);
+  },
+  "worktree-shell": async () => {
+    const fixture = createExtendedFixture();
+    const child = join(fixture.root, "child-command");
+    const shell = join(fixture.root, "worktree-shell");
+    const worktreePath = join(fixture.worktree, "review");
+    mkdirSync(worktreePath, { recursive: true });
+    fixture.shellWorktree = realpathSync(worktreePath);
+    writeExecutable(child, "#!/bin/sh\nexit 0\n");
+    writeExecutable(shell, "#!/bin/sh\nprintf 'shell cwd=%s session=%s\\n' \"$PWD\" \"${AGENTD_WORKTREE_SESSION_NAME:-}\" >>\"$TEST_AGENT_LOG\"\nexit 0\n");
+    await insertSession(fixture, {
+      ...sessionFixture("claude"),
+      id: "worktree-session-id",
+      name: "review",
+      workspaceId: workspaceIdFor(fixture),
+      workspaceRoot: realpathSync(fixture.workspace),
+      workspaceName: "workspace",
+      worktreeRoot: fixture.worktreeRoot,
+      worktreePath: fixture.shellWorktree,
+      branch: "agent/review",
+      useWorktree: true,
+    });
+    fixture.env = { ...fixture.env, AGENTD_WORKTREE_SESSION_NAME: "review" };
+    fixture.env.AGENT_CLAUDE_BIN = child;
+    fixture.env.AGENTD_SHELL_BIN = shell;
     return toExtendedHandle(fixture);
   },
   "unmanaged-pane": async () => {
@@ -386,6 +432,11 @@ const extendedTable: ScenarioTable<ExtendedFixture, ExtendedFixtureKey, Extended
         const child = join(fixture.root, "child-command");
         return { code: await runExtendedCommand(fixture, ["shell", "--exit-after-command", "--", child]) };
       }
+      case "worktree-shell": {
+        const child = join(fixture.root, "child-command");
+        const shell = join(fixture.root, "worktree-shell");
+        return { code: await runExtendedCommand(fixture, ["shell", "--shell", shell, "--", child]) };
+      }
       case "unmanaged-pane":
         return { code: await runExtendedCommand(fixture, ["run", "claude", "--no-worktree", "-n", "unmanaged"]) };
       case "rollback":
@@ -402,6 +453,7 @@ const extendedTable: ScenarioTable<ExtendedFixture, ExtendedFixtureKey, Extended
     output: fixture.outputStream.value(),
     log: safeRead(fixture.log),
     workspace: realpathSync(fixture.workspace),
+    shellWorktree: fixture.shellWorktree ?? "",
     created: fixture.tmux.created,
     options: [...fixture.tmux.options],
     environments: [...fixture.tmux.environments],
@@ -799,7 +851,7 @@ function createFixture(extraEnv: Record<string, string> = {}): AgentFixture {
   execFileSync("git", ["-C", workspace, "config", "user.name", "Agent Test"]);
   execFileSync("git", ["-C", workspace, "add", "README", ".gitignore"]);
   execFileSync("git", ["-C", workspace, "commit", "-q", "-m", "fixture"]);
-  return { root, workspace, setupHook, cleanupHook, worktree, state, log, database, env: { ...process.env, AGENTD_DB_FILE: database, AGENT_HOOK_OUTPUT_DIR: state, AGENT_WORKTREE_ROOT: worktree, AGENT_CLAUDE_BIN: fakeClaude, AGENT_ASSUME_YES: "1", TEST_AGENT_LOG: log, ...extraEnv }, output: "", finalOutput: "", resumeOutput: "", codes: {}, elapsedMs: 0 };
+  return { root, workspace, setupHook, cleanupHook, worktree, worktreeRoot: realpathSync(worktree), state, log, database, env: { ...process.env, AGENTD_DB_FILE: database, AGENT_HOOK_OUTPUT_DIR: state, AGENT_WORKTREE_ROOT: worktree, AGENT_CLAUDE_BIN: fakeClaude, AGENT_ASSUME_YES: "1", TEST_AGENT_LOG: log, ...extraEnv }, output: "", finalOutput: "", resumeOutput: "", codes: {}, elapsedMs: 0 };
 }
 
 function toHandle<Fixture extends AgentFixture>(fixture: Fixture, registerCleanup?: CleanupRegistrar): FixtureHandle<Fixture> {
@@ -837,7 +889,7 @@ class RecordingTmuxAdapter extends TmuxAdapter {
   public override killSession(name: string): void { this.killed.push(name); }
   public override setSessionEnvironment(name: string, key: string, value: string): void { this.environments.push({ name, key, value }); }
   public override setManagedSessionMetadata(name: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void { this.sessionMetadata.push({ name, field, value }); }
-  public override setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id", value: string): void { this.paneMetadata.push({ paneId, field, value }); }
+  public override setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id", value: string): void { this.paneMetadata.push({ paneId, field, value }); }
   public override attachSession(): number { return 0; }
 }
 function captureOutput(): Writable & { value: () => string } { let value = ""; const output = new Writable({ write(chunk, _encoding, callback) { value += chunk.toString(); callback(); } }) as Writable & { value: () => string }; output.value = () => value; return output; }

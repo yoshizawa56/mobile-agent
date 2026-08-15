@@ -207,8 +207,7 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       const workspace = input.workspaceId ? await deps.application.workspaces.resolveDirectory(input.workspaceId) : undefined;
       const session = await deps.application.sessions.create({
         name: input.name,
-        cwd: workspace?.rootPath ?? input.cwd!,
-        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        initialCwd: workspace?.rootPath ?? input.cwd!,
       });
       return c.json({ session }, 201);
     })
@@ -222,7 +221,7 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
         ? await deps.application.workspaces.resolveSelection({ workspaceId: input.workspaceId, mode: input.useWorktree ? "worktree" : "workspace" })
         : undefined;
       return c.json(paneResponseSchema.parse({
-        pane: await deps.application.panes.create(workspace ? { ...input, cwd: workspace.rootPath } : input, workspace),
+        pane: await deps.application.panes.create(input, workspace),
       }), 201);
     })
     .post("/internal/tmux-hook",

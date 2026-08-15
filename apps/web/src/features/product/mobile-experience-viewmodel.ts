@@ -387,21 +387,23 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onAgentChange: setNewPaneAgent,
     onPlacementChange: (placement) => {
       setNewPanePlacement(placement);
+      if (placement !== "window") setNewPaneSelectionMode("workspace");
       if (placement !== "window" && !newPaneTargetPaneId) setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
     },
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => {
-      const workspaceId = newPaneWorkspaceId || workspaces[0]?.id;
-      if (!selectedSession || !selectedTerminal || isCreatingPane || !workspaceId || !agentdConnection) return;
+      const needsWorkspace = newPaneKind === "agent" && newPanePlacement === "window";
+      const workspaceId = needsWorkspace ? newPaneWorkspaceId || workspaces[0]?.id : undefined;
+      if (!selectedSession || !selectedTerminal || isCreatingPane || (needsWorkspace && !workspaceId) || !agentdConnection) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
       void createPane({
         sessionName: selectedSession.name,
         kind: newPaneKind,
         name: newPaneName,
-        workspaceId,
+        ...(workspaceId ? { workspaceId } : {}),
         agentId: newPaneKind === "agent" ? newPaneAgent : null,
-        useWorktree: newPaneKind === "agent" && newPaneSelectionMode === "worktree",
+        useWorktree: needsWorkspace && newPaneSelectionMode === "worktree",
         placement: newPanePlacement,
         targetPaneId: newPanePlacement === "window" ? null : newPaneTargetPaneId,
       }, agentdConnection)
@@ -557,10 +559,7 @@ const fallbackTerminal: TerminalEndpoint = {
 
 const fallbackSession: TmuxSession = {
   name: "session",
-  workspace: "workspace",
-  cwd: "~",
   paneCount: 0,
   waitingCount: 0,
   detail: "tmux",
-  state: "idle",
 };

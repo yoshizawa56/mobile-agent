@@ -20,7 +20,6 @@ export const panes = sqliteTable(
     cwd: text("cwd").notNull(),
     workspaceId: text("workspace_id"),
     agentId: text("agent_id"),
-    runId: text("run_id"),
     state: text("state", {
       enum: ["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"],
     }).notNull(),
@@ -33,19 +32,6 @@ export const panes = sqliteTable(
     agentSessionIndex: index("panes_agent_session_index").on(table.agentSessionId),
   }),
 );
-
-export const runs = sqliteTable("runs", {
-  id: text("id").primaryKey(),
-  paneId: text("pane_id").notNull(),
-  agentId: text("agent_id"),
-  profileId: text("profile_id"),
-  state: text("state", {
-    enum: ["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"],
-  }).notNull(),
-  startedAt: text("started_at").notNull(),
-  endedAt: text("ended_at"),
-  ...timestamps,
-});
 
 export const auditEvents = sqliteTable("audit_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -107,6 +93,5 @@ export const agentSessions = sqliteTable(
 );
 
 export type PaneRow = typeof panes.$inferSelect;
-export type RunRow = typeof runs.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type AgentSessionRow = typeof agentSessions.$inferSelect;

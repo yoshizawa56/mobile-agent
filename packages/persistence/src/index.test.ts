@@ -12,12 +12,11 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import type { AgentSessionRecord, PaneRecord, RunRecord, WorkspaceRecord } from "@mobile-agent/domain";
+import type { AgentSessionRecord, PaneRecord, WorkspaceRecord } from "@mobile-agent/domain";
 import {
   defaultAgentMigrationsFolder,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
-  DrizzleRunRepository,
   DrizzleWorkspaceRepository,
   createAgentDatabase,
   recordAuditEvent,
@@ -34,20 +33,9 @@ const pane: PaneRecord = {
   cwd: "/work/repo",
   workspaceId: "workspace-1",
   agentId: "codex",
-  runId: "run-1",
   state: "waiting_input",
   title: "Review changes",
   lastSeenAt: "2026-08-09T00:00:00.000Z",
-};
-
-const run: RunRecord = {
-  id: "run-1",
-  paneId: "pane-1",
-  agentId: "codex",
-  profileId: "mobile-codex",
-  state: "waiting_input",
-  startedAt: "2026-08-09T00:00:00.000Z",
-  endedAt: null,
 };
 
 const workspace: WorkspaceRecord = {
@@ -101,7 +89,7 @@ type DatabaseFixture = {
   claimResults: boolean[];
   backendResults: boolean[];
 };
-type DatabaseKey = "legacy" | "pending";
+type DatabaseKey = "historical" | "legacy" | "pending";
 type DatabaseStep =
   | { type: "write-round-trip" }
   | { type: "verify-legacy" }
@@ -113,7 +101,6 @@ type DatabaseStep =
 type DatabaseResult = undefined;
 type DatabaseContext = {
   pane: PaneRecord | undefined;
-  run: RunRecord | undefined;
   workspace: WorkspaceRecord | undefined;
   session: AgentSessionRecord | undefined;
   waitingPanes: readonly PaneRecord[];
@@ -130,6 +117,9 @@ type DatabaseContext = {
   claimResults: readonly boolean[];
   backendResults: readonly boolean[];
   claimSession: AgentSessionRecord | undefined;
+  runTablePresent: boolean;
+  runIdColumnPresent: boolean;
+  integrityCheck: string;
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
@@ -137,17 +127,51 @@ const normalFixture = (): FixtureHandle<DatabaseFixture> => {
   return { fixture: { database, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
+const createPreCleanupMigrationsFolder = (root: string): string => {
+  const migrationsFolder = join(root, "drizzle");
+  cpSync(defaultAgentMigrationsFolder(), migrationsFolder, { recursive: true });
+  const journalPath = join(migrationsFolder, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+    entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+  };
+  journal.entries = journal.entries.filter((entry) => entry.tag !== "0004_remove_legacy_runs");
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  rmSync(join(migrationsFolder, "0004_remove_legacy_runs.sql"));
+  return migrationsFolder;
+};
+
 const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
   const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-legacy-"));
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const file = join(root, "agentd.sqlite");
-  const initial = createAgentDatabase(file);
+  const initial = createAgentDatabase(file, { migrationsFolder: createPreCleanupMigrationsFolder(root) });
   try {
     await new DrizzlePaneRepository(initial.db).upsert(pane);
     initial.sqlite.exec('ALTER TABLE workspaces DROP COLUMN worktree_copy_patterns; DROP INDEX panes_agent_session_index; ALTER TABLE panes DROP COLUMN agent_session_id; ALTER TABLE panes DROP COLUMN agent_execution_id; DROP INDEX panes_tmux_server_pane_id_index; ALTER TABLE panes DROP COLUMN tmux_server_id; CREATE UNIQUE INDEX panes_tmux_pane_id_index ON panes (tmux_pane_id); ALTER TABLE agent_sessions DROP COLUMN execution_id; ALTER TABLE agent_sessions DROP COLUMN execution_pid; ALTER TABLE agent_sessions DROP COLUMN execution_started_at; DROP TABLE "__drizzle_migrations"');
   } finally {
     initial.close();
   }
+  const database = createAgentDatabase(file);
+  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+};
+
+const historicalMigrationFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
+  const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-historical-"));
+  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
+  const file = join(root, "agentd.sqlite");
+  const migrationsFolder = createPreCleanupMigrationsFolder(root);
+
+  const historical = createAgentDatabase(file, { migrationsFolder });
+  try {
+    await new DrizzlePaneRepository(historical.db).upsert(pane);
+    historical.sqlite
+      .prepare("INSERT INTO runs (id, pane_id, agent_id, profile_id, state, started_at, ended_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("legacy-run", pane.id, pane.agentId, "legacy-profile", pane.state, pane.lastSeenAt, null, pane.lastSeenAt, pane.lastSeenAt);
+    historical.sqlite.prepare("UPDATE panes SET run_id = ? WHERE id = ?").run("legacy-run", pane.id);
+  } finally {
+    historical.close();
+  }
+
   const database = createAgentDatabase(file);
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
@@ -176,29 +200,40 @@ const matchesObserved = <Result>(key: keyof DatabaseContext, expected: unknown):
 
 const cases = [
   {
-    name: "round-trips panes, runs, workspaces, sessions, and audit events",
+    name: "round-trips panes, workspaces, sessions, and audit events",
     steps: [{ type: "write-round-trip" }],
     assert: [
       matchesObserved<DatabaseResult>("pane", pane),
       hasObserved<DatabaseContext, DatabaseResult>("waitingPanes", [pane]),
-      matchesObserved<DatabaseResult>("run", run),
       matchesObserved<DatabaseResult>("workspace", { ...workspace, updatedAt: expect.any(String) }),
       matchesObserved<DatabaseResult>("session", { ...session, updatedAt: expect.any(String) }),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 4),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 5),
     ],
   },
   {
-    name: "baselines a legacy database without dropping its data",
+    name: "baselines a legacy database while preserving current pane data",
     fixture: "legacy",
     steps: [{ type: "verify-legacy" }],
-    assert: [hasObserved<DatabaseContext, DatabaseResult>("pane", pane), hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 4)],
+    assert: [hasObserved<DatabaseContext, DatabaseResult>("pane", pane), hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 5)],
+  },
+  {
+    name: "removes legacy run storage while preserving current pane data",
+    fixture: "historical",
+    steps: [{ type: "verify-legacy" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
+      hasObserved<DatabaseContext, DatabaseResult>("runTablePresent", false),
+      hasObserved<DatabaseContext, DatabaseResult>("runIdColumnPresent", false),
+      hasObserved<DatabaseContext, DatabaseResult>("integrityCheck", "ok"),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 5),
+    ],
   },
   {
     name: "applies a pending generated migration at startup",
     fixture: "pending",
     steps: [{ type: "verify-pending" }],
-    assert: [hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1), hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 5)],
+    assert: [hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1), hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 6)],
   },
   {
     name: "keeps tmux server generations distinct and prunes only stale rows",
@@ -234,7 +269,7 @@ const cases = [
 
 const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext> = {
   defaultFixture: normalFixture,
-  fixtures: { legacy: legacyFixture, pending: pendingMigrationFixture },
+  fixtures: { historical: historicalMigrationFixture, legacy: legacyFixture, pending: pendingMigrationFixture },
   cases,
   execute: async (fixture, steps) => {
     const databases = fixture.database;
@@ -242,10 +277,9 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       switch (step.type) {
         case "write-round-trip":
           await new DrizzlePaneRepository(databases.db).upsert(pane);
-          await new DrizzleRunRepository(databases.db).upsert(run);
           await new DrizzleWorkspaceRepository(databases.db).upsert(workspace);
           await new DrizzleAgentSessionRepository(databases.db).insert(session);
-          recordAuditEvent(databases.db, { eventType: "run.waiting", entityId: run.id, payload: { state: run.state }, occurredAt: "2026-08-09T00:01:00.000Z" });
+          recordAuditEvent(databases.db, { eventType: "agent_session.waiting", entityId: session.id, payload: { state: "waiting_input" }, occurredAt: "2026-08-09T00:01:00.000Z" });
           break;
         case "verify-legacy":
         case "verify-pending":
@@ -290,15 +324,20 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     const { database } = fixture;
     const panes = new DrizzlePaneRepository(database.db);
     const sessions = new DrizzleAgentSessionRepository(database.db);
+    const runTablePresent = database.sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'").all().length > 0;
+    const paneColumns = database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string }>;
+    const integrity = database.sqlite.query("PRAGMA integrity_check").get() as { integrity_check: string };
     return {
       pane: await panes.findById(pane.id),
       waitingPanes: await panes.list({ state: "waiting_input" }),
-      run: await new DrizzleRunRepository(database.db).findById(run.id),
       workspace: await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
       session: await sessions.findByName(workspace.id, session.name),
       auditCount: database.db.select().from(auditEvents).all().length,
       migrationCount: database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all().length,
       probeCount: database.sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe'").all().length,
+      runTablePresent,
+      runIdColumnPresent: paneColumns.some((column) => column.name === "run_id"),
+      integrityCheck: integrity.integrity_check,
       oldIdentity: fixture.prePruneOld,
       currentIdentity: fixture.prePruneCurrent,
       oldAfterPrune: await panes.findById("pane-old"),

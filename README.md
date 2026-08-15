@@ -28,9 +28,9 @@ bun run audit:public
 - `packages/agentd-client`: the TypeScript client for Hono RPC, Zod validation, and the agentd terminal WebSocket
 - `packages/agentd-http`: the Bun/Hono transport adapter, shared validation/error boundary, and typed HTTP/WebSocket app contract
 - `packages/cli-adapters`: CLI-side infrastructure adapters and composition factories
-- `packages/domain`: Pane/Run state and agent waiting-state rules
+- `packages/domain`: pane state, AgentSession lifecycle, and agent waiting-state rules
 - `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
-- `packages/persistence`: Drizzle + SQLite persistence for panes, runs, audits, registered workspaces, and agent sessions
+- `packages/persistence`: Drizzle + SQLite persistence for panes, audits, registered workspaces, and AgentSession records; legacy run storage is removed by the post-refactor migration
 - `packages/agents`: the AgentPlugin API and built-in shell, Codex, and Claude plugins
 - `packages/protocol`: Zod definitions for WebSocket and Pane Board DTOs
 
@@ -167,7 +167,7 @@ bun run build:agent
 
 With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured unmanaged files such as `.env` into the same relative paths, and then runs the registered workspace setup script when present. Copy patterns are relative and support `*` and `**`; missing matches are warnings. Cleanup scripts run before the worktree is removed. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
 
-`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
+`agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell adopts the durable AgentSession into the current pane. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
 
 `build:agent` compiles the agent CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
 
@@ -242,7 +242,7 @@ bun run --filter @mobile-agent/persistence db:generate
 bun run --filter @mobile-agent/persistence db:check
 ```
 
-`db:generate` also refreshes the generated embedded migration module; commit the SQL, journal, and generated module together. Normal `agent` and `agentd` startup applies pending migrations automatically. `db:migrate` remains available for an explicit administrative migration run. Databases created by the previous `CREATE TABLE IF NOT EXISTS` implementation are detected once and baseline-registered as the initial migration without dropping their data; a partial legacy schema fails closed instead of being guessed at.
+`db:generate` also refreshes the generated embedded migration module; commit the SQL, journal, and generated module together. Normal `agent` and `agentd` startup applies pending migrations automatically. `db:migrate` remains available for an explicit administrative migration run. Databases created by the previous `CREATE TABLE IF NOT EXISTS` implementation are detected once and baseline-registered as the initial migration; pending migrations preserve current pane, workspace, session, and audit data while removing the obsolete `runs` table and `panes.run_id` column. The cleanup is forward-only, so take a recoverable database backup before rollout if rollback to an older binary may be needed. A partial legacy schema fails closed instead of being guessed at.
 
 When publishing inside a tailnet, keep agentd bound to localhost and expose port 4317 through Tailscale Serve and ACLs. The current MVP uses Tailscale Serve/ACL as its authentication boundary. Identity-header verification and per-device pairing tokens are planned security improvements.
 

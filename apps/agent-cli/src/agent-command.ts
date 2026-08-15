@@ -14,7 +14,7 @@ import { WorkspaceCrud, type UpdateWorkspaceInput } from "@mobile-agent/applicat
 import type {
   AgentBackend,
   AgentSessionRecord,
-  RunState,
+  PaneState,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 import { InvalidAgentSessionNameError, isValidWorktreeCopyPattern, normalizeAgentSessionName, normalizeWorktreeCopyPatterns } from "@mobile-agent/domain";
@@ -464,29 +464,28 @@ export class AgentCommand {
   }
 
   private async runShell(options: ShellOptions): Promise<number> {
-    const shellRunId = this.env.AGENTD_SHELL_RUN_ID ?? randomUUID();
     const paneName = this.env.AGENTD_PANE_NAME ?? this.env.AGENTD_MANAGED_SESSION_NAME ?? "shell";
     const shellEnvironment: NodeJS.ProcessEnv = {
       ...this.env,
-      AGENTD_SHELL_RUN_ID: shellRunId,
-      AGENTD_SHELL_PARENT_RUN_ID: this.env.AGENTD_PARENT_RUN_ID ?? "",
-      AGENTD_PARENT_RUN_ID: shellRunId,
       AGENTD_WRAPPED_SHELL: "1",
     };
     const shellMetadataEnvironment: NodeJS.ProcessEnv = {
       ...shellEnvironment,
-      AGENTD_PARENT_RUN_ID: shellEnvironment.AGENTD_SHELL_PARENT_RUN_ID,
     };
-    this.markCurrentPane({ kind: "shell", agentId: null, runId: shellRunId, name: paneName }, shellMetadataEnvironment);
+    this.markCurrentPane({ kind: "shell", agentId: null, name: paneName }, shellMetadataEnvironment);
 
     try {
+      let shellCwd = this.cwd;
       if (options.command.length > 0) {
         const result = await spawnAttached(options.command[0]!, options.command.slice(1), this.cwd, shellEnvironment);
         if (options.exitAfterCommand) return result.code;
+        shellCwd = await this.resolveWorktreeShellCwd(shellEnvironment);
       }
 
       const shellBinary = resolveExecutable(options.shell ?? this.env.SHELL ?? "sh", this.env);
-      return await spawnAttached(shellBinary, ["-i"], this.cwd, shellEnvironment).then((result) => result.code);
+      const interactiveShellEnvironment: NodeJS.ProcessEnv = { ...shellEnvironment };
+      delete interactiveShellEnvironment.AGENTD_WORKTREE_SESSION_NAME;
+      return await spawnAttached(shellBinary, ["-i"], shellCwd, interactiveShellEnvironment).then((result) => result.code);
     } finally {
       this.restoreCurrentPaneMetadata(shellMetadataEnvironment);
     }
@@ -792,7 +791,7 @@ export class AgentCommand {
   }
 
   private markCurrentPane(
-    input: { kind: "shell" | "agent"; agentId: string | null; runId: string; name: string },
+    input: { kind: "shell" | "agent"; agentId: string | null; name: string },
     environment = this.env,
   ): void {
     const paneId = environment.TMUX_PANE;
@@ -800,13 +799,8 @@ export class AgentCommand {
     try {
       this.tmux.setAgentPaneMetadata(paneId, "kind", input.kind);
       this.tmux.setAgentPaneMetadata(paneId, "agent_id", input.agentId ?? "");
-      this.tmux.setAgentPaneMetadata(paneId, "run_id", input.runId);
       this.tmux.setAgentPaneMetadata(paneId, "pane_name", input.name);
       this.tmux.setAgentPaneMetadata(paneId, "managed_session_id", environment.AGENTD_MANAGED_SESSION_ID ?? "");
-      const parentRunId = input.kind === "shell"
-        ? environment.AGENTD_SHELL_PARENT_RUN_ID ?? environment.AGENTD_PARENT_RUN_ID ?? ""
-        : environment.AGENTD_PARENT_RUN_ID ?? "";
-      this.tmux.setAgentPaneMetadata(paneId, "parent_run_id", parentRunId);
     } catch {
       // A shell can also run outside tmux or against a server that disappears
       // while the wrapper is starting. The wrapper must remain usable there.
@@ -814,11 +808,9 @@ export class AgentCommand {
   }
 
   private restoreCurrentPaneMetadata(environment = this.env): void {
-    const shellRunId = environment.AGENTD_SHELL_RUN_ID;
     this.markCurrentPane({
       kind: "shell",
       agentId: null,
-      runId: shellRunId ?? "",
       name: environment.AGENTD_PANE_NAME ?? environment.AGENTD_MANAGED_SESSION_NAME ?? "shell",
     }, environment);
   }
@@ -1028,7 +1020,8 @@ export class AgentCommand {
     const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
     sessionLogger.debug("backend.command_ready", { argumentCount: command.length });
     await this.adoptSessionPane(current);
-    this.markCurrentPane({ kind: "agent", agentId: backend, runId: current.id, name: current.name });
+    this.markCurrentPane({ kind: "agent", agentId: backend, name: current.name });
+    const previousPaneCwd = this.adoptTmuxPaneCwd(runDir);
     let result: ProcessResult;
     try {
       await this.publishAgentObservation(current, "running");
@@ -1037,6 +1030,7 @@ export class AgentCommand {
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
+      this.restoreTmuxPaneCwd(previousPaneCwd);
     }
     const status = await this.finalizeSession(current, result, startedAt, runDir, codexBaseline);
     sessionLogger.debug("session.finished", { status, durationMs: Date.now() - startedAt * 1000 });
@@ -1085,7 +1079,8 @@ export class AgentCommand {
     await this.sessions.update(current);
     await this.adoptSessionPane(current);
     const startedAt = Math.floor(Date.now() / 1000);
-    this.markCurrentPane({ kind: "agent", agentId: session.backend, runId: current.id, name: current.name });
+    this.markCurrentPane({ kind: "agent", agentId: session.backend, name: current.name });
+    const previousPaneCwd = this.adoptTmuxPaneCwd(runDir);
     let result: ProcessResult;
     try {
       await this.publishAgentObservation(current, "running");
@@ -1094,6 +1089,7 @@ export class AgentCommand {
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
+      this.restoreTmuxPaneCwd(previousPaneCwd);
     }
     const status = await this.finalizeSession(current, result, startedAt, runDir, true);
     logger.debug("session.resume_finished", { status, durationMs: Date.now() - sessionStartedAt });
@@ -1146,7 +1142,7 @@ export class AgentCommand {
     }
   }
 
-  private async publishAgentObservation(session: AgentSessionRecord, state: RunState, recentOutput?: string): Promise<void> {
+  private async publishAgentObservation(session: AgentSessionRecord, state: PaneState, recentOutput?: string): Promise<void> {
     const tmuxPaneId = currentTmuxPane(this.env);
     if (!tmuxPaneId || !session.executionId) return;
     try {
@@ -1398,6 +1394,33 @@ export class AgentCommand {
     return context;
   }
 
+  private async resolveWorktreeShellCwd(environment: NodeJS.ProcessEnv): Promise<string> {
+    const sessionName = environment.AGENTD_WORKTREE_SESSION_NAME?.trim();
+    if (!sessionName) return this.cwd;
+
+    try {
+      this.ensureDatabase();
+      const workspace = await this.resolveWorkspace();
+      const session = await this.sessions.findByName(workspace.id, sessionName);
+      if (session?.useWorktree && session.worktreePath && existsSync(session.worktreePath)) return session.worktreePath;
+    } catch {
+      // A shell should remain usable even if session metadata is unavailable.
+    }
+    return this.cwd;
+  }
+
+  private adoptTmuxPaneCwd(directory: string): string | undefined {
+    if (!this.env.TMUX_PANE) return undefined;
+    const previousCwd = process.cwd();
+    if (previousCwd !== directory) process.chdir(directory);
+    return previousCwd;
+  }
+
+  private restoreTmuxPaneCwd(previousCwd: string | undefined): void {
+    if (!previousCwd || process.cwd() === previousCwd) return;
+    process.chdir(previousCwd);
+  }
+
   private async findRegisteredWorkspaceForCwd(gitRoot: string): Promise<WorkspaceRecord | undefined> {
     if (this.cwd === gitRoot) return undefined;
     const candidates = (await this.workspaces.list())
@@ -1642,7 +1665,7 @@ export class AgentCommand {
       }
       result = await spawnAttached(command[0]!, command.slice(1), runDir, {
         ...this.env,
-        AGENTD_RUN_ID: session.id,
+        AGENTD_AGENT_SESSION_ID: session.id,
         AGENTD_AGENT_ID: session.backend,
       }, {
         onStarted: async (pid) => {

@@ -39,7 +39,7 @@ The primary goal is to let a phone operate an existing desktop tmux environment 
 - When a viewport lease is acquired, the existing desktop client receives a temporary active-pane flag so mobile pane selection does not move the desktop cursor. The original client flags are restored when the lease ends.
 - tmux client-active, client-resized, and, when available, client-focus-in events return ownership to the desktop and restore its zoom, layout, and size.
 - Existing desktop panes are restored from the pre-lease active pane. If no desktop client exists, a client attaching later is treated as a desktop takeover.
-- Twin sessions and independent agent Runs are future extensions for plugins that require simultaneous operation or independent sizes.
+- Twin sessions and independent AgentSession executions are future extensions for plugins that require simultaneous operation or independent sizes.
 - Live Activity, Widget, and Keychain integrations are optional native extensions rather than required dependencies of the client.
 - The first desktop experience uses an existing terminal, tmux attach, and the TUI. A desktop GUI is added only when demand becomes clear.
 
@@ -76,9 +76,20 @@ A tmux session. It is the unit a person joins with tmux attach; it is not the pr
 
 A tmux pane. This is the basic unit that Mobile Agent lists and selects.
 
-### Run
+### AgentSession
 
-A logical unit of work executing inside a pane. A pane can be reused for multiple Runs over time.
+The durable lifecycle record for one backend conversation and its optional
+managed worktree. It owns the backend session ID, workspace/worktree mapping,
+resume information, and execution fencing token. An AgentSession can be
+restarted or resumed and can move between panes; it is the only agent
+execution entity managed by the product.
+
+### Pane state
+
+The live state observed for the process currently displayed in a pane. It is a
+projection of tmux, the backend, and screen parsing. A shell has no
+AgentSession association. `executionId` is an ephemeral fencing token for the
+current AgentSession process and is not a separate persisted lifecycle record.
 
 ### AgentPlugin
 
@@ -92,26 +103,29 @@ Configuration that overrides an existing plugin command, environment, detection 
 
 A host directory explicitly registered with agentd. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths plus relative patterns for copying unmanaged files into generated worktrees; a generated git worktree is an execution directory derived from that workspace.
 
-### Separating Pane and Run
+### Separating Pane and AgentSession
 
-tmux panes are long-lived, while Runs are replaced within a pane. Therefore a pane must not be persisted as a direct one-to-one relationship with an agent.
+tmux panes are long-lived and can be reused for shells or different agent
+sessions. A pane therefore has a nullable `agentSessionId` link, while the
+durable agent lifecycle remains in `agent_sessions`.
 
 ~~~
 Pane
   id: mobile-pane-uuid
   tmuxPaneId: tmux-pane-id
-  session: workspace
+  tmuxSession: tmux-session-name
   window: 0
-  currentRunId: run-uuid
-
-Run
-  id: run-uuid
-  kind: agent | shell
-  agentId: codex | claude | custom | null
-  name: string
-  workspaceId: string | null
+  cwd: tmux-reported-current-path
+  agentSessionId: string | null
   state: starting | running | waiting_input | waiting_approval |
-         completed | failed | shell | unknown
+         completed | failed | stopped
+
+AgentSession
+  id: agent-session-uuid
+  backend: codex | claude
+  workspaceId: string
+  worktreePath: string | null
+  status: starting | setup | ready | running | resuming | interrupted | exited
 ~~~
 
 Regular shells use kind=shell and agentId=null in the same model.
@@ -122,12 +136,12 @@ tmux pane identifiers can change after a pane is recreated or moved, so mobilePa
 @agentd.pane_id
 @agentd.pane_name
 @agentd.kind
-@agentd.run_id
 @agentd.agent_id
 @agentd.workspace_id
-@agentd.profile_id
 @agentd.managed_session_id
-@agentd.parent_run_id
+
+@agentd.agent_session_id
+@agentd.agent_execution_id
 ~~~
 
 ## 4. System architecture
@@ -270,7 +284,7 @@ Application use cases
                          |
                          v
 Domain
-  Pane / Run / Workspace / AgentState / Plugin / Event
+  Pane / AgentSession / Workspace / PaneState / Plugin / Event
                          |
                          v
 Ports
@@ -278,7 +292,7 @@ Ports
   TerminalTransport
   AgentRuntime
   PaneRepository
-  RunRepository
+  AgentSessionRepository
   WorkspaceRepository
   EventPublisher
   NotificationGateway
@@ -363,7 +377,7 @@ feature/
 
 route.tsx should call useHogeViewModel, process path and search parameters, and pass the result to the View. ViewModels receive unit tests; Views receive comprehensive Storybook state stories.
 
-Use TanStack Query for server state such as pane lists, Run metadata, settings, and mutations. Do not put PTY/WebSocket terminal bytes, connection state, or xterm.js instances in the Query cache. Manage those through the ViewModel and terminal-transport lifecycle.
+Use TanStack Query for server state such as pane lists, AgentSession metadata, settings, and mutations. Do not put PTY/WebSocket terminal bytes, connection state, or xterm.js instances in the Query cache. Manage those through the ViewModel and terminal-transport lifecycle.
 
 ### Backend testing conventions
 
@@ -427,7 +441,7 @@ profiles:
     command: codex
     args: ["--profile", "mobile"]
     env:
-      AGENTD_RUN_ID: "<run-id>"
+      AGENTD_AGENT_SESSION_ID: "<agent-session-id>"
     notifications:
       states: [waiting_input, waiting_approval, failed]
 ~~~
@@ -450,7 +464,7 @@ interface AgentPluginV1 {
   prepare(input: PrepareInput): Promise<WorkspacePlan>
   launch(input: LaunchInput): Promise<LaunchSpec>
   createObserver(input: ObserverInput): AgentObserver
-  actions(ctx: RunContext): ActionDescriptor[]
+  actions(ctx: AgentSessionContext): ActionDescriptor[]
   execute(action: ActionRequest): Promise<HostCommand[]>
 }
 
@@ -537,20 +551,21 @@ agent tmux new-session
         |                            +-- agent run codex|claude
         |
         +-- agentd tmux monitor: session/window/pane existence and geometry
-        +-- provider plugin: run-specific output, logs, and state observations
+        +-- provider plugin: AgentSession output, logs, and state observations
 ~~~
 
 `agent tmux new-session` configures the initial pane and the tmux
 `default-command` to use `agent shell`. The application uses the same wrapper
-when it creates a session or pane. `agent shell` records the shell run ID and
-passes it as `AGENTD_PARENT_RUN_ID` to a nested `agent run`; the nested command
-then records its own agent/run type and restores the shell metadata when it
-exits. A direct `agent run` or `agent resume` from an unmanaged shell uses the
-same durable adoption path but has no wrapper context to inherit; it still
-returns the pane to shell metadata when it exits. The tmux layer owns only
-infrastructure facts. Provider-specific state and approval detection belong to
-the corresponding plugin. The tmux layer never interprets the provider's rendered
-terminal screen; it only tracks pane identity, lifecycle, and geometry.
+when it creates a session or pane. `agent shell` is only a wrapper that starts
+the requested command and restores shell metadata when it exits; it does not
+create a separate shell lifecycle record. `agent run` and `agent resume` adopt an
+AgentSession into the current pane using its `executionId`, then release that
+association when the backend exits. The tmux layer owns only infrastructure
+facts. Provider-specific state and approval detection belong to the
+corresponding plugin; screen parsing is a compatibility fallback for unmanaged
+panes and panes that predate the managed path. The tmux layer does not interpret
+the rendered screen of a managed provider; it tracks pane identity, lifecycle,
+and geometry.
 
 ### 8.2 Mobile terminal data route
 
@@ -596,7 +611,7 @@ At startup, agentd scans tmux and rebuilds:
 - agentd user options;
 - session, window, and pane structure;
 - cwd, command, and process information;
-- saved Pane and Run records from SQLite.
+- saved Pane projections and AgentSession records from SQLite.
 
 Manually created panes and panes with incomplete metadata are shown as kind=shell or unknown.
 
@@ -729,7 +744,7 @@ different lifetimes:
   deletes `agent_sessions`, so losing a tmux pane does not by itself destroy
   resumability.
 
-POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
+POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check and only for a new-window initial directory. A tmux split never accepts a directory override: the adapter asks tmux for the target pane's `#{pane_current_path}`. Worktree agents open in a new window after workspace selection; a worktree agent split is rejected because the worktree does not exist until `agent run` prepares it. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
 
 ### Workspace directory picker
 
@@ -744,7 +759,6 @@ Use SQLite and Drizzle for host-side persistence.
 ~~~text
 workspaces
 panes
-runs
 agent_sessions
 agent_profiles
 installed_plugins
@@ -756,7 +770,7 @@ audit_events
 
 ### Storage policy
 
-- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; registered workspace directories, their personal hook paths, and worktree copy patterns belong to workspaces.
+- Store current state in SQLite. Agent lifecycle belongs to agent_sessions; registered workspace directories, their personal hook paths, and worktree copy patterns belong to workspaces. The post-refactor migration removes the obsolete historical `runs` table and `panes.run_id` column; the active runtime does not use a separate run entity.
 - Persist important state transitions as an event history.
 - Do not store every terminal output byte by default.
 - Store only the latest capture or a short ring buffer when needed.
@@ -783,7 +797,7 @@ React Native remains an option if terminal rendering or iOS-specific UI must be 
 
 1. Pane Board
    - pane list;
-   - agent name, Run name, workspace, and worktree;
+   - agent name, AgentSession status, workspace, and worktree;
    - running, waiting_input, waiting_approval, and failed states.
 2. Pane Picker Overlay
    - simplified representation of the original tmux layout;
@@ -922,7 +936,7 @@ Example notification states:
 - completed, when enabled by the user;
 - host or agentd disconnected.
 
-Deduplicate notifications by runId and transitionId. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, workspace name, and reason.
+Deduplicate notifications by agentSessionId and state transition. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, workspace name, and reason.
 
 ## 14. Desktop experience
 
@@ -982,7 +996,13 @@ agent workspace delete WORKSPACE [--force]
 agent doctor [--verbose]
 ~~~
 
-run associates the worktree, workspace copy patterns, workspace hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --worktree, unmanaged files are copied first, then the setup hook runs; cleanup hooks run before the worktree is removed. With --no-worktree, stored workspace copy patterns and hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
+The `run` subcommand is a launch operation, not a separate persisted entity. It
+creates or updates one AgentSession with the worktree, workspace copy
+patterns, workspace hooks, Claude session ID, and Codex Remote Control thread
+name and archive. With `--worktree`, unmanaged files are copied first, then
+the setup hook runs; cleanup hooks run before the worktree is removed. With
+`--no-worktree`, stored workspace copy patterns and hooks are not run; use
+`--setup-hook` or `--cleanup-hook` explicitly when needed.
 
 The CLI workspace commands persist registered directories, hook paths, and copy patterns in `workspaces`. Git directories are canonicalized to their repository root, and the directory is the workspace identity; updating a registration changes metadata only. Moving a registration therefore requires deleting the old entry and adding the new directory. Deleting a workspace unregisters metadata and does not remove files from the host.
 
@@ -1026,7 +1046,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 - If pairing tokens are added, issue and revoke them per device.
 - Store device tokens, private keys, and refresh tokens in native Keychain or on the host; never include them in the web bundle.
 - Never put complete agent output in Live Activities or notifications.
-- Check authorization for sendInput, Approve, Reject, and similar operations against the target Run.
+- Check authorization for sendInput, Approve, Reject, and similar operations against the target pane and AgentSession.
 - Record important actions as audit events.
 - Make the plugin trust requirement explicit because plugins can execute arbitrary code on the host.
 - Isolate external plugins in JSONL/stdin child processes and manage timeout, crash, and restart behavior.
@@ -1063,7 +1083,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 
 - Turborepo and Bun workspace monorepo, with Node LTS reserved for the Web toolchain;
 - Domain, Application, and Protocol packages;
-- Pane, Run, and AgentState types;
+- Pane, AgentSession, and PaneState types;
 - WebSocket frame schemas;
 - minimal Plugin API v1;
 - fake tmux and agent fixtures.

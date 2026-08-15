@@ -47,7 +47,7 @@ export type AgentdApplication = {
   };
   sessions: {
     list(): Promise<TmuxSession[]>;
-    create(input: { name: string; cwd: string; workspaceId?: string }): Promise<TmuxSession>;
+    create(input: { name: string; initialCwd: string }): Promise<TmuxSession>;
   };
   panes: {
     list(sessionName?: string): Promise<PaneSummary[]>;

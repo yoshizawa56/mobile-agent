@@ -151,9 +151,7 @@ function paneFingerprint(pane: TmuxPane, state?: string, recentOutput?: string):
     pane.agentdName,
     pane.agentdKind,
     pane.agentdAgentId,
-    pane.agentdRunId,
     pane.agentdManagedSessionId,
-    pane.agentdParentRunId,
     state,
     recentOutput,
   ]);

@@ -9,7 +9,7 @@ export function SessionOverviewView({ viewModel }: { viewModel: SessionOverviewV
         <div className="flex min-w-0 flex-1 flex-col items-center gap-[3px] text-center">
           <span className="inline-flex items-center gap-1.5 font-mono text-[0.48rem] font-bold tracking-[0.12em] text-lime-deep"><span className="size-[5px] rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> CONNECTED</span>
           <strong className="max-w-[min(50vw,320px)] overflow-hidden text-[0.77rem] text-ellipsis whitespace-nowrap text-[#d8ffdc] max-[620px]:max-w-[42vw] max-[620px]:text-[0.68rem]">{viewModel.session.name}</strong>
-          <small className="max-w-[min(65vw,420px)] overflow-hidden font-mono text-[0.52rem] text-ellipsis whitespace-nowrap text-[#5d9168] max-[620px]:max-w-[44vw] max-[620px]:text-[0.45rem]">{viewModel.terminal.name} · {viewModel.session.cwd}</small>
+          <small className="max-w-[min(65vw,420px)] overflow-hidden font-mono text-[0.52rem] text-ellipsis whitespace-nowrap text-[#5d9168] max-[620px]:max-w-[44vw] max-[620px]:text-[0.45rem]">{viewModel.terminal.name}</small>
         </div>
         <button className="grid size-8 place-items-center rounded-lg border border-[#24522e] bg-[#08170b] text-[1.15rem] leading-none text-[#9bd5a2] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-11" type="button" onClick={viewModel.onDisconnect}>×</button>
       </header>

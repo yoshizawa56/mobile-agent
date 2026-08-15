@@ -1,11 +1,11 @@
-import type { RunState } from "@mobile-agent/domain";
+import type { PaneState } from "@mobile-agent/domain";
 
 export const recentAgentOutputLimits = {
   maxCharacters: 1_200,
 } as const;
 
 export type AgentStatusObservation = {
-  state: RunState;
+  state: PaneState;
   recentOutput?: string;
 };
 
@@ -33,7 +33,7 @@ export function readManagedAgentObservation(
  * the managed plugin path. This parser must never be used for an adopted
  * managed execution.
  */
-export function inferUnmanagedAgentState(output: string, fallback: RunState): RunState {
+export function inferUnmanagedAgentState(output: string, fallback: PaneState): PaneState {
   const recent = stripAnsi(output).slice(-8_000).toLowerCase();
   if (/waiting\s+(for\s+)?(approval|permission)|approve|allow this|apply this|do you want/.test(recent)) return "waiting_approval";
   if (/waiting\s+(for\s+)?input|continue with|press (enter|return)|what should i do|\?\s*[▌_>]?\s*$/.test(recent)) return "waiting_input";

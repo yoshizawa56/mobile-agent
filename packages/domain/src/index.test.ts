@@ -9,18 +9,18 @@ import {
   type TestRegistrar,
 } from "@mobile-agent/test-support";
 import {
-  canTransitionRunState,
+  canTransitionPaneState,
   isAttentionState,
   paneKindForCommand,
-  transitionRunState,
+  transitionPaneState,
   validateWorkspaceSelection,
-  type RunState,
+  type PaneState,
   type WorkspaceDirectoryOption,
   type WorkspaceSelection,
 } from "./index.js";
 
 type EmptyContext = {};
-type TransitionInput = { from: RunState; to: RunState };
+type TransitionInput = { from: PaneState; to: PaneState };
 const transitionCases = [
   { name: "allows a running agent to wait for input", input: { from: "running", to: "waiting_input" }, assert: [returns<EmptyContext, boolean>(true)] },
   { name: "rejects a transition after completion", input: { from: "completed", to: "running" }, assert: [returns<EmptyContext, boolean>(false)] },
@@ -29,27 +29,27 @@ const transitionCases = [
 const transitionTable: OperationTable<undefined, "default", TransitionInput, boolean, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: transitionCases,
-  execute: (_fixture, input) => canTransitionRunState(input.from, input.to),
+  execute: (_fixture, input) => canTransitionPaneState(input.from, input.to),
   observe: () => ({}),
 };
 
-type RecordInput = { current: RunState; next: RunState; reason: string; at: string };
+type RecordInput = { current: PaneState; next: PaneState; reason: string; at: string };
 const recordCases = [
   {
     name: "returns a transition record for an allowed change",
     input: { current: "running", next: "waiting_approval", reason: "agent asked for approval", at: "2026-08-09T00:00:00.000Z" },
-    assert: [returns<EmptyContext, ReturnType<typeof transitionRunState>>({ from: "running", to: "waiting_approval", reason: "agent asked for approval", at: "2026-08-09T00:00:00.000Z" })],
+    assert: [returns<EmptyContext, ReturnType<typeof transitionPaneState>>({ from: "running", to: "waiting_approval", reason: "agent asked for approval", at: "2026-08-09T00:00:00.000Z" })],
   },
-] satisfies readonly OperationCase<"default", RecordInput, ReturnType<typeof transitionRunState>, EmptyContext>[];
+] satisfies readonly OperationCase<"default", RecordInput, ReturnType<typeof transitionPaneState>, EmptyContext>[];
 
-const recordTable: OperationTable<undefined, "default", RecordInput, ReturnType<typeof transitionRunState>, EmptyContext> = {
+const recordTable: OperationTable<undefined, "default", RecordInput, ReturnType<typeof transitionPaneState>, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: recordCases,
-  execute: (_fixture, input) => transitionRunState(input.current, input.next, input.reason, input.at),
+  execute: (_fixture, input) => transitionPaneState(input.current, input.next, input.reason, input.at),
   observe: () => ({}),
 };
 
-type AttentionInput = { state: RunState };
+type AttentionInput = { state: PaneState };
 const attentionCases = [
   { name: "classifies waiting input as attention", input: { state: "waiting_input" }, assert: [returns<EmptyContext, boolean>(true)] },
   { name: "classifies running as ordinary", input: { state: "running" }, assert: [returns<EmptyContext, boolean>(false)] },

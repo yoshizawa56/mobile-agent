@@ -1,8 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
-import { basename } from "node:path";
 import { ApplicationError, type AgentSessionRepository, type AgentdApplication, type PaneRepository, type WorkspaceRepository, WorkspaceCrud } from "@mobile-agent/application";
-import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type RunState, type WorkspaceRecord } from "@mobile-agent/domain";
+import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type PaneState, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TerminalEndpoint, TmuxSession } from "@mobile-agent/protocol";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter, type TmuxPane, type TmuxLiveSnapshot } from "../tmux.js";
 import { TmuxViewportManager } from "../viewport-manager.js";
@@ -23,7 +21,7 @@ export type AgentdApplicationResources = {
 export type AgentdApplicationRuntime = AgentdApplication & {
   reconcile(live?: TmuxLiveSnapshot): Promise<PaneRecord[]>;
   adoptAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
-  observeAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string }): Promise<void>;
+  observeAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: PaneState; recentOutput?: string }): Promise<void>;
   releaseAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
 };
 
@@ -86,14 +84,14 @@ async function listSessions(
 }
 
 async function createSession(
-  input: { name: string; cwd: string; workspaceId?: string },
+  input: { name: string; initialCwd: string },
   tmux: TmuxAdapter,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   workspaceCatalog: WorkspaceSelectionCatalog,
   agentStatus: AgentStatusStore,
 ): Promise<TmuxSession> {
-  const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
+  const cwd = await workspaceCatalog.resolveLegacyDirectory(input.initialCwd);
   if (tmux.hasSession(input.name)) {
     throw new ApplicationError("session_exists", `tmux session already exists: ${input.name}`);
   }
@@ -171,6 +169,12 @@ async function createPane(
   if (!tmux.hasSession(input.sessionName)) {
     throw new ApplicationError("session_not_found", `tmux session does not exist: ${input.sessionName}`);
   }
+  if (input.kind === "agent" && input.useWorktree && input.placement !== "window") {
+    throw new ApplicationError("worktree_split_unsupported", "Worktree agent panes must open in a new tmux window");
+  }
+  if (input.placement !== "window" && (input.cwd || input.workspaceId)) {
+    throw new ApplicationError("split_directory_override_unsupported", "Split panes always inherit the target pane cwd");
+  }
   if (input.kind === "agent" && !input.agentId) {
     throw new ApplicationError("agent_required", "agentId is required for an agent pane");
   }
@@ -178,21 +182,26 @@ async function createPane(
     throw new ApplicationError("agent_not_allowed", "agentId is not allowed for a shell pane");
   }
 
-  if (!input.cwd) {
-    throw new ApplicationError("invalid_directory", "A workspace directory is required");
-  }
-  const cwd = await workspaceCatalog.resolveLegacyDirectory(input.cwd);
+  const cwd = input.placement === "window"
+    ? input.cwd
+      ? await workspaceCatalog.resolveLegacyDirectory(input.cwd)
+      : workspace?.rootPath
+    : undefined;
 
   const paneName = input.kind === "agent" ? normalizeAgentSessionName(input.name) : input.name;
   const commandInput = paneName === input.name ? input : { ...input, name: paneName };
   const command = buildAgentShellCommand(
     resolveAgentCommand(),
-    { AGENTD_MANAGED_SESSION_NAME: input.sessionName, AGENTD_PANE_NAME: paneName },
+    {
+      AGENTD_MANAGED_SESSION_NAME: input.sessionName,
+      AGENTD_PANE_NAME: paneName,
+      ...(input.useWorktree ? { AGENTD_WORKTREE_SESSION_NAME: paneName } : {}),
+    },
     input.kind === "agent" ? agentCommand(commandInput, workspace) : undefined,
   );
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)
-    : createSplitPane(input, tmux, cwd, command);
+    : createSplitPane(input, tmux, command);
   if (input.placement !== "window" && input.targetPaneId) {
     viewportManager.reassertMobileViewport(input.targetPaneId);
   }
@@ -219,7 +228,7 @@ async function createPane(
   return record;
 }
 
-function createSplitPane(input: CreatePaneRequest, tmux: TmuxAdapter, cwd: string, command: string | undefined): string {
+function createSplitPane(input: CreatePaneRequest, tmux: TmuxAdapter, command: string | undefined): string {
   if (input.placement === "window") {
     throw new ApplicationError("split_placement_required", "A split placement is required");
   }
@@ -233,7 +242,7 @@ function createSplitPane(input: CreatePaneRequest, tmux: TmuxAdapter, cwd: strin
     throw new ApplicationError("target_pane_session_mismatch", "targetPaneId belongs to a different tmux session");
   }
 
-  return tmux.splitWindow(cwd, command, input.placement, input.targetPaneId, windowSnapshot.zoomed);
+  return tmux.splitWindow(command, input.placement, input.targetPaneId, windowSnapshot.zoomed);
 }
 
 async function syncPanes(
@@ -260,13 +269,12 @@ async function syncPanes(
       : undefined;
     const staleAgentMetadata = tmuxPane.agentdKind === "agent"
       && Boolean(tmuxPane.agentdSessionId)
-      && Boolean(tmuxPane.agentdRunId)
       && !adoptedSession;
     if (tmuxPane.agentdSessionId && !adoptedSession) {
       if (tmuxPane.agentdExecutionId) agentStatus.delete(agentStatusKey(tmuxPane.agentdSessionId, tmuxPane.agentdExecutionId));
       try {
         const cleared = tmux.clearAgentExecutionMetadata(tmuxPane.paneId, tmuxPane.agentdExecutionId ?? "");
-        if (cleared && tmuxPane.agentdKind === "agent" && tmuxPane.agentdRunId) {
+        if (cleared && tmuxPane.agentdKind === "agent") {
           tmux.resetAgentPaneMetadata(tmuxPane.paneId);
         }
       } catch {
@@ -301,7 +309,6 @@ async function syncPanes(
       cwd: tmuxPane.cwd,
       workspaceId: existing?.workspaceId ?? adoptedSession?.workspaceId ?? null,
       agentId,
-      runId: kind === "agent" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : tmuxPane.agentdKind === "shell" ? tmuxPane.agentdRunId ?? existing?.runId ?? null : null,
       state: observation.state,
       title: tmuxPane.title || null,
       ...(observation.recentOutput ? { recentOutput: observation.recentOutput } : {}),
@@ -349,7 +356,7 @@ async function observeAgentSession(
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   agentStatus: AgentStatusStore,
-  request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string },
+  request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: PaneState; recentOutput?: string },
 ): Promise<void> {
   const session = await agentSessionRepository.findById(request.agentSessionId);
   if (!session) throw controlFailure("agent_session_not_found", `agent session not found: ${request.agentSessionId}`);
@@ -403,17 +410,13 @@ function summarizeSessions(panes: PaneRecord[]): TmuxSession[] {
     const agents = sessionPanes.filter((pane) => pane.kind === "agent").length;
     const shells = sessionPanes.filter((pane) => pane.kind === "shell").length;
     const waitingCount = sessionPanes.filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval").length;
-    const cwd = sessionPanes[0]?.cwd ?? process.cwd();
     const detailParts = [`${agents} agent${agents === 1 ? "" : "s"}`, `${shells} shell${shells === 1 ? "" : "s"}`];
     if (waitingCount) detailParts.push(`${waitingCount} waiting`);
     return {
       name,
-      workspace: basename(cwd) || name,
-      cwd: displayCwd(cwd),
       paneCount: sessionPanes.length,
       waitingCount,
       detail: detailParts.join(" · "),
-      state: "active",
     } satisfies TmuxSession;
   });
 }
@@ -421,14 +424,14 @@ function summarizeSessions(panes: PaneRecord[]): TmuxSession[] {
 function resolvePaneKind(tmuxPane: TmuxPane, existing: PaneRecord | undefined, adopted: boolean, staleAgentMetadata: boolean): PaneRecord["kind"] {
   if (staleAgentMetadata) return "shell";
   if (tmuxPane.agentdKind === "agent" && adopted) return "agent";
-  if (tmuxPane.agentdKind === "agent" && !tmuxPane.agentdSessionId && !tmuxPane.agentdRunId) return "agent";
+  if (tmuxPane.agentdKind === "agent" && !tmuxPane.agentdSessionId) return "agent";
   if (tmuxPane.agentdKind === "shell" || tmuxPane.agentdKind === "unknown") return tmuxPane.agentdKind;
   const detected = paneKindForCommand(tmuxPane.command);
   if (detected === "unknown" && existing?.kind === "agent" && adopted) return "agent";
   return detected;
 }
 
-function readUnmanagedAgentObservation(tmux: TmuxAdapter, pane: TmuxPane, fallback: RunState): AgentStatusObservation {
+function readUnmanagedAgentObservation(tmux: TmuxAdapter, pane: TmuxPane, fallback: PaneState): AgentStatusObservation {
   try {
     return { state: inferUnmanagedAgentState(tmux.capturePane(pane.paneId), fallback) };
   } catch {
@@ -473,11 +476,6 @@ function agentCommand(input: CreatePaneRequest, workspace?: WorkspaceRecord): st
     if (workspace?.cleanupScriptPath) args.push("--cleanup-hook", workspace.cleanupScriptPath);
   }
   return args.map(shellQuote).join(" ");
-}
-
-function displayCwd(cwd: string): string {
-  const home = homedir();
-  return cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~/${cwd.slice(home.length + 1)}` : cwd;
 }
 
 function shellQuote(value: string): string {

@@ -364,7 +364,7 @@ export class TmuxAdapter {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdWorkspaceId, agentdManagedSessionId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = line.split(separator);
+        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdWorkspaceId, agentdManagedSessionId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = splitTmuxFormatLine(line, separator);
         if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || paneIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
@@ -684,6 +684,11 @@ function shellQuote(value: string): string {
 function resolveTmuxCwd(cwd: string): string {
   const expanded = cwd === "~" ? homedir() : cwd.startsWith("~/") ? `${homedir()}/${cwd.slice(2)}` : cwd;
   return resolve(expanded);
+}
+
+function splitTmuxFormatLine(line: string, separator: string): string[] {
+  const fields = line.split(separator);
+  return fields.length > 1 ? fields : line.split("\\037");
 }
 
 function isTmuxServerGone(stderr: string): boolean {

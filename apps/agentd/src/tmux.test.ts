@@ -189,9 +189,17 @@ const hasPaneListing: Assertion<ListContext, ListResult> = {
     expect(result.value.args[3]).toContain("#{pane_index}");
   },
 };
-const listCases = [{ name: "keeps the pane index separate from the server-wide pane id", input: {}, assert: [hasPaneListing] }] satisfies readonly OperationCase<"default", {}, ListResult, ListContext>[];
-const listTable: OperationTable<{ adapter: ListingTmuxAdapter }, "default", {}, ListResult, ListContext> = {
-  defaultFixture: () => ({ fixture: { adapter: new ListingTmuxAdapter() } }),
+type ListKey = "control" | "octal";
+const listCases = [
+  { name: "keeps the pane index separate from the server-wide pane id", fixture: "control", input: {}, assert: [hasPaneListing] },
+  { name: "parses tmux's octal-escaped format separator", fixture: "octal", input: {}, assert: [hasPaneListing] },
+] satisfies readonly OperationCase<ListKey, {}, ListResult, ListContext>[];
+const listTable: OperationTable<{ adapter: ListingTmuxAdapter }, ListKey, {}, ListResult, ListContext> = {
+  defaultFixture: () => ({ fixture: { adapter: new ListingTmuxAdapter("\u001f") } }),
+  fixtures: {
+    control: () => ({ fixture: { adapter: new ListingTmuxAdapter("\u001f") } }),
+    octal: () => ({ fixture: { adapter: new ListingTmuxAdapter("\\037") } }),
+  },
   cases: listCases,
   execute: (fixture) => ({ panes: fixture.adapter.listPanes(), args: fixture.adapter.lastArgs }),
   observe: () => ({}),
@@ -289,12 +297,12 @@ class ClientViewTmuxAdapter extends TmuxAdapter {
 
 class ListingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];
-  public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
+  public constructor(private readonly separator = "\u001f") { super("/private/tmp/mobile-agent-test.sock"); }
   public override command(args: string[]) {
     this.lastArgs = args;
     return {
       status: 0,
-      stdout: ["%32", "@5", "agentd", "code", "2", "4", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "120", "40", "", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f") + "\n",
+      stdout: ["%32", "@5", "agentd", "code", "2", "4", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "120", "40", "", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join(this.separator) + "\n",
       stderr: "",
     };
   }

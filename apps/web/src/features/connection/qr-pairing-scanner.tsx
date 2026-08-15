@@ -85,7 +85,7 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video ref={videoRef} autoPlay muted playsInline />
         <span className="connection-qr-target" />
       </div>
-      <p>{error ?? "Scan the QR code displayed by agent pair in the app."}</p>
+      <p>{error ?? "Scan the QR code shown by agent pair in this app."}</p>
       <button className="connection-flow-secondary" type="button" onClick={onClose}>Close camera</button>
     </section>
   );

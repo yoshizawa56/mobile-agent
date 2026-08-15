@@ -10,7 +10,6 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
     strokeWidth: 1.8,
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
-    className: "app-icon",
     "aria-hidden": true,
   };
 

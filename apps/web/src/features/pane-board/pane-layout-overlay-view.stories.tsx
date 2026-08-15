@@ -83,8 +83,8 @@ function PaneStatusShowcase() {
   const [selectedTarget, setSelectedTarget] = useState("%0");
 
   return (
-    <main style={{ boxSizing: "border-box", height: "100vh", minHeight: "620px", padding: "24px", background: "#030704" }}>
-      <div style={{ height: "100%", maxWidth: "1100px", margin: "0 auto" }}>
+    <main className="box-border h-screen min-h-[620px] bg-[#030704] p-6">
+      <div className="mx-auto h-full max-w-[1100px]">
         <PaneLayoutOverlay
           panes={statusPanes}
           selectedTarget={selectedTarget}

@@ -1,4 +1,5 @@
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -11,7 +12,7 @@ export default defineConfig({
   // The web app uses clean TanStack Router paths. Vite dev/preview must serve
   // index.html for those paths on a hard reload.
   appType: "spa",
-  plugins: [tanstackRouter(), react()],
+  plugins: [tanstackRouter(), tailwindcss(), react()],
   server: {
     host: devHost,
     port: devPort,

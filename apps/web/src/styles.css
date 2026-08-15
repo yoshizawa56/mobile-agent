@@ -1182,8 +1182,8 @@ kbd {
   }
 }
 
-/* Serve-only browser connection settings. This screen intentionally has no
-   credential fields: browser profiles contain only a non-secret endpoint. */
+/* Serve-only browser connection settings. Pairing is completed through the
+   one-time QR code shown by agent pair. */
 .connection-settings-view {
   display: flex;
   min-height: 100dvh;
@@ -1225,76 +1225,9 @@ kbd {
   padding: 58px 24px 48px;
 }
 
-.connection-settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.connection-settings-form .new-session-field {
-  gap: 8px;
-}
-
-.connection-settings-form .new-session-field input {
-  min-height: 45px;
-  border-color: #285b34;
-  color: #d4f9d8;
-  background: rgb(6 19 9 / 90%);
-}
-
-.connection-settings-form .new-session-field input:focus {
-  border-color: var(--lime-deep);
-  box-shadow: 0 0 0 3px rgb(57 214 91 / 13%);
-}
-
-.connection-settings-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 6px;
-  padding: 12px;
-  border: 1px solid #1e4c29;
-  border-radius: 9px;
-  color: #82b488;
-  background: rgb(7 24 11 / 70%);
-}
-
-.connection-settings-note-icon {
-  display: grid;
-  width: 23px;
-  height: 23px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid #367644;
-  border-radius: 7px;
-  color: var(--lime);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.connection-settings-note > span:last-child {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.connection-settings-note strong {
-  color: #c3f4c9;
-  font-size: 0.67rem;
-}
-
-.connection-settings-note small {
-  color: #638f6b;
-  font-size: 0.61rem;
-  line-height: 1.45;
-}
-
-.connection-settings-note code {
-  color: #a9dfaF;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.58rem;
-}
-
 .connection-settings-clear {
+  width: 100%;
+  margin-top: 0.5rem;
   color: #9c7662;
 }
 
@@ -1310,6 +1243,15 @@ kbd {
   border-radius: 0.75rem;
   color: #b9f5de;
   background: rgba(28, 91, 76, 0.28);
+}
+
+.connection-qr-error {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgb(255 116 107 / 38%);
+  border-radius: 0.75rem;
+  color: #ffb0aa;
+  background: rgb(90 25 22 / 30%);
 }
 
 .connection-qr-scanner {
@@ -4344,8 +4286,7 @@ textarea:focus-visible,
   }
 
   .new-session-field input,
-  .new-session-field select,
-  .connection-settings-form .new-session-field input {
+  .new-session-field select {
     min-height: 48px;
   }
 

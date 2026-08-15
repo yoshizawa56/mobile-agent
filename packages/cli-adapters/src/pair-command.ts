@@ -8,20 +8,24 @@ export type PairCommandIo = {
   input: Readable;
 };
 
+export type PairDisplay = "browser" | "terminal";
+
 export type ParsedPairCommandOptions = {
   controlSocket: string;
   agentdBaseUrl?: string;
   withoutServe: boolean;
+  display: PairDisplay;
 };
 
 export type ResolvedPairCommandOptions = {
   controlSocket: string;
   agentdBaseUrl: string;
+  display: PairDisplay;
 };
 
 export type PairDeviceRuntime = {
   useCase: PairDevice;
-  close(): void;
+  close(): void | Promise<void>;
 };
 
 export type PairDeviceRuntimeFactory = (
@@ -50,7 +54,7 @@ export class PairCommand {
 
   public async execute(args: string[]): Promise<number> {
     if (args.includes("-h") || args.includes("--help")) {
-      this.write("Usage: agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n");
+      this.write("Usage: agent pair [--open|--terminal] [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n");
       return 0;
     }
 
@@ -59,7 +63,7 @@ export class PairCommand {
       withoutServe: parsed.withoutServe,
       environment: this.env,
     });
-    const runtime = await this.options.createRuntime({ controlSocket: parsed.controlSocket, agentdBaseUrl }, this.options.io);
+    const runtime = await this.options.createRuntime({ controlSocket: parsed.controlSocket, agentdBaseUrl, display: parsed.display }, this.options.io);
     try {
       const result = await runtime.useCase.execute({
         agentdBaseUrl,
@@ -71,7 +75,7 @@ export class PairCommand {
       this.write("Pairing was rejected.\n");
       return 1;
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   }
 
@@ -84,6 +88,8 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
   let controlSocket = env.AGENTD_CONTROL_SOCKET ?? defaultControlSocket(env);
   let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL;
   let withoutServe = false;
+  let display: PairDisplay = "browser";
+  let explicitDisplay: PairDisplay | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -92,11 +98,20 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
     else if (argument === "--without-serve") withoutServe = true;
     else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
+    else if (argument === "--open") {
+      if (explicitDisplay === "terminal") throw new PairCommandError("agent pair options --open and --terminal are mutually exclusive");
+      explicitDisplay = "browser";
+      display = "browser";
+    } else if (argument === "--terminal") {
+      if (explicitDisplay === "browser") throw new PairCommandError("agent pair options --open and --terminal are mutually exclusive");
+      explicitDisplay = "terminal";
+      display = "terminal";
+    }
     else throw new PairCommandError(`unknown agent pair option: ${argument}`);
   }
 
   validateAgentdControlSocketPath(controlSocket);
-  return { controlSocket, agentdBaseUrl, withoutServe };
+  return { controlSocket, agentdBaseUrl, withoutServe, display };
 }
 
 function defaultControlSocket(env: NodeJS.ProcessEnv): string {

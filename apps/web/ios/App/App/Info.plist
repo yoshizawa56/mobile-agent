@@ -35,8 +35,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is required to scan QR codes.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app uses the local network to connect to the development web server.</string>
+	<string>Local network access is used to connect to the development web server.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

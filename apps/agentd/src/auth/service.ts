@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
-import type { WebSocket } from "ws";
+import type { AgentdAuthContext } from "@mobile-agent/agentd-http";
+import type { AgentdSocket } from "@mobile-agent/application";
 import {
   canonicalPublicJwk,
   decodeBase64Url,
@@ -36,9 +37,7 @@ export type AuthServiceOptions = {
 
 export type { PairingClaimNotification } from "@mobile-agent/protocol";
 
-export type AuthContext = AuthSessionRecord & {
-  device: AuthDeviceRecord;
-};
+export type AuthContext = AgentdAuthContext;
 
 type PendingChallenge = {
   challengeId: string;
@@ -55,8 +54,8 @@ type PendingWsTicket = {
 
 type TrackedSockets = {
   deviceId: string;
-  sockets: Set<WebSocket>;
-  expiryTimers: Map<WebSocket, NodeJS.Timeout>;
+  sockets: Set<AgentdSocket>;
+  expiryTimers: Map<AgentdSocket, NodeJS.Timeout>;
 };
 
 export class AuthService {
@@ -238,11 +237,11 @@ export class AuthService {
     return session ? this.contextForSession(session) : null;
   }
 
-  public trackSocket(context: AuthContext, socket: WebSocket): void {
+  public trackSocket(context: AuthContext, socket: AgentdSocket): void {
     const tracked = this.sockets.get(context.sessionId) ?? {
       deviceId: context.deviceId,
-      sockets: new Set<WebSocket>(),
-      expiryTimers: new Map<WebSocket, NodeJS.Timeout>(),
+      sockets: new Set<AgentdSocket>(),
+      expiryTimers: new Map<AgentdSocket, NodeJS.Timeout>(),
     };
     tracked.sockets.add(socket);
     const remainingMs = Math.max(0, new Date(context.expiresAt).getTime() - Date.now());
@@ -250,11 +249,13 @@ export class AuthService {
     expiryTimer.unref?.();
     tracked.expiryTimers.set(socket, expiryTimer);
     this.sockets.set(context.sessionId, tracked);
-    socket.once("close", () => {
+    let removeCloseListener: () => void = () => undefined;
+    removeCloseListener = socket.onClose(() => {
       clearTimeout(expiryTimer);
       tracked.sockets.delete(socket);
       tracked.expiryTimers.delete(socket);
       if (tracked.sockets.size === 0) this.sockets.delete(context.sessionId);
+      removeCloseListener();
     });
   }
 

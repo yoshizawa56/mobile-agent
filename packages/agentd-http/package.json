@@ -1,5 +1,5 @@
 {
-  "name": "@mobile-agent/application",
+  "name": "@mobile-agent/agentd-http",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -12,15 +12,18 @@
   },
   "scripts": {
     "build": "bunx --bun tsc -p tsconfig.build.json",
-    "test": "bun test src",
-    "typecheck": "bunx --bun tsc -p tsconfig.json"
+    "typecheck": "bunx --bun tsc -p tsconfig.json",
+    "test": "bun test src"
   },
   "dependencies": {
-    "@mobile-agent/domain": "workspace:*",
-    "@mobile-agent/protocol": "workspace:*"
+    "@mobile-agent/application": "workspace:*",
+    "@mobile-agent/protocol": "workspace:*",
+    "hono": "^4.12.32",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@mobile-agent/test-support": "workspace:*",
+    "bun-types": "^1.3.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

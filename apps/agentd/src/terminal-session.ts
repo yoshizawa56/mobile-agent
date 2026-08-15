@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { RawData } from "ws";
-import { WebSocket } from "ws";
+import { agentdSocketReadyState, type AgentdSocket, type AgentdSocketData } from "@mobile-agent/application";
 import { spawnPty, type PtyProcess } from "./pty.js";
 import {
   clientControlMessageSchema,
@@ -65,10 +64,10 @@ export class TerminalSessionRegistry {
 type TerminalSessionState = "awaiting_attach" | "attaching" | "attached" | "parked" | "closed";
 
 type SocketBinding = {
-  socket: WebSocket;
-  onMessage: (data: RawData, isBinary: boolean) => void;
-  onClose: () => void;
-  onError: (error: Error) => void;
+  socket: AgentdSocket;
+  removeMessageListener: () => void;
+  removeCloseListener: () => void;
+  removeErrorListener: () => void;
   generation: number;
 };
 
@@ -80,7 +79,7 @@ export class TerminalSession {
   private resumeToken = opaqueToken();
   private readonly registry: TerminalSessionRegistry;
   private readonly resumeGraceMs: number;
-  private socket: WebSocket | undefined;
+  private socket: AgentdSocket | undefined;
   private socketBinding: SocketBinding | undefined;
   private pty: PtyProcess | undefined;
   private lease: ViewportLease | undefined;
@@ -95,7 +94,7 @@ export class TerminalSession {
   private rows = 24;
 
   public constructor(
-    socket: WebSocket,
+    socket: AgentdSocket,
     private readonly options: TerminalSessionOptions,
   ) {
     this.registry = options.sessions ?? new TerminalSessionRegistry();
@@ -120,9 +119,9 @@ export class TerminalSession {
     this.finalizeTransport(1001, "agentd stopped");
   }
 
-  private bindSocket(socket: WebSocket): void {
+  private bindSocket(socket: AgentdSocket): void {
     const generation = ++this.transportGeneration;
-    const onMessage = (data: RawData, isBinary: boolean) => {
+    const onMessage = (data: AgentdSocketData, isBinary: boolean) => {
       if (this.socket !== socket || this.socketBinding?.generation !== generation || this.disposed) return;
       void this.handleMessage(data, isBinary);
     };
@@ -135,15 +134,15 @@ export class TerminalSession {
       // reports CLOSED without that follow-up, apply the same network-loss
       // transition here. An open socket is left alone so transient errors do
       // not release a healthy PTY.
-      if (socket.readyState === WebSocket.CLOSED) this.handleTransportClosed();
+      if (socket.readyState === agentdSocketReadyState.closed) this.handleTransportClosed();
       void error;
     };
 
-    socket.on("message", onMessage);
-    socket.on("close", onClose);
-    socket.on("error", onError);
+    const removeMessageListener = socket.onMessage(onMessage);
+    const removeCloseListener = socket.onClose(onClose);
+    const removeErrorListener = socket.onError(onError);
     this.socket = socket;
-    this.socketBinding = { socket, onMessage, onClose, onError, generation };
+    this.socketBinding = { socket, removeMessageListener, removeCloseListener, removeErrorListener, generation };
   }
 
   private detachSocketListeners(): void {
@@ -153,14 +152,14 @@ export class TerminalSession {
       return;
     }
 
-    binding.socket.removeListener("message", binding.onMessage);
-    binding.socket.removeListener("close", binding.onClose);
-    binding.socket.removeListener("error", binding.onError);
+    binding.removeMessageListener();
+    binding.removeCloseListener();
+    binding.removeErrorListener();
     if (this.socket === binding.socket) this.socket = undefined;
     this.socketBinding = undefined;
   }
 
-  private async handleMessage(data: RawData, isBinary: boolean): Promise<void> {
+  private async handleMessage(data: AgentdSocketData, isBinary: boolean): Promise<void> {
     if (this.disposed) return;
 
     if (isBinary) {
@@ -277,7 +276,7 @@ export class TerminalSession {
     return this.target === target && this.isAttachedOrParked();
   }
 
-  private resumeSocket(socket: WebSocket, message: AttachMessage): boolean {
+  private resumeSocket(socket: AgentdSocket, message: AttachMessage): boolean {
     if (this.disposed || !this.isAttachedOrParked() || !this.canResumeTarget(message.target)) return false;
 
     const previousSocket = this.socket;
@@ -412,12 +411,12 @@ export class TerminalSession {
   }
 
   private send(message: ServerControlMessage): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (this.socket?.readyState !== agentdSocketReadyState.open) return;
     this.socket.send(JSON.stringify(message));
   }
 
   private sendBinary(data: Buffer): void {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (this.socket?.readyState !== agentdSocketReadyState.open) return;
     this.socket.send(data);
   }
 
@@ -528,8 +527,8 @@ export class TerminalSession {
   }
 }
 
-function closeSocket(socket: WebSocket, code: number, reason: string): void {
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+function closeSocket(socket: AgentdSocket, code: number, reason: string): void {
+  if (socket.readyState === agentdSocketReadyState.open || socket.readyState === agentdSocketReadyState.connecting) {
     try {
       socket.close(code, reason);
     } catch {
@@ -552,11 +551,8 @@ function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, strin
   );
 }
 
-function rawDataToBuffer(data: RawData): Buffer {
-  if (Buffer.isBuffer(data)) return data;
-  if (Array.isArray(data)) return Buffer.concat(data);
-  if (data instanceof ArrayBuffer) return Buffer.from(data);
-  return Buffer.from(data);
+function rawDataToBuffer(data: AgentdSocketData): Buffer {
+  return typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

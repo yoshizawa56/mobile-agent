@@ -26,6 +26,7 @@ bun run audit:public
 - `apps/agent-cli`: the `agent` CLI, with agent lifecycle state managed by SQLite
 - `apps/web`: renders one pane with xterm.js and sends terminal size changes to agentd
 - `packages/agentd-client`: the TypeScript client for Hono RPC, Zod validation, and the agentd terminal WebSocket
+- `packages/agentd-http`: the Bun/Hono transport adapter, shared validation/error boundary, and typed HTTP/WebSocket app contract
 - `packages/cli-adapters`: CLI-side infrastructure adapters and composition factories
 - `packages/domain`: Pane/Run state and agent waiting-state rules
 - `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
@@ -55,7 +56,7 @@ When adding or updating dependencies, verify the latest stable registry release 
 
 agentd exposes an HTTP API at `http://127.0.0.1:4317`, a terminal WebSocket at `ws://127.0.0.1:4317/terminal`, and an event WebSocket at `ws://127.0.0.1:4317/events`. Registered workspaces are listed through `GET /api/workspaces`; host directories can be browsed through `GET /api/workspace-directories` and registered with `POST /api/workspaces`, including optional host-side setup and cleanup script paths and one worktree copy pattern per line. Session and pane creation sends stable workspace IDs, which agentd resolves under its allowed-root policy. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use the terminal WebSocket. The event WebSocket sends only session invalidation notifications; clients refetch changed data through HTTP. agentd is the host-side control-plane daemon for tmux, agent plugins, and SQLite.
 
-The HTTP API is built from a dependency-injected Hono app returned by `createAgentdApp(deps)`. Its type, `ReturnType<typeof createAgentdApp>`, is shared with the TypeScript client as `AgentdApp`. Tailscale Serve and SSH port forwarding are connection routes to the same agentd instance; the web client does not need to know which route established the connection.
+The HTTP API is built from the dependency-injected Bun/Hono app in `packages/agentd-http`, returned by `createAgentdApp(deps)`. Its type, `ReturnType<typeof createAgentdApp>`, is shared with the TypeScript client as `AgentdApp`. `apps/agentd` is the composition root: it initializes SQLite, tmux, PTY, auth, and application adapters, then passes them into the app. HTTP validation and error conversion are centralized in the Hono boundary; terminal and event WebSockets use Hono's Bun upgrade helper and a transport-neutral socket contract. Tailscale Serve and SSH port forwarding are connection routes to the same agentd instance; the web client does not need to know which route established the connection.
 
 The browser build stores only a full Tailscale Serve URL as its connection setting. A custom external port belongs in that URL, for example `https://workstation.tailnet.ts.net:8449`; the internal `AGENTD_PORT` is not a mobile setting. It does not store private keys or passwords. Storybook runs with mock data, while the regular Vite development server connects to agentd through the supervisor-managed proxy.
 

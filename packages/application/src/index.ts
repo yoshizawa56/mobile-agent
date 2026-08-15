@@ -2,8 +2,7 @@ import type {
   AgentSessionRecord,
   PaneId,
   PaneRecord,
-  RunRecord,
-  RunState,
+  PaneState,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 
@@ -43,7 +42,7 @@ export {
 } from "./workspace.js";
 
 export type PaneFilter = {
-  state?: RunState;
+  state?: PaneState;
   kind?: PaneRecord["kind"];
   sessionName?: string;
 };
@@ -55,11 +54,6 @@ export interface PaneRepository {
   findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined>;
   upsert(record: PaneRecord): Promise<void>;
   pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string): Promise<number>;
-}
-
-export interface RunRepository {
-  findById(id: string): Promise<RunRecord | undefined>;
-  upsert(record: RunRecord): Promise<void>;
 }
 
 export interface WorkspaceRepository {

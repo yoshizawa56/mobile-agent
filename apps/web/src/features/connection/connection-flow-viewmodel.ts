@@ -12,12 +12,9 @@ export type TerminalEndpoint = {
 
 export type TmuxSession = {
   name: string;
-  workspace: string;
-  cwd: string;
   paneCount: number;
   waitingCount: number;
   detail: string;
-  state: "active" | "idle";
 };
 
 export type ConnectionFlowViewModel = {

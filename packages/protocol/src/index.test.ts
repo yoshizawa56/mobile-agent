@@ -105,18 +105,20 @@ const pairingTable: OperationTable<undefined, "default", PairingInput, Validatio
   observe: () => ({}),
 };
 
-const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running", title: null, recentOutput: "recent pane output", lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, state: "running", title: null, recentOutput: "recent pane output", lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
-type PaneCreateInput = { placement: "window" | "right" | "bottom"; targetPaneId: string | null };
+type PaneCreateInput = { placement: "window" | "right" | "bottom"; targetPaneId: string | null; cwd?: string; workspaceId?: string };
 const paneCreateCases = [
   { name: "allows a new tmux window without a target", input: { placement: "window", targetPaneId: null }, assert: [isValid()] },
   { name: "allows a right split with a target pane", input: { placement: "right", targetPaneId: "%0" }, assert: [isValid()] },
   { name: "rejects a split without a target pane", input: { placement: "bottom", targetPaneId: null }, assert: [isInvalid()] },
+  { name: "rejects a split cwd override", input: { placement: "right", targetPaneId: "%0", cwd: "/tmp" }, assert: [isInvalid(["cwd"])] },
+  { name: "rejects a split workspace override", input: { placement: "right", targetPaneId: "%0", workspaceId: "workspace-1" }, assert: [isInvalid(["workspaceId"])] },
 ] satisfies readonly OperationCase<"default", PaneCreateInput, ValidationResult, EmptyContext>[];
 const paneCreateTable: OperationTable<undefined, "default", PaneCreateInput, ValidationResult, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: paneCreateCases,
-  execute: (_fixture, input) => parseSchema(createPaneRequestSchema, { sessionName: "agentd", kind: "shell", name: "shell", cwd: "/tmp", agentId: null, useWorktree: false, ...input }),
+  execute: (_fixture, input) => parseSchema(createPaneRequestSchema, { sessionName: "agentd", kind: "shell", name: "shell", agentId: null, useWorktree: false, ...input }),
   observe: () => ({}),
 };
 
@@ -145,7 +147,10 @@ const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, Valid
   observe: () => ({}),
 };
 
-const paneWorkspaceCases = [{ name: "accepts a pane request that selects a workspace by id", input: { sessionName: "agentd", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+const paneWorkspaceCases = [
+  { name: "accepts a pane request that selects a workspace by id", input: { sessionName: "agentd", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] },
+  { name: "rejects a worktree agent split", input: { sessionName: "agentd", kind: "agent", name: "review", agentId: "codex", useWorktree: true, placement: "right", targetPaneId: "%0" }, assert: [isInvalid(["placement"])] },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 const paneWorkspaceTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> = createValidationTable(paneWorkspaceCases, createPaneRequestSchema);
 
 describe("protocol schemas", () => {

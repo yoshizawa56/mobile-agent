@@ -13,8 +13,8 @@ import {
 import { createAgentdApp, type AgentdApp, type AgentdAuthPort } from "./app.js";
 import { InvalidWorkspaceDirectoryError } from "../workspace-selection.js";
 
-const session = { name: "integration", workspace: "mobile-agent", cwd: "~/work/mobile-agent", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" as const };
-const pane = { id: "pane-1", tmuxPaneId: "%0", sessionName: "integration", windowId: "@0", kind: "shell" as const, name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, runId: null, state: "running" as const, title: null, lastSeenAt: "2026-08-10T00:00:00.000Z" };
+const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
+const pane = { id: "pane-1", tmuxPaneId: "%0", sessionName: "integration", windowId: "@0", kind: "shell" as const, name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, state: "running" as const, title: null, lastSeenAt: "2026-08-10T00:00:00.000Z" };
 const workspace = { id: "workspace-1", name: "mobile-agent", directory: "/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] };
 const testAuthContext = {
   sessionId: "session-test-000000000000",
@@ -140,6 +140,11 @@ const cases = [
     name: "creates a pane through the injected pane use case",
     input: { url: "http://agentd.local/api/panes", method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionName: "integration", kind: "agent", name: "review", cwd: "/tmp", agentId: "codex", useWorktree: false, placement: "window", targetPaneId: null }) },
     assert: [responseMatches(201, { pane: { tmuxPaneId: "%0", name: "shell" } })],
+  },
+  {
+    name: "creates a shell split without overriding the target cwd",
+    input: { url: "http://agentd.local/api/panes", method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionName: "integration", kind: "shell", name: "shell", agentId: null, useWorktree: false, placement: "right", targetPaneId: "%0" }) },
+    assert: [responseMatches(201, { pane: { tmuxPaneId: "%0" } })],
   },
   {
     name: "accepts a signed tmux hook and forwards it to the viewport service",

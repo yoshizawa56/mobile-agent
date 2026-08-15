@@ -41,10 +41,10 @@ const queryCases = [
     input: {
       operation: "sessions",
       requestPath: "/api/sessions",
-      response: { sessions: [{ name: "integration", workspace: "mobile-agent", cwd: "~", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" }] },
+      response: { sessions: [{ name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" }] },
     },
     assert: [
-      returns<QueryContext, unknown>([{ name: "integration", workspace: "mobile-agent", cwd: "~", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", state: "active" }]),
+      returns<QueryContext, unknown>([{ name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" }]),
       hasObserved<QueryContext, unknown>("requests", ["http://agentd.local/api/sessions"]),
     ],
   },

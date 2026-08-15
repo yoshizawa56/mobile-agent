@@ -20,14 +20,29 @@ const recordingFixture = (): FixtureHandle<RecordingFixture> => ({ fixture: { ad
 
 type SplitInput = { keepZoomed: boolean };
 const splitCases = [
-  { name: "keeps a zoomed window zoomed", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-Z", "-h", "-t", "%1", "-c", "/tmp"])] },
-  { name: "does not zoom an ordinary desktop split", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "/tmp"])] },
+  { name: "keeps a zoomed window zoomed while inheriting the target cwd", input: { keepZoomed: true }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-Z", "-h", "-t", "%1", "-c", "#{pane_current_path}"])] },
+  { name: "does not zoom an ordinary desktop split and inherits the target cwd", input: { keepZoomed: false }, assert: [returns<EmptyContext, string[]>(["split-window", "-d", "-P", "-F", "#{pane_id}", "-h", "-t", "%1", "-c", "#{pane_current_path}"])] },
 ] satisfies readonly OperationCase<"default", SplitInput, string[], EmptyContext>[];
 const splitTable: OperationTable<RecordingFixture, "default", SplitInput, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
   cases: splitCases,
   execute: (fixture, input) => {
-    fixture.adapter.splitWindow("/tmp", undefined, "right", "%1", input.keepZoomed);
+    fixture.adapter.splitWindow(undefined, "right", "%1", input.keepZoomed);
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
+
+type NewWindowInput = { cwd?: string; command?: string };
+const newWindowCases = [
+  { name: "uses an explicit initial cwd for a new window", input: { cwd: "/tmp/project", command: "agent shell" }, assert: [returns<EmptyContext, string[]>(["new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "work", "-c", "/tmp/project", "agent shell"])] },
+  { name: "lets tmux choose the inherited cwd when no initial cwd is given", input: {}, assert: [returns<EmptyContext, string[]>(["new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "work"])] },
+] satisfies readonly OperationCase<"default", NewWindowInput, string[], EmptyContext>[];
+const newWindowTable: OperationTable<RecordingFixture, "default", NewWindowInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: newWindowCases,
+  execute: (fixture, input) => {
+    fixture.adapter.newWindow("work", input.cwd, input.command);
     return fixture.adapter.lastArgs;
   },
   observe: () => ({}),
@@ -187,7 +202,7 @@ type SnapshotKey = "available" | "missing";
 const snapshotFixtures: Readonly<Record<SnapshotKey, () => FixtureHandle<SnapshotFixture>>> = {
   available: () => ({ fixture: { adapter: new SnapshotTmuxAdapter({
     status: 0,
-    stdout: ["%1", "@0", "work", "shell", "0", "0", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "80", "24", "pane-1", "", "shell", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f"),
+    stdout: ["%1", "@0", "work", "shell", "0", "0", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "80", "24", "pane-1", "", "shell", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f"),
     stderr: "",
   }) } }),
   missing: () => ({ fixture: { adapter: new SnapshotTmuxAdapter({ status: 1, stdout: "", stderr: "no server running on /tmp/socket\n" }) } }),
@@ -241,6 +256,7 @@ const metadataClearTable: OperationTable<MetadataFixture, ClearKey, ClearInput, 
 describe("tmux adapter", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, splitTable);
+  runOperationTable(register, newWindowTable);
   runOperationTable(register, switchTable);
   runOperationTable(register, createSessionTable);
   runOperationTable(register, sessionOptionTable);
@@ -278,7 +294,7 @@ class ListingTmuxAdapter extends TmuxAdapter {
     this.lastArgs = args;
     return {
       status: 0,
-      stdout: ["%32", "@5", "agentd", "code", "2", "4", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "120", "40", "", "", "", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f") + "\n",
+      stdout: ["%32", "@5", "agentd", "code", "2", "4", "/tmp", "zsh", "zsh", "1", "0", "0", "80", "24", "120", "40", "", "", "", "", "", "", "", "", "1234", "2026-08-14T12:00:00Z", "/private/tmp/mobile-agent-test.sock"].join("\u001f") + "\n",
       stderr: "",
     };
   }

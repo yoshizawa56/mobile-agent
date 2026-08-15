@@ -43,10 +43,8 @@ export type TmuxPane = TmuxPaneRef & {
   agentdName?: string;
   agentdKind?: string;
   agentdAgentId?: string;
-  agentdRunId?: string;
   agentdWorkspaceId?: string;
   agentdManagedSessionId?: string;
-  agentdParentRunId?: string;
 };
 
 export type TmuxLiveSnapshot = {
@@ -204,7 +202,7 @@ export class TmuxAdapter {
     return result.status ?? 1;
   }
 
-  public newWindow(sessionName: string, cwd: string, command?: string): string {
+  public newWindow(sessionName: string, cwd?: string, command?: string): string {
     const args = [
       "new-window",
       "-d",
@@ -213,15 +211,13 @@ export class TmuxAdapter {
       "#{pane_id}",
       "-t",
       sessionName,
-      "-c",
-      resolveTmuxCwd(cwd),
     ];
+    if (cwd) args.push("-c", resolveTmuxCwd(cwd));
     if (command) args.push(command);
     return this.require(args).trim();
   }
 
   public splitWindow(
-    cwd: string,
     command: string | undefined,
     placement: Exclude<PanePlacement, "window">,
     targetPaneId: string,
@@ -236,7 +232,7 @@ export class TmuxAdapter {
     ];
     if (keepZoomed) args.push("-Z");
     if (placement === "right") args.push("-h");
-    args.push("-t", targetPaneId, "-c", resolveTmuxCwd(cwd));
+    args.push("-t", targetPaneId, "-c", "#{pane_current_path}");
     if (command) args.push(command);
     return this.require(args).trim();
   }
@@ -255,7 +251,7 @@ export class TmuxAdapter {
 
   public setAgentPaneMetadata(
     paneId: string,
-    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id",
+    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
     value: string,
   ): void {
     this.setPaneOption(paneId, this.metadataKey(field), value);
@@ -264,9 +260,7 @@ export class TmuxAdapter {
   public resetAgentPaneMetadata(paneId: string): void {
     this.setAgentPaneMetadata(paneId, "kind", "shell");
     this.setAgentPaneMetadata(paneId, "agent_id", "");
-    this.setAgentPaneMetadata(paneId, "run_id", "");
     this.setAgentPaneMetadata(paneId, "pane_name", "shell");
-    this.setAgentPaneMetadata(paneId, "parent_run_id", "");
   }
 
   public setManagedSessionMetadata(sessionName: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
@@ -336,10 +330,8 @@ export class TmuxAdapter {
         this.metadataFormat("pane_name"),
         this.metadataFormat("kind"),
         this.metadataFormat("agent_id"),
-        this.metadataFormat("run_id"),
         this.metadataFormat("workspace_id"),
         this.metadataFormat("managed_session_id"),
-        this.metadataFormat("parent_run_id"),
         `#{${stableAgentSessionMetadataKey}}`,
         `#{${stableAgentExecutionMetadataKey}}`,
         "#{pid}",
@@ -366,7 +358,7 @@ export class TmuxAdapter {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdRunId, agentdWorkspaceId, agentdManagedSessionId, agentdParentRunId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = line.split(separator);
+        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, agentdPaneId, agentdName, agentdKind, agentdAgentId, agentdWorkspaceId, agentdManagedSessionId, agentdSessionId, agentdExecutionId, serverPid, serverStartTime, socketPath] = line.split(separator);
         if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || paneIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
@@ -394,10 +386,8 @@ export class TmuxAdapter {
           agentdName: nonEmpty(agentdName),
           agentdKind: nonEmpty(agentdKind),
           agentdAgentId: nonEmpty(agentdAgentId),
-          agentdRunId: nonEmpty(agentdRunId),
           agentdWorkspaceId: nonEmpty(agentdWorkspaceId),
           agentdManagedSessionId: nonEmpty(agentdManagedSessionId),
-          agentdParentRunId: nonEmpty(agentdParentRunId),
           agentdSessionId: nonEmpty(agentdSessionId),
           agentdExecutionId: nonEmpty(agentdExecutionId),
         } satisfies TmuxPane;
@@ -619,11 +609,11 @@ export class TmuxAdapter {
     this.require(["set-hook", "-gu", `${name}[${index}]`]);
   }
 
-  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id" | "managed" | "wrapper"): string {
+  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id" | "managed" | "wrapper"): string {
     return `${this.metadataPrefix}${field}`;
   }
 
-  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "run_id" | "workspace_id" | "managed_session_id" | "parent_run_id"): string {
+  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id"): string {
     return `#{${this.metadataKey(field)}}`;
   }
 

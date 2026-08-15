@@ -13,29 +13,25 @@ import type {
   AgentSessionRepository,
   PaneFilter,
   PaneRepository,
-  RunRepository,
   WorkspaceRepository,
 } from "@mobile-agent/application";
 import type {
   AgentSessionRecord,
   PaneRecord,
-  RunRecord,
   WorkspaceRecord,
 } from "@mobile-agent/domain";
 import {
   agentSessions,
   auditEvents,
   panes,
-  runs,
   workspaces,
   type AgentSessionRow,
   type PaneRow,
-  type RunRow,
   type WorkspaceRow,
 } from "./schema.js";
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
-export { agentSessions, auditEvents, panes, runs, workspaces } from "./schema.js";
+export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
 export { agentdControlSocketMaxBytes, defaultAgentdInstanceDirectory, resolveAgentdPaths, validateAgentdControlSocketPath } from "./paths.js";
 export type { AgentdInstancePaths, AgentdPathOverrides } from "./paths.js";
 export { AuthStore, AuthStoreError } from "./auth.js";
@@ -223,7 +219,6 @@ export class DrizzlePaneRepository implements PaneRepository {
           cwd: row.cwd,
           workspaceId: row.workspaceId,
           agentId: row.agentId,
-          runId: row.runId,
           state: row.state,
           title: row.title,
           lastSeenAt: row.lastSeenAt,
@@ -247,45 +242,6 @@ export class DrizzlePaneRepository implements PaneRepository {
     const candidates = this.database.select({ id: panes.id }).from(panes).where(condition).all();
     this.database.delete(panes).where(condition).run();
     return candidates.length;
-  }
-}
-
-export class DrizzleRunRepository implements RunRepository {
-  public constructor(private readonly database: AgentDatabase["db"]) {}
-
-  public async findById(id: string): Promise<RunRecord | undefined> {
-    const row = this.database.select().from(runs).where(eq(runs.id, id)).get();
-    return row ? toRunRecord(row) : undefined;
-  }
-
-  public async upsert(record: RunRecord): Promise<void> {
-    const now = new Date().toISOString();
-    this.database
-      .insert(runs)
-      .values({
-        id: record.id,
-        paneId: record.paneId,
-        agentId: record.agentId,
-        profileId: record.profileId,
-        state: record.state,
-        startedAt: record.startedAt,
-        endedAt: record.endedAt,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: runs.id,
-        set: {
-          paneId: record.paneId,
-          agentId: record.agentId,
-          profileId: record.profileId,
-          state: record.state,
-          startedAt: record.startedAt,
-          endedAt: record.endedAt,
-          updatedAt: now,
-        },
-      })
-      .run();
   }
 }
 
@@ -555,7 +511,6 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
     cwd: record.cwd,
     workspaceId: record.workspaceId,
     agentId: record.agentId,
-    runId: record.runId,
     state: record.state,
     title: record.title,
     lastSeenAt: record.lastSeenAt,
@@ -578,22 +533,9 @@ function toPaneRecord(row: PaneRow): PaneRecord {
     cwd: row.cwd,
     workspaceId: row.workspaceId,
     agentId: row.agentId,
-    runId: row.runId,
     state: row.state,
     title: row.title,
     lastSeenAt: row.lastSeenAt,
-  };
-}
-
-function toRunRecord(row: RunRow): RunRecord {
-  return {
-    id: row.id,
-    paneId: row.paneId,
-    agentId: row.agentId,
-    profileId: row.profileId,
-    state: row.state,
-    startedAt: row.startedAt,
-    endedAt: row.endedAt,
   };
 }
 

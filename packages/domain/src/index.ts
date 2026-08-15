@@ -1,7 +1,7 @@
 export const paneKinds = ["agent", "shell", "unknown"] as const;
 export type PaneKind = (typeof paneKinds)[number];
 
-export const runStates = [
+export const paneStates = [
   "starting",
   "running",
   "waiting_input",
@@ -10,10 +10,9 @@ export const runStates = [
   "completed",
   "stopped",
 ] as const;
-export type RunState = (typeof runStates)[number];
+export type PaneState = (typeof paneStates)[number];
 
 export type PaneId = string;
-export type RunId = string;
 export type WorkspaceId = string;
 
 export const agentBackends = ["codex", "claude"] as const;
@@ -222,8 +221,7 @@ export type PaneRecord = {
   cwd: string;
   workspaceId: WorkspaceId | null;
   agentId: string | null;
-  runId: RunId | null;
-  state: RunState;
+  state: PaneState;
   title: string | null;
   /** Short, live-only tail emitted by the provider plugin. Persisted rows may omit it. */
   recentOutput?: string;
@@ -241,50 +239,40 @@ export type PaneRecord = {
   windowHeight?: number;
 };
 
-export type RunRecord = {
-  id: RunId;
-  paneId: PaneId;
-  agentId: string | null;
-  profileId: string | null;
-  state: RunState;
-  startedAt: string;
-  endedAt: string | null;
-};
-
-export type RunStateTransition = {
-  from: RunState;
-  to: RunState;
+export type PaneStateTransition = {
+  from: PaneState;
+  to: PaneState;
   reason: string;
   at: string;
 };
 
-const terminalStates = new Set<RunState>(["failed", "completed", "stopped"]);
+const terminalStates = new Set<PaneState>(["failed", "completed", "stopped"]);
 
 /**
  * Validates a state transition without knowing anything about an agent or
  * transport. Plugins can emit a normalized state and the application layer
  * can use this function before persisting it.
  */
-export function canTransitionRunState(from: RunState, to: RunState): boolean {
+export function canTransitionPaneState(from: PaneState, to: PaneState): boolean {
   if (from === to) return true;
   if (terminalStates.has(from)) return false;
   if (to === "starting") return from === "starting";
   return true;
 }
 
-export function transitionRunState(
-  current: RunState,
-  next: RunState,
+export function transitionPaneState(
+  current: PaneState,
+  next: PaneState,
   reason: string,
   at = new Date().toISOString(),
-): RunStateTransition {
-  if (!canTransitionRunState(current, next)) {
-    throw new Error(`Invalid run state transition: ${current} -> ${next}`);
+): PaneStateTransition {
+  if (!canTransitionPaneState(current, next)) {
+    throw new Error(`Invalid pane state transition: ${current} -> ${next}`);
   }
   return { from: current, to: next, reason, at };
 }
 
-export function isAttentionState(state: RunState): boolean {
+export function isAttentionState(state: PaneState): boolean {
   return state === "waiting_input" || state === "waiting_approval" || state === "failed";
 }
 

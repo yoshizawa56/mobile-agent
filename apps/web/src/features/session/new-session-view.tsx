@@ -15,7 +15,7 @@ export function NewSessionView({ viewModel }: { viewModel: NewSessionViewModel }
         <div className="mb-[29px] max-[620px]:mb-[27px]">
           <span className="flex items-center gap-2 font-mono text-[0.58rem] font-bold tracking-[0.14em] text-lime-deep"><span className="h-px w-[19px] bg-lime-deep shadow-[0_0_9px_rgb(57_214_91_/_60%)]" /> NEW SESSION</span>
           <h1 className="my-[14px] mb-[10px] text-[clamp(1.65rem,5vw,2.15rem)] font-bold leading-[1.05] tracking-[-0.06em] text-[#dbffdf] max-[620px]:mt-3 max-[620px]:text-[1.62rem]">Create a tmux session</h1>
-          <p className="m-0 max-w-[430px] text-[0.79rem] leading-[1.55] text-[#719176] max-[620px]:text-[0.88rem]">Start a durable workspace on {viewModel.terminal.name}. You can add agent panes after the session is ready.</p>
+          <p className="m-0 max-w-[430px] text-[0.79rem] leading-[1.55] text-[#719176] max-[620px]:text-[0.88rem]">Start a tmux session on {viewModel.terminal.name}. Choose its initial directory, then add agent panes when it is ready.</p>
         </div>
 
         <form className="flex flex-col gap-[17px]" onSubmit={(event) => { event.preventDefault(); if (canCreate) viewModel.onCreate(); }}>

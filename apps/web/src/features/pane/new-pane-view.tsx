@@ -3,8 +3,10 @@ import { WorkspacePickerView } from "../workspace/workspace-picker-view";
 import { workspacePickerState } from "../workspace/workspace-picker-viewmodel";
 
 export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
+  const needsWorkspace = viewModel.kind === "agent" && viewModel.placement === "window";
+  const worktreeRequiresWindow = viewModel.kind === "agent" && viewModel.workspacePicker.mode === "worktree";
   const canCreate = viewModel.name.trim().length > 0
-    && workspacePickerState(viewModel.workspacePicker).canContinue
+    && (!needsWorkspace || workspacePickerState(viewModel.workspacePicker).canContinue)
     && (viewModel.placement === "window" || Boolean(viewModel.targetPaneId));
 
   return (
@@ -49,11 +51,11 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                 <span className="flex min-w-0 flex-col gap-1"><strong className="text-[0.65rem] text-[#c3f4c9]">New window</strong><small className="text-[0.57rem] leading-[1.4] text-[#638f6b] max-[620px]:text-[0.72rem]">Keep the pane full-size in its own tmux window.</small></span>
               </label>
               <label className={`flex min-w-0 items-start gap-2 rounded-lg border border-[#1e4828] bg-[rgb(7_24_11_/_70%)] p-2.5 text-[#82b488] transition-colors max-[920px]:min-h-14 max-[920px]:p-3 ${viewModel.placement === "right" ? "border-[#3d8b4c] bg-[rgb(13_40_19_/_82%)] shadow-[inset_3px_0_0_var(--color-lime-deep)]" : ""} ${viewModel.existingPanes.length ? "" : "cursor-not-allowed opacity-38"}`}>
-                <input type="radio" name="pane-placement" checked={viewModel.placement === "right"} onChange={() => viewModel.onPlacementChange("right")} disabled={!viewModel.existingPanes.length} />
+                <input type="radio" name="pane-placement" checked={viewModel.placement === "right"} onChange={() => viewModel.onPlacementChange("right")} disabled={!viewModel.existingPanes.length || worktreeRequiresWindow} />
                 <span className="flex min-w-0 flex-col gap-1"><strong className="text-[0.65rem] text-[#c3f4c9]">Split right</strong><small className="text-[0.57rem] leading-[1.4] text-[#638f6b] max-[620px]:text-[0.72rem]">Place it beside an existing pane.</small></span>
               </label>
               <label className={`flex min-w-0 items-start gap-2 rounded-lg border border-[#1e4828] bg-[rgb(7_24_11_/_70%)] p-2.5 text-[#82b488] transition-colors max-[920px]:min-h-14 max-[920px]:p-3 ${viewModel.placement === "bottom" ? "border-[#3d8b4c] bg-[rgb(13_40_19_/_82%)] shadow-[inset_3px_0_0_var(--color-lime-deep)]" : ""} ${viewModel.existingPanes.length ? "" : "cursor-not-allowed opacity-38"}`}>
-                <input type="radio" name="pane-placement" checked={viewModel.placement === "bottom"} onChange={() => viewModel.onPlacementChange("bottom")} disabled={!viewModel.existingPanes.length} />
+                <input type="radio" name="pane-placement" checked={viewModel.placement === "bottom"} onChange={() => viewModel.onPlacementChange("bottom")} disabled={!viewModel.existingPanes.length || worktreeRequiresWindow} />
                 <span className="flex min-w-0 flex-col gap-1"><strong className="text-[0.65rem] text-[#c3f4c9]">Split below</strong><small className="text-[0.57rem] leading-[1.4] text-[#638f6b] max-[620px]:text-[0.72rem]">Place it beneath an existing pane.</small></span>
               </label>
             </div>
@@ -81,7 +83,7 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
             </>
           ) : null}
 
-          <WorkspacePickerView viewModel={viewModel.workspacePicker} showMode={viewModel.kind === "agent"} />
+          {needsWorkspace ? <WorkspacePickerView viewModel={viewModel.workspacePicker} showMode /> : null}
           {viewModel.errorMessage ? <p className="m-0 text-[0.62rem] leading-[1.45] text-[#ff9a8f]" role="alert">{viewModel.errorMessage}</p> : null}
           <button className="mt-1 flex min-h-[45px] w-full items-center justify-between gap-3 rounded-[9px] border border-[#4a9a57] bg-lime px-[15px] text-[0.71rem] font-bold text-[#061008] transition-colors hover:bg-[#b0ffb8] disabled:cursor-not-allowed disabled:opacity-35 max-[920px]:min-h-[52px] max-[920px]:text-[0.88rem]" type="submit" disabled={!canCreate || viewModel.isCreating}>{viewModel.isCreating ? "Opening pane…" : "Open pane"}<span className="text-[1.1rem]">{viewModel.isCreating ? "…" : "→"}</span></button>
         </form>

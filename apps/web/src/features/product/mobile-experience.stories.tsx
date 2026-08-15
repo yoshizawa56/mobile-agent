@@ -79,11 +79,11 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       sessionName: newSession.name,
       windowId: "@4",
       name: `${newSession.name} shell`,
-      cwd: newSession.cwd,
+      cwd: storyWorkspaces.find((workspace) => workspace.id === newSessionWorkspaceId)?.directory ?? "/tmp",
       state: "running" as const,
       title: "zsh",
     }];
-  }, [newSession]);
+  }, [newSession, newSessionWorkspaceId]);
   const sessionPanes = selectedSession ? panes.filter((pane) => pane.sessionName === selectedSession.name) : [];
   const paneTarget = selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? "%0";
   const terminalViewModel = usePaneViewModel({ target: paneTarget });
@@ -258,12 +258,9 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       if (!workspace) return;
       const created: TmuxSession = {
         name: newSessionName.trim(),
-        workspace: workspace.name,
-        cwd: workspace.directory,
         paneCount: 1,
         waitingCount: 0,
         detail: "1 shell · new",
-        state: "active",
       };
       setNewSession(created);
       setSessionName(created.name);

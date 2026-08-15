@@ -347,7 +347,6 @@ export const paneSummarySchema = z.object({
   cwd: z.string(),
   workspaceId: z.string().nullable(),
   agentId: z.string().nullable(),
-  runId: z.string().nullable(),
   state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
   title: z.string().nullable(),
   // Live-only output tail. It is intentionally bounded and omitted from
@@ -379,8 +378,8 @@ export const createPaneRequestSchema = z.object({
   sessionName: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/),
   kind: z.enum(["agent", "shell"]),
   name: z.string().trim().min(1).max(120).refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "name contains a control character"),
-  // cwd remains readable for older clients, but new clients select a stable
-  // workspaceId and agentd resolves it through its allowed-root policy.
+  // cwd remains readable for older clients and is used only as a new-window
+  // initial directory. Split panes always inherit the target pane cwd.
   cwd: z.string().trim().min(1).max(4_096).optional(),
   workspaceId: z.string().trim().min(1).max(256).optional(),
   agentId: z.enum(["codex", "claude"]).nullable(),
@@ -388,11 +387,14 @@ export const createPaneRequestSchema = z.object({
   placement: panePlacementSchema,
   targetPaneId: z.string().trim().min(1).max(64).nullable(),
 }).superRefine((value, context) => {
-  if (!value.cwd && !value.workspaceId) {
-    context.addIssue({ code: "custom", path: ["workspaceId"], message: "workspaceId or cwd is required" });
-  }
   if (value.cwd && value.workspaceId) {
     context.addIssue({ code: "custom", path: ["workspaceId"], message: "choose workspaceId instead of cwd" });
+  }
+  if (value.placement !== "window" && value.cwd) {
+    context.addIssue({ code: "custom", path: ["cwd"], message: "split panes always inherit the target pane cwd" });
+  }
+  if (value.placement !== "window" && value.workspaceId) {
+    context.addIssue({ code: "custom", path: ["workspaceId"], message: "split panes always inherit the target pane cwd" });
   }
   if (value.kind === "agent" && !value.agentId) {
     context.addIssue({ code: "custom", path: ["agentId"], message: "agentId is required for an agent pane" });
@@ -402,6 +404,9 @@ export const createPaneRequestSchema = z.object({
   }
   if (value.kind === "shell" && value.useWorktree) {
     context.addIssue({ code: "custom", path: ["useWorktree"], message: "useWorktree is only allowed for an agent pane" });
+  }
+  if (value.kind === "agent" && value.useWorktree && value.placement !== "window") {
+    context.addIssue({ code: "custom", path: ["placement"], message: "worktree agent panes must open in a new tmux window" });
   }
   if (value.placement === "window" && value.targetPaneId) {
     context.addIssue({ code: "custom", path: ["targetPaneId"], message: "targetPaneId is only used for a split pane" });
@@ -429,12 +434,9 @@ export const terminalListResponseSchema = z.object({ terminals: z.array(terminal
 
 export const tmuxSessionSchema = z.object({
   name: z.string().min(1),
-  workspace: z.string().min(1),
-  cwd: z.string().min(1),
   paneCount: z.number().int().min(0),
   waitingCount: z.number().int().min(0),
   detail: z.string(),
-  state: z.enum(["active", "idle"]),
 });
 export type TmuxSession = z.infer<typeof tmuxSessionSchema>;
 

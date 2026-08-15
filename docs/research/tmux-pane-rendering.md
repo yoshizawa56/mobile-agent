@@ -27,7 +27,7 @@ tmux Control Mode is useful for pane discovery, lifecycle management, input, res
 The terminal data route and the management route are therefore separate:
 
 - terminal data route: run tmux attach-session through Bun.Terminal and relay raw bytes over WebSocket;
-- management route: use tmux Control Mode inside agentd for pane discovery, user options, Run state, and events;
+- management route: use tmux Control Mode inside agentd for pane discovery, user options, AgentSession state, and events;
 - web client: interpret and render terminal bytes with xterm.js.
 
 ## Candidates for rendering an individual pane without desktop interference
@@ -40,13 +40,13 @@ When acquiring the lease, snapshot the layout, zoom state, active pane, window-s
 
 ### B. Create a dedicated tmux client
 
-agentd should own a dedicated mobile tmux client even in the MVP. This is not a twin agent Run; it is another client attached to the same pane. The active-pane flag isolates pane selection, while the lease manages window-level zoom and size.
+agentd should own a dedicated mobile tmux client even in the MVP. This is not a twin agent execution; it is another client attached to the same pane. The active-pane flag isolates pane selection, while the lease manages window-level zoom and size.
 
 ### C. Control Mode plus a headless xterm instance per pane
 
 Receive raw output from tmux and keep an independent terminal-emulator state for every pane. This can be independent of the desktop layout, but Control Mode output depends on the size of its client. Correctly rebuilding a TUI at a different mobile width requires running the agent in another PTY or having the TUI support multiple viewports.
 
-### D. Start a mobile-only Run for each agent
+### D. Start a mobile-only AgentSession execution for each agent
 
 This provides completely independent dimensions, but the desktop and mobile processes are no longer the same process. History, work state, and simultaneous input conflicts require separate semantics, so this is not selected at the current stage.
 

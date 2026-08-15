@@ -8,14 +8,14 @@ import {
   type AgentdControlResponse,
   type PairingClaimNotification,
 } from "@mobile-agent/protocol";
-import type { RunState } from "@mobile-agent/domain";
+import type { PaneState } from "@mobile-agent/domain";
 import { AuthService, pairingPayloadCode } from "./service.js";
 
 export type AgentdControlServerOptions = {
   socketPath: string;
   auth: AuthService;
   adoptAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
-  observeAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: RunState; recentOutput?: string }) => Promise<void>;
+  observeAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: PaneState; recentOutput?: string }) => Promise<void>;
   releaseAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
 };
 

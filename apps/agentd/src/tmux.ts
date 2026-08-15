@@ -474,7 +474,7 @@ export class TmuxAdapter {
     const output = this.require([
       "display-message",
       "-p",
-      "-t",
+      "-c",
       clientName,
       "#{client_name}\t#{client_pid}\t#{client_tty}\t#{client_session}\t#{window_id}\t#{pane_id}\t#{client_width}\t#{client_height}\t#{client_flags}\t#{client_activity}",
     ]);

@@ -12,7 +12,7 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { resolveAgentCommand, TmuxAdapter, type TmuxLiveSnapshot, type TmuxPane } from "./tmux.js";
+import { resolveAgentCommand, TmuxAdapter, type TmuxClient, type TmuxLiveSnapshot, type TmuxPane } from "./tmux.js";
 
 type EmptyContext = {};
 type RecordingFixture = { adapter: RecordingTmuxAdapter };
@@ -126,6 +126,44 @@ const refreshTable: OperationTable<RecordingFixture, "default", RedrawInput, str
   observe: () => ({}),
 };
 
+type ClientViewResult = { client: TmuxClient; args: string[] };
+type ClientViewFixture = { adapter: ClientViewTmuxAdapter };
+const clientViewCases = [
+  {
+    name: "targets the requested tmux client instead of the current pane",
+    input: {},
+    assert: [
+      returns<EmptyContext, ClientViewResult>({
+        client: {
+          name: "/dev/ttys016",
+          pid: 1234,
+          tty: "/dev/ttys016",
+          sessionName: "agentd",
+          windowId: "@0",
+          paneId: "%1",
+          width: 120,
+          height: 40,
+          flags: "attached,focused",
+          activity: 1,
+        },
+        args: [
+          "display-message",
+          "-p",
+          "-c",
+          "/dev/ttys016",
+          "#{client_name}\t#{client_pid}\t#{client_tty}\t#{client_session}\t#{window_id}\t#{pane_id}\t#{client_width}\t#{client_height}\t#{client_flags}\t#{client_activity}",
+        ],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", {}, ClientViewResult, EmptyContext>[];
+const clientViewTable: OperationTable<ClientViewFixture, "default", {}, ClientViewResult, EmptyContext> = {
+  defaultFixture: () => ({ fixture: { adapter: new ClientViewTmuxAdapter() } }),
+  cases: clientViewCases,
+  execute: (fixture) => ({ client: fixture.adapter.clientView("/dev/ttys016"), args: fixture.adapter.lastArgs }),
+  observe: () => ({}),
+};
+
 type ListResult = { panes: TmuxPane[]; args: string[] };
 type ListContext = {};
 const hasPaneListing: Assertion<ListContext, ListResult> = {
@@ -210,6 +248,7 @@ describe("tmux adapter", () => {
   runOperationTable(register, resolveTable);
   runOperationTable(register, attachTable);
   runOperationTable(register, refreshTable);
+  runOperationTable(register, clientViewTable);
   runOperationTable(register, listTable);
   runOperationTable(register, snapshotTable);
   runOperationTable(register, metadataWriteTable);
@@ -221,6 +260,15 @@ class RecordingTmuxAdapter extends TmuxAdapter {
   public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
   public override require(args: string[]): string { this.lastArgs = args; return "%2\n"; }
   public override command(args: string[]) { this.lastArgs = args; return { status: 0, stdout: "", stderr: "" }; }
+}
+
+class ClientViewTmuxAdapter extends TmuxAdapter {
+  public lastArgs: string[] = [];
+  public constructor() { super("/private/tmp/mobile-agent-test.sock"); }
+  public override require(args: string[]): string {
+    this.lastArgs = args;
+    return ["/dev/ttys016", "1234", "/dev/ttys016", "agentd", "@0", "%1", "120", "40", "attached,focused", "1"].join("\t") + "\n";
+  }
 }
 
 class ListingTmuxAdapter extends TmuxAdapter {

@@ -25,8 +25,8 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
           </div>
           <div className="board-actions">
             <span className="board-count">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
-            <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="ペイン一覧を更新" title="Refresh panes">↻</button>
-            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="ペイン一覧を閉じる">×</button>
+            <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes">↻</button>
+            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="Close pane list">×</button>
           </div>
         </div>
         <div className="board-divider" />

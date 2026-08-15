@@ -98,12 +98,12 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
             </div>
             {viewModel.selectionMode || viewModel.hasSelection || viewModel.selectionNotice ? (
               <div className="terminal-selection-bar" role="toolbar" aria-label="Terminal text selection">
-                <span className="terminal-selection-state" role="status" aria-live="polite">{viewModel.selectionNotice ?? (viewModel.selectionMode ? "ドラッグして範囲を選択" : "範囲を選択中")}</span>
+                <span className="terminal-selection-state" role="status" aria-live="polite">{viewModel.selectionNotice ?? (viewModel.selectionMode ? "Drag to select a range" : "Selection active")}</span>
                 <div className="terminal-selection-actions">
-                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.copySelection()} disabled={!viewModel.hasSelection}>コピー</button>
-                  <button className="terminal-selection-button" type="button" onClick={viewModel.selectAll}>全選択</button>
-                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.pasteFromClipboard()}>貼り付け</button>
-                  <button className="terminal-selection-button terminal-selection-button-muted" type="button" onClick={viewModel.clearSelection}>解除</button>
+                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.copySelection()} disabled={!viewModel.hasSelection}>Copy</button>
+                  <button className="terminal-selection-button" type="button" onClick={viewModel.selectAll}>Select all</button>
+                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.pasteFromClipboard()}>Paste</button>
+                  <button className="terminal-selection-button terminal-selection-button-muted" type="button" onClick={viewModel.clearSelection}>Clear</button>
                 </div>
               </div>
             ) : null}

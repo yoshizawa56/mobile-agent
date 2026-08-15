@@ -13,10 +13,10 @@ type Input = { state: "waiting_input" | "waiting_approval" | "running" | "failed
 type Context = {};
 
 const cases = [
-  { name: "labels input waiting", input: { state: "waiting_input" as const }, assert: [returns<Context, string>("入力待ち")] },
-  { name: "labels approval waiting", input: { state: "waiting_approval" as const }, assert: [returns<Context, string>("承認待ち")] },
-  { name: "labels running", input: { state: "running" as const }, assert: [returns<Context, string>("実行中")] },
-  { name: "labels failure", input: { state: "failed" as const }, assert: [returns<Context, string>("失敗")] },
+  { name: "labels input waiting", input: { state: "waiting_input" as const }, assert: [returns<Context, string>("Waiting for input")] },
+  { name: "labels approval waiting", input: { state: "waiting_approval" as const }, assert: [returns<Context, string>("Waiting for approval")] },
+  { name: "labels running", input: { state: "running" as const }, assert: [returns<Context, string>("Running")] },
+  { name: "labels failure", input: { state: "failed" as const }, assert: [returns<Context, string>("Failed")] },
 ] satisfies readonly OperationCase<"default", Input, string, Context>[];
 
 const table: OperationTable<undefined, "default", Input, string, Context> = {

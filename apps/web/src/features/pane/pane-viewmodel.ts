@@ -133,19 +133,19 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     const terminal = terminalRef.current;
     const text = terminal?.getSelection() ?? "";
     if (!text) {
-      showSelectionNotice("コピーする範囲を選択してください");
+      showSelectionNotice("Select a range to copy");
       return false;
     }
 
     const copied = await writeTextToClipboard(text);
-    showSelectionNotice(copied ? "コピーしました" : "クリップボードへのコピーに失敗しました");
+    showSelectionNotice(copied ? "Copied" : "Failed to copy to clipboard");
     return copied;
   }, [showSelectionNotice]);
 
   const pasteFromClipboard = useCallback(async () => {
     const terminal = terminalRef.current;
     if (!terminal || typeof navigator === "undefined" || !navigator.clipboard?.readText) {
-      showSelectionNotice("この環境では貼り付けを利用できません");
+      showSelectionNotice("Pasting is not available in this environment");
       return false;
     }
 
@@ -153,10 +153,10 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const text = await navigator.clipboard.readText();
       terminal.focus();
       terminal.paste(text);
-      showSelectionNotice(text ? "貼り付けました" : "クリップボードは空です");
+      showSelectionNotice(text ? "Pasted" : "Clipboard is empty");
       return true;
     } catch {
-      showSelectionNotice("貼り付けにはクリップボードの許可が必要です");
+      showSelectionNotice("Clipboard permission is required to paste");
       return false;
     }
   }, [showSelectionNotice]);

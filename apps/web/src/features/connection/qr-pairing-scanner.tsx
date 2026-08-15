@@ -22,7 +22,7 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
           },
         );
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : "カメラを利用できません");
+        if (active) setError(cause instanceof Error ? cause.message : "Camera is unavailable");
       }
     };
     void start();
@@ -38,8 +38,8 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video ref={videoRef} muted playsInline />
         <span className="connection-qr-target" />
       </div>
-      <p>{error ?? "agent pair に表示されたQRをアプリ内で読み取ってください。"}</p>
-      <button className="connection-flow-secondary" type="button" onClick={onClose}>カメラを閉じる</button>
+      <p>{error ?? "Scan the QR code shown by agent pair in this app."}</p>
+      <button className="connection-flow-secondary" type="button" onClick={onClose}>Close camera</button>
     </section>
   );
 }

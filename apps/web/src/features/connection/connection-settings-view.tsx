@@ -13,17 +13,17 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
         <div className="connection-flow-intro">
           <span className="connection-flow-step"><span className="connection-flow-step-line" /> CONNECTION SETTINGS</span>
           <h1>Where is agentd?</h1>
-          <p>ホストでagent pairを実行してQRを表示し、ここで読み取ってください。接続先はビルドに含めず、ブラウザ側の秘密鍵はIndexedDBに保存し、サーバーには公開鍵だけを登録します。</p>
+          <p>Run agent pair on the host to display a QR code, then scan it here. The destination is not bundled with the build; the browser&apos;s private key is stored in IndexedDB, and only the public key is registered with the server.</p>
         </div>
 
-        {viewModel.isPairingQr ? <div className="connection-qr-status" role="status">{viewModel.pairingMessage ?? "ペアリング中…"}</div> : null}
+        {viewModel.isPairingQr ? <div className="connection-qr-status" role="status">{viewModel.pairingMessage ?? "Pairing…"}</div> : null}
         {viewModel.isScanningQr && viewModel.onQrValue && viewModel.onCloseQrScanner ? (
           <QrPairingScanner onScan={viewModel.onQrValue} onClose={viewModel.onCloseQrScanner} />
         ) : null}
 
         {!viewModel.isScanningQr && !viewModel.isPairingQr && viewModel.onOpenQrScanner ? (
           <button className="connection-flow-primary connection-qr-open" type="button" onClick={viewModel.onOpenQrScanner}>
-            QRコードを読み取ってペアリング<span>⌁</span>
+            Scan QR code to pair<span>⌁</span>
           </button>
         ) : null}
 

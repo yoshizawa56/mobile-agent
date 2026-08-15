@@ -55,7 +55,7 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     selectedTarget,
     panes: query.data ?? [],
     status: query.isPending ? "loading" : query.isError ? "error" : "ready",
-    errorMessage: query.error instanceof Error ? query.error.message : query.isError ? "ペイン一覧を取得できません" : null,
+    errorMessage: query.error instanceof Error ? query.error.message : query.isError ? "Unable to load panes" : null,
     open,
     close,
     toggle,
@@ -67,18 +67,18 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
 export function paneStateLabel(state: PaneSummary["state"]): string {
   switch (state) {
     case "waiting_input":
-      return "入力待ち";
+      return "Waiting for input";
     case "waiting_approval":
-      return "承認待ち";
+      return "Waiting for approval";
     case "failed":
-      return "失敗";
+      return "Failed";
     case "completed":
-      return "完了";
+      return "Completed";
     case "stopped":
-      return "停止";
+      return "Stopped";
     case "starting":
-      return "起動中";
+      return "Starting";
     default:
-      return "実行中";
+      return "Running";
   }
 }

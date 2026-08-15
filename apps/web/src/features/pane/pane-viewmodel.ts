@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefCallback } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefCallback } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import {
@@ -51,6 +51,11 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
   const retryTimerRef = useRef<number | null>(null);
   const resumeRef = useRef<PaneResumeState | null>(null);
   const terminalClosedRef = useRef(false);
+  const currentTargetRef = useRef(target);
+  const pendingDetachRef = useRef<Promise<void> | null>(null);
+  useLayoutEffect(() => {
+    currentTargetRef.current = target;
+  }, [target]);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current === null) return;
@@ -111,6 +116,8 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     const storageKey = terminalResumeStorageKey(endpoint, target);
     resumeRef.current = readTerminalResumeState(storageKey, target);
     terminalClosedRef.current = false;
+    setStatus("connecting");
+    setErrorMessage(null);
     let disposed = false;
     let resizeFrame: number | null = null;
     let retryScheduled = false;
@@ -164,6 +171,14 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
 
     const connect = async () => {
       if (disposed || terminalClosedRef.current) return;
+
+      const pendingDetach = pendingDetachRef.current;
+      if (pendingDetach) {
+        pendingDetachRef.current = null;
+        await pendingDetach;
+        if (disposed || terminalClosedRef.current) return;
+      }
+
       if (!connection) return;
 
       const previousSocket = socketRef.current;
@@ -384,11 +399,19 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       binaryInputDisposable.dispose();
       flickCleanup();
       resizeDisposable.dispose();
+      const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
+      if (cleanupMode === "detach") {
+        terminalClosedRef.current = true;
+        resumeRef.current = null;
+        clearTerminalResumeState(storageKey);
+      }
       const socket = socketRef.current;
       socketRef.current = null;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        // Effect cleanup is a transport loss, not an explicit detach. This
-        // lets a remounted pane resume the same PTY during the grace window.
+      if (cleanupMode === "detach") {
+        if (socket) pendingDetachRef.current = detachSocketAndWait(socket);
+      } else if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        // Effect cleanup is a transport loss when the same pane is remounted.
+        // This lets a remounted pane resume the same PTY during the grace window.
         closeNetworkSocket(socket);
       }
       terminal.dispose();
@@ -440,6 +463,12 @@ export function resumeStateFromReady(
   };
 }
 
+export type TerminalSessionCleanupMode = "preserve" | "detach";
+
+export function terminalSessionCleanupMode(effectTarget: string, currentTarget: string): TerminalSessionCleanupMode {
+  return effectTarget === currentTarget ? "preserve" : "detach";
+}
+
 export function handleControlMessage(
   rawMessage: string,
   handlers: {
@@ -475,6 +504,52 @@ function binaryStringToBytes(data: string): ArrayBuffer {
   const bytes = new Uint8Array(new ArrayBuffer(data.length));
   for (let index = 0; index < data.length; index += 1) bytes[index] = data.charCodeAt(index) & 0xff;
   return bytes.buffer;
+}
+
+const TERMINAL_DETACH_TIMEOUT_MS = 2_000;
+
+function detachSocketAndWait(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    let timeout: number | null = null;
+    const finish = () => {
+      if (timeout !== null) window.clearTimeout(timeout);
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("close", finish);
+      socket.removeEventListener("error", onError);
+      resolve();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      try {
+        const parsed = serverControlMessageSchema.safeParse(JSON.parse(event.data));
+        if (parsed.success && parsed.data.type === "closed") finish();
+      } catch {
+        // Ignore terminal output that is not a control frame.
+      }
+    };
+    const onError = () => closeNetworkSocket(socket, "detached");
+
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("close", finish);
+    socket.addEventListener("error", onError);
+    timeout = window.setTimeout(() => {
+      closeNetworkSocket(socket, "detached");
+      finish();
+    }, TERMINAL_DETACH_TIMEOUT_MS);
+
+    try {
+      if (socket.readyState === WebSocket.OPEN) {
+        sendControl(socket, { type: "detach", version: terminalProtocolVersion });
+      } else {
+        closeNetworkSocket(socket, "detached");
+      }
+    } catch {
+      closeNetworkSocket(socket, "detached");
+      finish();
+    }
+  });
 }
 
 function closeNetworkSocket(socket: WebSocket, reason?: string): void {

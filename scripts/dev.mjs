@@ -467,50 +467,9 @@ export async function checkAgentdHealth(config, request = probeHttp) {
 }
 
 export async function checkWebHealth(config, requests = {}) {
-  const request = requests.http ?? probeHttp;
-  const requestWebSocket = requests.websocket ?? probeWebSocket;
-  let root;
-  try {
-    root = await request(endpoint(browserHost(config.webHost), config.webPort, "/"), {
-      timeoutMs: config.probeTimeoutMs,
-    });
-  } catch (error) {
-    return failedHealth(`web HTML probe failed: ${errorMessage(error)}`, error);
-  }
-  if (root.statusCode !== 200 || !/<(?:!doctype\s+html|html\b)/i.test(root.body ?? "")) {
-    return failedHealth(`web / did not return the Vite HTML shell: ${responseSummary(root)}`);
-  }
-
-  let capabilities;
-  try {
-    capabilities = await request(endpoint(browserHost(config.webHost), config.webPort, "/api/capabilities"), {
-      timeoutMs: config.probeTimeoutMs,
-    });
-  } catch (error) {
-    return failedHealth(`web /api proxy probe failed: ${errorMessage(error)}`, error);
-  }
-  const capabilitiesBody = jsonBody(capabilities.body);
-  if (
-    capabilities.statusCode !== 200
-    || capabilitiesBody?.protocolVersion !== 1
-    || typeof capabilitiesBody?.features !== "object"
-  ) {
-    return failedHealth(`web /api/capabilities did not reach a healthy agentd: ${responseSummary(capabilities)}`);
-  }
-
-  for (const path of ["/terminal", "/events"]) {
-    try {
-      await requestWebSocket(`ws://${formatHost(browserHost(config.webHost))}:${config.webPort}${path}`, {
-        timeoutMs: config.probeTimeoutMs,
-      });
-    } catch (error) {
-      return failedHealth(`web ${path} WebSocket proxy probe failed: ${errorMessage(error)}`, error);
-    }
-  }
-
-  return readyHealth("HTML, /api proxy, /terminal WebSocket, and /events WebSocket are ready", {
-    capabilities: capabilitiesBody,
-  });
+  const health = await checkAgentdHealth(config, requests.http ?? probeHttp);
+  if (!health.ok) return health;
+  return readyHealth("agentd /health is responding; web port is listening", health.evidence);
 }
 
 function errorMessage(error) {

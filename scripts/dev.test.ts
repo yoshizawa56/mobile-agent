@@ -94,12 +94,12 @@ const pureCases = [
     })],
   },
   {
-    name: "verifies HTML, API proxy, and both WebSocket routes",
+    name: "uses the unauthenticated agentd health endpoint for Web readiness",
     input: { kind: "health" },
-    assert: [succeeds("probes all expected routes", (value) => {
+    assert: [succeeds("probes only agentd health", (value) => {
       assert.equal(value.result.ok, true);
-      assert.deepEqual(value.httpRequests, ["/", "/api/capabilities"]);
-      assert.deepEqual(value.websocketRequests, ["/terminal", "/events"]);
+      assert.deepEqual(value.httpRequests, ["/health"]);
+      assert.deepEqual(value.websocketRequests, []);
     })],
   },
   {
@@ -154,8 +154,9 @@ const pureTable = {
         http: async (url) => {
           const parsed = new URL(url);
           fixture.healthRuntime.httpRequests.push(parsed.pathname);
-          if (parsed.pathname === "/") return { statusCode: 200, body: "<!doctype html><html></html>" };
-          return { statusCode: 200, body: JSON.stringify({ protocolVersion: 1, features: {} }) };
+          return parsed.pathname === "/health"
+            ? { statusCode: 200, body: JSON.stringify({ ok: true, service: "agentd", protocolVersion: 1 }) }
+            : { statusCode: 503, body: "service unavailable" };
         },
         websocket: async (url) => {
           fixture.healthRuntime.websocketRequests.push(new URL(url).pathname);
@@ -232,7 +233,7 @@ const supervisorCases = [
       assert.deepEqual(ctx.spawnCwds, ["/repo/apps/agentd", "/repo/apps/web"]);
       assert.equal(ctx.detached, true);
       assert.equal(ctx.shell, false);
-      assert.equal(ctx.websocketRequests.join(","), "/terminal,/events");
+      assert.deepEqual(ctx.websocketRequests, []);
       assert.equal(ctx.readyLog, true);
       assert.deepEqual(ctx.signals, ["agentd:SIGTERM", "web:SIGTERM"]);
       assert.equal(ctx.portCount, 0);

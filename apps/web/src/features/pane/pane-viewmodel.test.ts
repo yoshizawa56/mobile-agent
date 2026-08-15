@@ -14,6 +14,7 @@ import {
   createTerminalAttachMessage,
   handleControlMessage,
   resumeStateFromReady,
+  terminalSessionCleanupMode,
   type PaneResumeState,
   type PaneViewportOwner,
 } from "./pane-viewmodel";
@@ -73,6 +74,34 @@ const resumeTable: OperationTable<undefined, "default", ResumeInput, PaneResumeS
   observe: () => ({}),
 };
 
+type CleanupInput = { effectTarget: string; currentTarget: string };
+type CleanupResult = "preserve" | "detach";
+
+const cleanupCases = [
+  {
+    name: "preserves a resumable session when the same pane is remounted",
+    input: { effectTarget: "%3", currentTarget: "%3" },
+    assert: [returns<EmptyContext, CleanupResult>("preserve")],
+  },
+  {
+    name: "detaches the old session when switching to another pane",
+    input: { effectTarget: "%3", currentTarget: "%4" },
+    assert: [returns<EmptyContext, CleanupResult>("detach")],
+  },
+  {
+    name: "detaches the old session when pane data is temporarily unavailable",
+    input: { effectTarget: "%3", currentTarget: "" },
+    assert: [returns<EmptyContext, CleanupResult>("detach")],
+  },
+] satisfies readonly OperationCase<"default", CleanupInput, CleanupResult, EmptyContext>[];
+
+const cleanupTable: OperationTable<undefined, "default", CleanupInput, CleanupResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: cleanupCases,
+  execute: (_fixture, input) => terminalSessionCleanupMode(input.effectTarget, input.currentTarget),
+  observe: () => ({}),
+};
+
 type ControlFixture = {
   events: string[];
   resumed: boolean | null;
@@ -121,5 +150,6 @@ describe("terminal pane handshake helpers", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, attachTable);
   runOperationTable(register, resumeTable);
+  runOperationTable(register, cleanupTable);
   runOperationTable(register, controlTable);
 });

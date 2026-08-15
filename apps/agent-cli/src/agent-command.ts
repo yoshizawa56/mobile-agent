@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { accessSync, chmodSync, closeSync, constants, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
@@ -7,7 +7,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
+import { WorkspaceSelectionCatalog, workspaceIdForPath } from "@mobile-agent/agentd/workspace-selection";
 import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
+import { WorkspaceCrud, type UpdateWorkspaceInput } from "@mobile-agent/application";
 import type {
   AgentBackend,
   AgentSessionRecord,
@@ -141,6 +143,29 @@ type TmuxNewSessionOptions = {
   detached: boolean;
 };
 
+type WorkspaceListOptions = {
+  json: boolean;
+};
+
+type WorkspaceMutationOptions = {
+  selector?: string;
+  directory?: string;
+  name?: string;
+  nameExplicit: boolean;
+  setupHook?: string | null;
+  setupHookExplicit: boolean;
+  cleanupHook?: string | null;
+  cleanupHookExplicit: boolean;
+  copyPatterns: string[];
+  copyPatternsExplicit: boolean;
+  appendCopyPatterns: string[];
+  clearCopyPatterns: boolean;
+};
+
+type WorkspaceDeleteOptions = {
+  selector: string;
+};
+
 const sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
 const defaultCodexProfile = "local-agent";
 
@@ -168,6 +193,8 @@ export class AgentCommand {
   private database: AgentDatabase | undefined;
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
+  private workspaceCatalog!: WorkspaceSelectionCatalog;
+  private workspaceCrud!: WorkspaceCrud;
 
   public constructor(options: AgentCommandOptions = {}) {
     this.cwd = realpathSafe(options.cwd ?? process.cwd());
@@ -228,6 +255,14 @@ export class AgentCommand {
           break;
         case "tmux":
           status = await this.runTmux(args.slice(1));
+          break;
+        case "workspace":
+          this.ensureDatabase();
+          status = await this.runWorkspaceCommand(args.slice(1));
+          break;
+        case "session":
+          this.ensureDatabase();
+          status = await this.runSessionCommand(args.slice(1));
           break;
         case "resume":
           if (args[1] === "-h" || args[1] === "--help") {
@@ -469,6 +504,263 @@ export class AgentCommand {
     this.write(`agent: created managed tmux session '${options.name}' (${managedSessionId})\n`);
     if (options.detached) return 0;
     return this.tmux.attachSession(options.name);
+  }
+
+  private async runSessionCommand(args: string[]): Promise<number> {
+    const [subcommand = "", ...rest] = args;
+    if (subcommand === "" || subcommand === "-h" || subcommand === "--help") {
+      this.write("Usage: agent session <list|resume|cleanup> [OPTIONS]\n");
+      return subcommand === "" ? 2 : 0;
+    }
+
+    switch (subcommand) {
+      case "list":
+        if (hasHelpBeforeDelimiter(rest)) {
+          this.write("Usage: agent session list [--global] [--names|--json]\n");
+          return 0;
+        }
+        return this.listSessions(this.parseListOptions(rest));
+      case "resume":
+        if (hasHelpBeforeDelimiter(rest)) {
+          this.write("Usage: agent session resume [--global] NAME [-- BACKEND_ARGS...]\n");
+          return 0;
+        }
+        return this.resumeSession(this.parseResumeOptions(rest));
+      case "cleanup":
+        if (hasHelpBeforeDelimiter(rest)) {
+          this.write("Usage: agent session cleanup [--global] [--force] NAME\n");
+          return 0;
+        }
+        return this.cleanupSession(this.parseCleanupOptions(rest));
+      default:
+        throw new AgentCommandError(`unknown session command: ${subcommand}`);
+    }
+  }
+
+  private async runWorkspaceCommand(args: string[]): Promise<number> {
+    const [subcommand = "", ...rest] = args;
+    if (subcommand === "" || subcommand === "-h" || subcommand === "--help") {
+      this.write("Usage: agent workspace <list|add|register|update|delete> [OPTIONS]\n");
+      return subcommand === "" ? 2 : 0;
+    }
+
+    switch (subcommand) {
+      case "list":
+        if (rest.includes("-h") || rest.includes("--help")) {
+          this.write("Usage: agent workspace list [--json]\n");
+          return 0;
+        }
+        return this.listWorkspaces(this.parseWorkspaceListOptions(rest));
+      case "add":
+      case "register":
+        if (rest.includes("-h") || rest.includes("--help")) {
+          this.write(workspaceAddUsage(subcommand));
+          return 0;
+        }
+        return this.addWorkspace(this.parseWorkspaceMutationOptions(rest, "add"));
+      case "update":
+        if (rest.includes("-h") || rest.includes("--help")) {
+          this.write(workspaceUpdateUsage());
+          return 0;
+        }
+        return this.updateWorkspace(this.parseWorkspaceMutationOptions(rest, "update"));
+      case "delete":
+      case "remove":
+      case "rm":
+        if (rest.includes("-h") || rest.includes("--help")) {
+          this.write("Usage: agent workspace delete WORKSPACE [--force]\n");
+          return 0;
+        }
+        return this.deleteWorkspace(this.parseWorkspaceDeleteOptions(rest));
+      default:
+        throw new AgentCommandError(`unknown workspace command: ${subcommand}`);
+    }
+  }
+
+  private parseWorkspaceListOptions(args: string[]): WorkspaceListOptions {
+    let json = false;
+    for (const argument of args) {
+      if (argument === "--json") json = true;
+      else throw new AgentCommandError(`unknown workspace list option: ${argument}`);
+    }
+    return { json };
+  }
+
+  private parseWorkspaceMutationOptions(args: string[], mode: "add" | "update"): WorkspaceMutationOptions {
+    let selector: string | undefined;
+    let directory: string | undefined;
+    let name: string | undefined;
+    let nameExplicit = false;
+    let setupHook: string | null | undefined;
+    let setupHookExplicit = false;
+    let cleanupHook: string | null | undefined;
+    let cleanupHookExplicit = false;
+    const copyPatterns: string[] = [];
+    let copyPatternsExplicit = false;
+    const appendCopyPatterns: string[] = [];
+    let clearCopyPatterns = false;
+
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index]!;
+      if (argument === "--name") {
+        name = requireOptionValue(argument, args[++index]);
+        nameExplicit = true;
+      } else if (argument.startsWith("--name=")) {
+        name = requireOptionValue("--name", argument.slice("--name=".length));
+        nameExplicit = true;
+      } else if (argument === "--directory" || argument === "--path") {
+        if (mode === "update") throw new AgentCommandError("workspace directory is immutable; delete and add a new registration");
+        directory = requireOptionValue(argument, args[++index]);
+      } else if (argument.startsWith("--directory=") || argument.startsWith("--path=")) {
+        if (mode === "update") throw new AgentCommandError("workspace directory is immutable; delete and add a new registration");
+        const option = argument.startsWith("--directory=") ? "--directory" : "--path";
+        directory = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
+      } else if (argument === "--setup-hook" || argument === "--setup-script" || argument === "--setup-script-path") {
+        setupHook = requireOptionValue(argument, args[++index]);
+        setupHookExplicit = true;
+      } else if (argument.startsWith("--setup-hook=") || argument.startsWith("--setup-script=") || argument.startsWith("--setup-script-path=")) {
+        const option = argument.startsWith("--setup-hook=")
+          ? "--setup-hook"
+          : argument.startsWith("--setup-script=") ? "--setup-script" : "--setup-script-path";
+        setupHook = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
+        setupHookExplicit = true;
+      } else if (argument === "--no-setup-hook" || argument === "--no-setup-script") {
+        setupHook = null;
+        setupHookExplicit = true;
+      } else if (argument === "--cleanup-hook" || argument === "--cleanup-script" || argument === "--cleanup-script-path") {
+        cleanupHook = requireOptionValue(argument, args[++index]);
+        cleanupHookExplicit = true;
+      } else if (argument.startsWith("--cleanup-hook=") || argument.startsWith("--cleanup-script=") || argument.startsWith("--cleanup-script-path=")) {
+        const option = argument.startsWith("--cleanup-hook=")
+          ? "--cleanup-hook"
+          : argument.startsWith("--cleanup-script=") ? "--cleanup-script" : "--cleanup-script-path";
+        cleanupHook = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
+        cleanupHookExplicit = true;
+      } else if (argument === "--no-cleanup-hook" || argument === "--no-cleanup-script") {
+        cleanupHook = null;
+        cleanupHookExplicit = true;
+      } else if (argument === "--copy-pattern" || argument === "--worktree-copy-pattern" || argument === "--copy") {
+        copyPatterns.push(requireOptionValue(argument, args[++index]));
+        copyPatternsExplicit = true;
+      } else if (argument.startsWith("--copy-pattern=") || argument.startsWith("--worktree-copy-pattern=") || argument.startsWith("--copy=")) {
+        copyPatterns.push(requireOptionValue("--copy-pattern", argument.slice(argument.indexOf("=") + 1)));
+        copyPatternsExplicit = true;
+      } else if (argument === "--add-copy-pattern" || argument === "--append-copy-pattern") {
+        appendCopyPatterns.push(requireOptionValue(argument, args[++index]));
+      } else if (argument.startsWith("--add-copy-pattern=") || argument.startsWith("--append-copy-pattern=")) {
+        appendCopyPatterns.push(requireOptionValue("--add-copy-pattern", argument.slice(argument.indexOf("=") + 1)));
+      } else if (argument === "--clear-copy-patterns" || argument === "--no-copy-patterns") {
+        clearCopyPatterns = true;
+      } else if (argument.startsWith("-")) {
+        throw new AgentCommandError(`unknown workspace ${mode} option: ${argument}`);
+      } else if (mode === "add" && !directory) {
+        directory = argument;
+      } else if (mode === "update" && !selector) {
+        selector = argument;
+      } else {
+        throw new AgentCommandError(`workspace ${mode} accepts exactly one ${mode === "add" ? "directory" : "workspace selector"}`);
+      }
+    }
+
+    if (mode === "add" && !directory) throw new AgentCommandError("workspace add requires a directory");
+    if (mode === "update" && !selector) throw new AgentCommandError("workspace update requires a workspace selector");
+    if (mode === "add" && (appendCopyPatterns.length > 0 || clearCopyPatterns)) {
+      throw new AgentCommandError("--add-copy-pattern and --clear-copy-patterns are only valid for workspace update");
+    }
+    if (copyPatternsExplicit && clearCopyPatterns) throw new AgentCommandError("--clear-copy-patterns cannot be combined with --copy-pattern");
+    return {
+      selector,
+      directory,
+      name,
+      nameExplicit,
+      setupHook,
+      setupHookExplicit,
+      cleanupHook,
+      cleanupHookExplicit,
+      copyPatterns,
+      copyPatternsExplicit,
+      appendCopyPatterns,
+      clearCopyPatterns,
+    };
+  }
+
+  private parseWorkspaceDeleteOptions(args: string[]): WorkspaceDeleteOptions {
+    let selector: string | undefined;
+    for (const argument of args) {
+      if (argument === "--force" || argument === "--yes") continue;
+      if (argument.startsWith("-")) throw new AgentCommandError(`unknown workspace delete option: ${argument}`);
+      if (selector) throw new AgentCommandError("workspace delete accepts exactly one workspace selector");
+      selector = argument;
+    }
+    if (!selector) throw new AgentCommandError("workspace delete requires a workspace selector");
+    return { selector };
+  }
+
+  private async listWorkspaces(options: WorkspaceListOptions): Promise<number> {
+    const workspaces = await this.runWorkspaceUseCase(() => this.workspaceCrud.list.execute());
+    if (options.json) {
+      for (const workspace of workspaces) this.write(`${JSON.stringify(toWorkspaceJson(workspace))}\n`);
+      return 0;
+    }
+
+    this.write(padHeader(["ID", "NAME", "DIRECTORY", "GIT", "SETUP_HOOK", "CLEANUP_HOOK", "COPY_PATTERNS"]));
+    if (workspaces.length === 0) {
+      this.info("no registered workspaces");
+      return 0;
+    }
+    for (const workspace of workspaces) {
+      this.write(padRow([
+        workspace.id,
+        workspace.name,
+        displayWorkspacePath(workspace.rootPath),
+        workspace.isGit ? "yes" : "no",
+        workspace.setupScriptPath ? displayWorkspacePath(workspace.setupScriptPath) : "-",
+        workspace.cleanupScriptPath ? displayWorkspacePath(workspace.cleanupScriptPath) : "-",
+        workspace.worktreeCopyPatterns.length > 0 ? workspace.worktreeCopyPatterns.join(",") : "-",
+      ]));
+    }
+    return 0;
+  }
+
+  private async addWorkspace(options: WorkspaceMutationOptions): Promise<number> {
+    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.register.execute({
+      directory: options.directory!,
+      name: options.nameExplicit ? options.name : undefined,
+      setupHook: options.setupHookExplicit ? options.setupHook ?? null : undefined,
+      cleanupHook: options.cleanupHookExplicit ? options.cleanupHook ?? null : undefined,
+      worktreeCopyPatterns: options.copyPatternsExplicit ? options.copyPatterns : undefined,
+    }));
+    this.info(`workspace '${workspace.name}' added (${displayWorkspacePath(workspace.rootPath)})`);
+    return 0;
+  }
+
+  private async updateWorkspace(options: WorkspaceMutationOptions): Promise<number> {
+    const input: UpdateWorkspaceInput = {
+      name: options.nameExplicit ? options.name : undefined,
+      setupHook: options.setupHookExplicit ? options.setupHook ?? null : undefined,
+      cleanupHook: options.cleanupHookExplicit ? options.cleanupHook ?? null : undefined,
+      worktreeCopyPatterns: options.copyPatternsExplicit ? options.copyPatterns : undefined,
+      appendCopyPatterns: options.appendCopyPatterns,
+      clearCopyPatterns: options.clearCopyPatterns,
+    };
+    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.update.execute(options.selector!, input));
+    this.info(`workspace '${workspace.name}' updated`);
+    return 0;
+  }
+
+  private async deleteWorkspace(options: WorkspaceDeleteOptions): Promise<number> {
+    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.delete.execute(options.selector));
+    this.info(`workspace '${workspace.name}' unregistered; directory was not deleted`);
+    return 0;
+  }
+
+  private async runWorkspaceUseCase<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof AgentCommandError) throw error;
+      throw new AgentCommandError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   private markCurrentPane(
@@ -943,26 +1235,44 @@ export class AgentCommand {
     this.currentLogger.debug("workspace.resolve_started", { cwd: this.cwd });
     const gitRoot = gitWorkspaceRoot(this.cwd);
     const root = gitRoot ?? this.cwd;
-    const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
-    const existing = await this.workspaces.findById(id);
+    const id = workspaceIdForPath(root);
+    const existing = await this.workspaces.findById(id) ?? await this.findRegisteredWorkspaceForCwd(root);
+    if (existing) {
+      this.currentLogger.debug("workspace.resolve_finished", {
+        workspaceId: existing.id,
+        isGit: existing.isGit,
+        registered: true,
+        durationMs: Date.now() - startedAt,
+      });
+      return existing;
+    }
     const context: WorkspaceContext = {
       id,
       rootPath: root,
       name: basename(root),
       isGit: Boolean(gitRoot),
-      setupScriptPath: existing?.setupScriptPath ?? null,
-      cleanupScriptPath: existing?.cleanupScriptPath ?? null,
-      worktreeCopyPatterns: existing?.worktreeCopyPatterns ?? [],
+      setupScriptPath: null,
+      cleanupScriptPath: null,
+      worktreeCopyPatterns: [],
       createdAt: timestamp(),
       updatedAt: timestamp(),
     };
-    await this.workspaces.upsert(context);
     this.currentLogger.debug("workspace.resolve_finished", {
       workspaceId: context.id,
       isGit: context.isGit,
+      registered: false,
       durationMs: Date.now() - startedAt,
     });
     return context;
+  }
+
+  private async findRegisteredWorkspaceForCwd(gitRoot: string): Promise<WorkspaceRecord | undefined> {
+    if (this.cwd === gitRoot) return undefined;
+    const candidates = (await this.workspaces.list())
+      .filter((workspace) => workspace.rootPath !== gitRoot)
+      .filter((workspace) => isPathWithin(gitRoot, workspace.rootPath) && isPathWithin(workspace.rootPath, this.cwd))
+      .sort((left, right) => right.rootPath.length - left.rootPath.length);
+    return candidates[0];
   }
 
   private resolveHookPath(value: string, workspaceRoot: string): string {
@@ -1745,6 +2055,12 @@ export class AgentCommand {
     });
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
+    this.workspaceCatalog = new WorkspaceSelectionCatalog(["/"], this.cwd);
+    this.workspaceCrud = new WorkspaceCrud(this.workspaces, this.workspaceCatalog, {
+      audit: {
+        record: (eventType, entityId, payload) => this.audit(eventType, entityId, payload),
+      },
+    });
     this.currentLogger.debug("database.opened", { databaseFile: this.databaseFile });
   }
 
@@ -1754,6 +2070,13 @@ export class AgentCommand {
   agent tmux new-session [-s NAME] [-c PATH] [--detached]
   agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]
   agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
+  agent workspace list [--json]
+  agent workspace add DIRECTORY [OPTIONS]
+  agent workspace update WORKSPACE [OPTIONS]
+  agent workspace delete WORKSPACE [--force]
+  agent session list [--global] [--names|--json]
+  agent session resume [--global] NAME [-- BACKEND_ARGS...]
+  agent session cleanup [--global] [--force] NAME
   agent resume [--global] NAME [-- BACKEND_ARGS...]
   agent list [--global] [--names|--json]
   agent cleanup [--global] [--force] NAME
@@ -1853,8 +2176,35 @@ function toSessionJson(session: AgentSessionRecord): Record<string, unknown> {
   };
 }
 
+function toWorkspaceJson(workspace: WorkspaceRecord): Record<string, unknown> {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    directory: workspace.rootPath,
+    is_git: workspace.isGit,
+    setup_hook: workspace.setupScriptPath,
+    cleanup_hook: workspace.cleanupScriptPath,
+    worktree_copy_patterns: workspace.worktreeCopyPatterns,
+    created_at: workspace.createdAt,
+    updated_at: workspace.updatedAt,
+  };
+}
+
+function workspaceAddUsage(command: string): string {
+  return `Usage: agent workspace ${command} DIRECTORY [--name NAME] [--setup-hook PATH] [--cleanup-hook PATH] [--copy-pattern PATTERN]\n`;
+}
+
+function workspaceUpdateUsage(): string {
+  return "Usage: agent workspace update WORKSPACE [--name NAME] [--setup-hook PATH|--no-setup-hook] [--cleanup-hook PATH|--no-cleanup-hook] [--copy-pattern PATTERN|--clear-copy-patterns]\n";
+}
+
 function resolveFromRoot(value: string, root: string): string {
   return isAbsolute(value) ? value : resolve(root, value);
+}
+
+function displayWorkspacePath(path: string): string {
+  const home = homedir();
+  return path === home ? "~" : path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
 }
 
 function realpathSafe(path: string): string {
@@ -1938,6 +2288,14 @@ function localTimestamp(): string {
 function requireOptionValue(option: string, value: string | undefined): string {
   if (!value || value.startsWith("-")) throw new AgentCommandError(`${option} requires a value`);
   return value;
+}
+
+function hasHelpBeforeDelimiter(args: readonly string[]): boolean {
+  for (const argument of args) {
+    if (argument === "--") return false;
+    if (argument === "-h" || argument === "--help") return true;
+  }
+  return false;
 }
 
 function parseTmuxNewSessionOptions(args: string[], defaultCwd: string): TmuxNewSessionOptions {

@@ -966,10 +966,21 @@ agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
 agent resume [--global] NAME [-- BACKEND_ARGS...]
 agent list [--global] [--names|--json]
 agent cleanup [--global] [--force] NAME
+agent session list [--global] [--names|--json]
+agent session resume [--global] NAME [-- BACKEND_ARGS...]
+agent session cleanup [--global] [--force] NAME
+agent workspace list [--json]
+agent workspace add DIRECTORY [OPTIONS]
+agent workspace update WORKSPACE [OPTIONS]
+agent workspace delete WORKSPACE [--force]
 agent doctor [--verbose]
 ~~~
 
 run associates the worktree, workspace copy patterns, workspace hooks, Claude session ID, and Codex Remote Control thread name and archive with one SQLite session. With --worktree, unmanaged files are copied first, then the setup hook runs; cleanup hooks run before the worktree is removed. With --no-worktree, stored workspace copy patterns and hooks are not run; use --setup-hook or --cleanup-hook explicitly when needed.
+
+The CLI workspace commands persist registered directories, hook paths, and copy patterns in `workspaces`. Git directories are canonicalized to their repository root, and the directory is the workspace identity; updating a registration changes metadata only. Moving a registration therefore requires deleting the old entry and adding the new directory. Deleting a workspace unregisters metadata and does not remove files from the host.
+
+Workspace CRUD is implemented in `packages/application` as the shared `WorkspaceCrud` use cases (`ListWorkspaces`, `RegisterWorkspace`, `UpdateWorkspace`, and `DeleteWorkspace`). The HTTP adapter parses and validates request bodies, while the CLI parses command-line options; both invoke the same application rules and audit port. Host-specific directory, Git, and executable-hook checks are injected through `WorkspaceDirectoryPort`. agentd exposes the same operations through `GET`/`POST` `/api/workspaces` and `PATCH`/`DELETE` `/api/workspaces/:workspaceId`.
 
 The following commands are planned as agentd and TUI extensions:
 
@@ -989,10 +1000,6 @@ agent pane send <pane-id> --text 'continue'
 agent pane resize <pane-id> --cols 120 --rows 40
 agent pane close <pane-id>
 
-agent workspace list
-agent workspace register
-
-agent agent list
 agent profile list
 agent plugin list
 agent plugin add <package-or-path>

@@ -18,6 +18,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
+import type { WorkspaceRecord } from "@mobile-agent/domain";
 import { AllowedRootPolicy, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
 
 type EmptyContext = {};
@@ -83,7 +84,7 @@ type CatalogFixture = {
   repository: string;
   setup: string;
   catalog: WorkspaceSelectionCatalog;
-  registered?: Awaited<ReturnType<WorkspaceSelectionCatalog["registerWorkspace"]>>;
+  registered?: WorkspaceRecord;
   browseGit: boolean;
   resolvedId: string | null;
 };
@@ -156,7 +157,15 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
         fixture.browseGit = workspaces.some((workspace) => workspace.name === "mobile-agent" && workspace.isGit);
       }
       if (step.type === "register") {
-        fixture.registered = fixture.catalog.registerWorkspace({ directory: fixture.repository, setupScriptPath: fixture.setup, worktreeCopyPatterns: [".env", "config/**/*.local.json"] });
+        const resolved = fixture.catalog.resolveDirectory(fixture.repository);
+        fixture.registered = {
+          ...resolved,
+          setupScriptPath: fixture.catalog.resolveHook(fixture.setup, resolved.rootPath),
+          cleanupScriptPath: null,
+          worktreeCopyPatterns: [".env", "config/**/*.local.json"],
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-10T00:00:00.000Z",
+        };
       }
       if (step.type === "resolve") {
         const registered = fixture.registered!;
@@ -167,13 +176,30 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
       if (step.type === "invalid-hook") {
         const hook = join(fixture.root, "not-executable");
         writeFileSync(hook, "#!/bin/sh\n");
-        fixture.catalog.registerWorkspace({ directory: fixture.repository, setupScriptPath: hook });
+        const record = createRecord(fixture, { setupScriptPath: hook });
+        await fixture.catalog.resolveWorkspaceDirectory(record.id, async () => record);
       }
-      if (step.type === "invalid-pattern") fixture.catalog.registerWorkspace({ directory: fixture.repository, worktreeCopyPatterns: [step.pattern] });
+      if (step.type === "invalid-pattern") {
+        const record = createRecord(fixture, { worktreeCopyPatterns: [step.pattern] });
+        await fixture.catalog.resolveWorkspaceDirectory(record.id, async () => record);
+      }
     }
   },
   observe: (fixture) => ({ browseGit: fixture.browseGit, resolvedId: fixture.resolvedId }),
 };
+
+function createRecord(fixture: CatalogFixture, overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
+  const resolved = fixture.catalog.resolveDirectory(fixture.repository);
+  return {
+    ...resolved,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
+    worktreeCopyPatterns: [],
+    createdAt: "2026-08-10T00:00:00.000Z",
+    updatedAt: "2026-08-10T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("workspace selection", () => {
   const register = it as unknown as TestRegistrar;

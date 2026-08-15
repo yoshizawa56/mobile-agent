@@ -3,9 +3,10 @@ import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync 
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
+import type { WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@mobile-agent/application";
 import type { WorkspaceDirectoryOption, WorkspaceRecord, WorkspaceSelection } from "@mobile-agent/domain";
 import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, validateWorkspaceSelection, worktreeCopyPatternLimits } from "@mobile-agent/domain";
-import type { RegisterWorkspaceRequest, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { WorkspaceDirectory } from "@mobile-agent/protocol";
 
 export type InvalidDirectoryReason = "not_found" | "not_directory" | "outside_allowed_root" | "unknown_workspace";
 export type InvalidHookReason = "not_found" | "not_file" | "not_executable";
@@ -57,17 +58,17 @@ export class InvalidWorkspaceCopyPatternError extends Error {
 export class AllowedRootPolicy {
   public readonly roots: string[];
 
-  public constructor(roots: readonly string[]) {
-    this.roots = unique(roots.map(expandPath).map((root) => realpathIfPresent(root)));
+  public constructor(roots: readonly string[], private readonly basePath = process.cwd()) {
+    this.roots = unique(roots.map((root) => expandPath(root, this.basePath)).map((root) => realpathIfPresent(root)));
   }
 
   public contains(directory: string): boolean {
-    const candidate = realpathIfPresent(expandPath(directory));
+    const candidate = realpathIfPresent(expandPath(directory, this.basePath));
     return this.roots.some((root) => isPathWithin(root, candidate));
   }
 
   public assertDirectory(directory: string): string {
-    const expanded = expandPath(directory);
+    const expanded = expandPath(directory, this.basePath);
     if (!existsSync(expanded)) throw new InvalidWorkspaceDirectoryError(directory, "not_found", this.roots);
     if (!statSync(expanded).isDirectory()) throw new InvalidWorkspaceDirectoryError(directory, "not_directory", this.roots);
 
@@ -79,11 +80,29 @@ export class AllowedRootPolicy {
   }
 }
 
-export class WorkspaceSelectionCatalog {
+export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
   public readonly policy: AllowedRootPolicy;
 
-  public constructor(allowedRoots: readonly string[]) {
-    this.policy = new AllowedRootPolicy(allowedRoots);
+  public constructor(allowedRoots: readonly string[], basePath = process.cwd()) {
+    this.policy = new AllowedRootPolicy(allowedRoots, basePath);
+  }
+
+  public resolveDirectory(directory: string): WorkspaceDirectoryInfo {
+    const resolved = this.policy.assertDirectory(directory);
+    const rootPath = gitWorkspaceRoot(resolved) ?? resolved;
+    if (!this.policy.contains(rootPath)) {
+      throw new InvalidWorkspaceDirectoryError(directory, "outside_allowed_root", this.policy.roots);
+    }
+    return {
+      id: workspaceIdForPath(rootPath),
+      rootPath,
+      name: basename(rootPath) || rootPath,
+      isGit: rootPath !== resolved || isGitWorkspace(rootPath),
+    };
+  }
+
+  public resolveHook(path: string, workspaceRoot: string): string {
+    return validateHookPath(path, workspaceRoot);
   }
 
   /** Lists directory candidates for the host-side registration browser. */
@@ -99,22 +118,6 @@ export class WorkspaceSelectionCatalog {
       .filter((directory) => this.policy.contains(directory))
       .map((directory) => this.toDirectoryCandidate(realpathIfPresent(directory)))
       .sort((left, right) => left.directory.localeCompare(right.directory));
-  }
-
-  public registerWorkspace(input: RegisterWorkspaceRequest, existing?: WorkspaceRecord): WorkspaceRecord {
-    const rootPath = this.policy.assertDirectory(input.directory);
-    const now = new Date().toISOString();
-    return {
-      id: workspaceId(rootPath),
-      rootPath,
-      name: input.name?.trim() || existing?.name || basename(rootPath) || rootPath,
-      isGit: isGitWorkspace(rootPath),
-      setupScriptPath: validateHookPath(input.setupScriptPath ?? null),
-      cleanupScriptPath: validateHookPath(input.cleanupScriptPath ?? null),
-      worktreeCopyPatterns: validateWorktreeCopyPatterns(input.worktreeCopyPatterns),
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
   }
 
   public toDirectoryOption(record: WorkspaceRecord): WorkspaceDirectory {
@@ -166,15 +169,15 @@ export class WorkspaceSelectionCatalog {
       ...workspace,
       rootPath,
       isGit: isGitWorkspace(rootPath),
-      setupScriptPath: validateHookPath(workspace.setupScriptPath),
-      cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath),
+      setupScriptPath: workspace.setupScriptPath ? validateHookPath(workspace.setupScriptPath, rootPath) : null,
+      cleanupScriptPath: workspace.cleanupScriptPath ? validateHookPath(workspace.cleanupScriptPath, rootPath) : null,
       worktreeCopyPatterns: validateWorktreeCopyPatterns(workspace.worktreeCopyPatterns),
     };
   }
 
   private toDirectoryCandidate(directory: string): WorkspaceDirectory {
     return {
-      id: workspaceId(directory),
+      id: workspaceIdForPath(directory),
       name: basename(directory) || directory,
       directory: displayPath(directory),
       isGit: isGitWorkspace(directory),
@@ -190,9 +193,8 @@ export function allowedRootsFromEnvironment(env: NodeJS.ProcessEnv = process.env
   return configured ? configured.split(delimiter).map((root) => root.trim()).filter(Boolean) : [fallback];
 }
 
-function validateHookPath(path: string | null): string | null {
-  if (!path) return null;
-  const expanded = expandPath(path);
+function validateHookPath(path: string, workspaceRoot: string): string {
+  const expanded = expandPath(path, workspaceRoot);
   if (!existsSync(expanded)) throw new InvalidWorkspaceHookError(path, "not_found");
   if (!statSync(expanded).isFile()) throw new InvalidWorkspaceHookError(path, "not_file");
   try {
@@ -214,14 +216,14 @@ function validateWorktreeCopyPatterns(values: readonly string[] | undefined): st
   return normalized;
 }
 
-function workspaceId(path: string): string {
+export function workspaceIdForPath(path: string): string {
   return createHash("sha256").update(path).digest("hex").slice(0, 16);
 }
 
-function expandPath(path: string): string {
+function expandPath(path: string, basePath = process.cwd()): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
-  return isAbsolute(path) ? resolve(path) : resolve(process.cwd(), path);
+  return isAbsolute(path) ? resolve(path) : resolve(basePath, path);
 }
 
 function realpathIfPresent(path: string): string {
@@ -260,6 +262,14 @@ function isGitWorkspace(path: string): boolean {
   }).status === 0;
 }
 
+function gitWorkspaceRoot(path: string): string | undefined {
+  const result = spawnSync("git", ["-C", path, "rev-parse", "--show-toplevel"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 && result.stdout ? realpathIfPresent(result.stdout.trim()) : undefined;
+}
+
 function displayPath(path: string): string {
   const home = homedir();
   return path === home ? "~" : path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
@@ -285,10 +295,10 @@ function invalidDirectoryMessage(directory: string, reason: InvalidDirectoryReas
 function invalidHookMessage(path: string, reason: InvalidHookReason): string {
   switch (reason) {
     case "not_found":
-      return `Workspace hook does not exist: ${path}`;
+      return `workspace hook does not exist: ${path}`;
     case "not_file":
-      return `Workspace hook is not a file: ${path}`;
+      return `workspace hook is not a file: ${path}`;
     case "not_executable":
-      return `Workspace hook is not executable: ${path}`;
+      return `workspace hook is not executable: ${path}`;
   }
 }

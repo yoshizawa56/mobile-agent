@@ -18,6 +18,7 @@ import {
   pairingStatusSchema,
   paneResponseSchema,
   registerWorkspaceRequestSchema,
+  updateWorkspaceRequestSchema,
   workspaceBrowseResponseSchema,
   workspaceListResponseSchema,
   workspaceResponseSchema,
@@ -49,6 +50,7 @@ export class AgentdHttpError extends Error {
 type AppEnv = { Variables: { auth: AgentdAuthContext; websocketContext: AgentdAuthContext } };
 
 const pairingParamsSchema = z.object({ pairingId: z.string().trim().min(1).max(256) }).strict();
+const workspaceParamsSchema = z.object({ workspaceId: z.string().trim().min(1).max(256) }).strict();
 const workspaceQuerySchema = z.object({ path: z.string().trim().max(4_096).optional() }).strict();
 const paneQuerySchema = z.object({ session: z.string().trim().min(1).max(64).optional() }).strict();
 const hookFormSchema = z.object({
@@ -195,6 +197,15 @@ export function createAgentdApp(deps: AgentdHttpDependencies) {
       const input = c.req.valid("json") as z.infer<typeof registerWorkspaceRequestSchema>;
       return c.json(workspaceResponseSchema.parse({ workspace: await deps.application.workspaces.register(input) }), 201);
     })
+    .patch("/api/workspaces/:workspaceId", validate("param", workspaceParamsSchema), validate("json", updateWorkspaceRequestSchema), async (c) => {
+      const input = c.req.valid("json") as z.infer<typeof updateWorkspaceRequestSchema>;
+      const workspace = await deps.application.workspaces.update(c.req.param("workspaceId"), input);
+      return c.json(workspaceResponseSchema.parse({ workspace }), 200);
+    })
+    .delete("/api/workspaces/:workspaceId", validate("param", workspaceParamsSchema), async (c) => {
+      await deps.application.workspaces.delete(c.req.param("workspaceId"));
+      return c.body(null, 204);
+    })
     .get("/api/terminals", async (c) => c.json({ terminals: [await deps.application.terminal.get()] }))
     .get("/api/sessions", async (c) => c.json({ sessions: await deps.application.sessions.list() }))
     .post("/api/sessions", validate("json", createSessionRequestSchema), async (c) => {
@@ -267,6 +278,8 @@ function errorStatus(code: string, status: unknown): AgentdHttpStatus {
   if (code === "pairing_not_found") return 404;
   if (code === "pairing_expired" || code === "claim_token_expired") return 410;
   if (code === "pairing_unavailable" || code === "pairing_not_awaiting_approval" || code === "pairing_not_rejectable" || code === "session_exists") return 409;
+  if (code === "workspace_not_found") return 404;
+  if (code === "workspace_already_registered" || code === "workspace_name_ambiguous") return 409;
   if (code === "claim_token_invalid" || code === "claim_signature_invalid" || code === "session_signature_invalid" || code === "challenge_invalid" || code === "device_inactive") return 401;
   if (code === "challenge_rate_limited") return 429;
   if (code === "session_not_visible" || code === "pane_not_visible" || code === "tmux_unavailable") return 503;

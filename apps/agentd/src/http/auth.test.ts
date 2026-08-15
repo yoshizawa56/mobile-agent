@@ -31,6 +31,8 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
         list: async () => [],
         browse: async () => [],
         register: async () => { throw new Error("not used"); },
+        update: async () => { throw new Error("not used"); },
+        delete: async () => { throw new Error("not used"); },
         resolveDirectory: async () => { throw new Error("not used"); },
         resolveSelection: async () => { throw new Error("not used"); },
       },

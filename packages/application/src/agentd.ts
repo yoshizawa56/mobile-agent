@@ -5,6 +5,7 @@ import type {
   RegisterWorkspaceRequest,
   TerminalEndpoint,
   TmuxSession,
+  UpdateWorkspaceRequest,
   WorkspaceDirectory,
 } from "@mobile-agent/protocol";
 
@@ -39,6 +40,8 @@ export type AgentdApplication = {
     list(): Promise<WorkspaceDirectory[]>;
     browse(parentPath?: string): Promise<WorkspaceDirectory[]>;
     register(input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory>;
+    update(workspaceId: string, input: UpdateWorkspaceRequest): Promise<WorkspaceDirectory>;
+    delete(workspaceId: string): Promise<void>;
     resolveDirectory(workspaceId: string): Promise<WorkspaceRecord>;
     resolveSelection(selection: WorkspaceSelection): Promise<WorkspaceRecord>;
   };

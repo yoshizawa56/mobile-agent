@@ -3,9 +3,10 @@ import { spawnSync } from "node:child_process";
 import { isIP } from "node:net";
 import { hostname, platform } from "node:os";
 import { agentdWebsocket, createAgentdApp, type AgentdSocket } from "@mobile-agent/agentd-http";
+import { WorkspaceCrud } from "@mobile-agent/application";
 import { createLogger, errorFields, type Logger, type LogLevel } from "@mobile-agent/logging";
 import type { TerminalEndpoint } from "@mobile-agent/protocol";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, resolveAgentdPaths } from "@mobile-agent/persistence";
+import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveAgentdPaths } from "@mobile-agent/persistence";
 import { buildTailscaleInvocation } from "@mobile-agent/tailscale";
 import { AgentdControlServer } from "./auth/control.js";
 import { AuthService } from "./auth/service.js";
@@ -65,6 +66,11 @@ export function createAgentdServer(options: AgentdOptions) {
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
+  const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
+    audit: {
+      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+    },
+  });
   const application = createAgentdApplication({
     getTerminal: getLocalTerminal,
     tmux,
@@ -72,6 +78,7 @@ export function createAgentdServer(options: AgentdOptions) {
     agentSessionRepository,
     workspaceCatalog,
     workspaceRepository,
+    workspaceCrud,
     viewportManager,
   });
   const eventHub = new AgentdEventHub();

@@ -8,6 +8,7 @@ import {
   paneResponseSchema,
   paneListResponseSchema,
   registerWorkspaceRequestSchema,
+  updateWorkspaceRequestSchema,
   sessionListResponseSchema,
   sessionResponseSchema,
   terminalListResponseSchema,
@@ -20,11 +21,12 @@ import {
   type CreatePaneRequest,
   type PaneSummary,
   type RegisterWorkspaceRequest,
+  type UpdateWorkspaceRequest,
   type TmuxSession,
   type TerminalEndpoint,
   type WorkspaceDirectory,
 } from "@mobile-agent/protocol";
-import type { z } from "zod";
+import { z } from "zod";
 
 export type AgentdRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 
@@ -89,6 +91,13 @@ export function createAgentdClient(connection: AgentdConnection) {
     registerWorkspace: async (input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory> => {
       const validated = registerWorkspaceRequestSchema.parse(input);
       return parseResponse(await http.api.workspaces.$post({ json: validated }), workspaceResponseSchema).then((data) => data.workspace);
+    },
+    updateWorkspace: async (workspaceId: string, input: UpdateWorkspaceRequest): Promise<WorkspaceDirectory> => {
+      const validated = updateWorkspaceRequestSchema.parse(input);
+      return parseResponse(await http.api.workspaces[":workspaceId"].$patch({ param: { workspaceId }, json: validated }), workspaceResponseSchema).then((data) => data.workspace);
+    },
+    deleteWorkspace: async (workspaceId: string): Promise<void> => {
+      await parseResponse(await http.api.workspaces[":workspaceId"].$delete({ param: { workspaceId } }), z.null());
     },
     terminals: async (): Promise<TerminalEndpoint[]> => parseResponse(await http.api.terminals.$get(), terminalListResponseSchema).then((data) => data.terminals),
     sessions: async (): Promise<TmuxSession[]> => parseResponse(await http.api.sessions.$get(), sessionListResponseSchema).then((data) => data.sessions),

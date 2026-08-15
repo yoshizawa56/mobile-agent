@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename } from "node:path";
-import { ApplicationError, type AgentSessionRepository, type AgentdApplication, type PaneRepository, type WorkspaceRepository } from "@mobile-agent/application";
+import { ApplicationError, type AgentSessionRepository, type AgentdApplication, type PaneRepository, type WorkspaceRepository, WorkspaceCrud } from "@mobile-agent/application";
 import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TerminalEndpoint, TmuxSession } from "@mobile-agent/protocol";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter, type TmuxPane, type TmuxLiveSnapshot } from "../tmux.js";
@@ -15,6 +15,7 @@ export type AgentdApplicationResources = {
   agentSessionRepository: AgentSessionRepository;
   workspaceCatalog: WorkspaceSelectionCatalog;
   workspaceRepository: WorkspaceRepository;
+  workspaceCrud: WorkspaceCrud;
   viewportManager: TmuxViewportManager;
 };
 
@@ -25,18 +26,32 @@ export type AgentdApplicationRuntime = AgentdApplication & {
 };
 
 export function createAgentdApplication(resources: AgentdApplicationResources): AgentdApplicationRuntime {
-  const { tmux, paneRepository, agentSessionRepository, workspaceCatalog, viewportManager, workspaceRepository } = resources;
+  const { tmux, paneRepository, agentSessionRepository, workspaceCatalog, viewportManager, workspaceRepository, workspaceCrud } = resources;
   return {
     terminal: { get: resources.getTerminal },
     workspaces: {
-      list: async () => (await workspaceRepository.list()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
+      list: async () => (await workspaceCrud.list.execute()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
       browse: (parentPath) => workspaceCatalog.browseDirectories(parentPath),
       register: async (input) => {
-        const candidate = workspaceCatalog.registerWorkspace(input);
-        const existing = await workspaceRepository.findById(candidate.id);
-        const workspace = workspaceCatalog.registerWorkspace(input, existing);
-        await workspaceRepository.upsert(workspace);
+        const workspace = await workspaceCrud.register.execute({
+          directory: input.directory,
+          name: input.name,
+          setupHook: input.setupScriptPath,
+          cleanupHook: input.cleanupScriptPath,
+          worktreeCopyPatterns: input.worktreeCopyPatterns,
+        });
         return workspaceCatalog.toDirectoryOption(workspace);
+      },
+      update: async (workspaceId, input) => workspaceCatalog.toDirectoryOption(await workspaceCrud.update.execute(workspaceId, {
+        name: input.name,
+        setupHook: input.setupScriptPath,
+        cleanupHook: input.cleanupScriptPath,
+        worktreeCopyPatterns: input.worktreeCopyPatterns,
+        appendCopyPatterns: input.appendWorktreeCopyPatterns,
+        clearCopyPatterns: input.clearWorktreeCopyPatterns,
+      })),
+      delete: async (workspaceId) => {
+        await workspaceCrud.delete.execute(workspaceId);
       },
       resolveDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId, (id) => workspaceRepository.findById(id)),
       resolveSelection: (selection) => workspaceCatalog.resolveSelection(selection, (id) => workspaceRepository.findById(id)),

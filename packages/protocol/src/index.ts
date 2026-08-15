@@ -250,6 +250,16 @@ export const registerWorkspaceRequestSchema = z.object({
 });
 export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
 
+export const updateWorkspaceRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  setupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
+  cleanupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
+  worktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
+  appendWorktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
+  clearWorktreeCopyPatterns: z.boolean().optional(),
+}).strict();
+export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema>;
+
 export const workspaceResponseSchema = z.object({ workspace: workspaceDirectorySchema });
 
 export const workspaceSelectionSchema = z.object({

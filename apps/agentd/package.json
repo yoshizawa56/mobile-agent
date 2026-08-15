@@ -16,6 +16,10 @@
     "./tmux": {
       "types": "./src/tmux.ts",
       "default": "./src/tmux.ts"
+    },
+    "./workspace-selection": {
+      "types": "./src/workspace-selection.ts",
+      "default": "./src/workspace-selection.ts"
     }
   },
   "scripts": {

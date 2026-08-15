@@ -19,7 +19,7 @@ const workspace = { id: "workspace-1", name: "mobile-agent", directory: "/work/m
 type RequestInput = { url: string; method?: string; headers?: HeadersInit; body?: string };
 type HttpResult = { status: number; body: unknown };
 type HttpContext = { events: readonly { event: string; client: string }[] };
-type AppKey = "default" | "not-ready" | "register" | "session-error" | "directory-error";
+type AppKey = "default" | "not-ready" | "register" | "update" | "session-error" | "directory-error";
 type AppFixture = { app: AgentdApp; events: Array<{ event: string; client: string }> };
 const jsonHeaders: HeadersInit = { "content-type": "application/json" };
 const hookHeaders: HeadersInit = { "x-agentd-hook-token": "test-token", "content-type": "application/x-www-form-urlencoded" };
@@ -49,6 +49,8 @@ const appFixture = (kind: AppKey): (() => FixtureHandle<AppFixture>) => () => {
     ? { isReady: () => false }
     : kind === "register"
       ? { registerWorkspace: async (input: { setupScriptPath?: string | null; cleanupScriptPath?: string | null; worktreeCopyPatterns?: string[] }) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? [] }) }
+      : kind === "update"
+        ? { updateWorkspace: async (workspaceId: string, input: { name?: string; setupScriptPath?: string | null; worktreeCopyPatterns?: string[] }) => ({ ...workspace, id: workspaceId, name: input.name ?? workspace.name, setupScriptPath: input.setupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? workspace.worktreeCopyPatterns }) }
       : kind === "session-error"
         ? { createSession: async () => { throw new AgentdHttpError(409, "session_exists", "tmux session already exists: integration"); } }
         : kind === "directory-error"
@@ -68,6 +70,17 @@ const cases = [
     fixture: "register",
     input: { url: "http://agentd.local/api/workspaces", method: "POST", headers: jsonHeaders, body: JSON.stringify({ directory: "/work/mobile-agent", setupScriptPath: "/Users/me/.config/agent/setup", cleanupScriptPath: null, worktreeCopyPatterns: [".env", "config/*.local.json"] }) },
     assert: [responseMatches(201, { workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/agent/setup", worktreeCopyPatterns: [".env", "config/*.local.json"] } })],
+  },
+  {
+    name: "updates a workspace through the transport adapter",
+    fixture: "update",
+    input: { url: "http://agentd.local/api/workspaces/workspace-1", method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] }) },
+    assert: [responseMatches(200, { workspace: { id: workspace.id, name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] } })],
+  },
+  {
+    name: "deletes a workspace through the transport adapter",
+    input: { url: "http://agentd.local/api/workspaces/workspace-1", method: "DELETE" },
+    assert: [responseMatches(204)],
   },
   { name: "filters panes with the session query", input: { url: "http://agentd.local/api/panes?session=integration" }, assert: [responseMatches(200, { panes: [{ tmuxPaneId: "%0" }] }, paneListResponseSchema)] },
   {
@@ -101,7 +114,7 @@ const cases = [
 
 const table: OperationTable<AppFixture, AppKey, RequestInput, HttpResult, HttpContext> = {
   defaultFixture: appFixture("default"),
-  fixtures: { default: appFixture("default"), "not-ready": appFixture("not-ready"), register: appFixture("register"), "session-error": appFixture("session-error"), "directory-error": appFixture("directory-error") },
+  fixtures: { default: appFixture("default"), "not-ready": appFixture("not-ready"), register: appFixture("register"), update: appFixture("update"), "session-error": appFixture("session-error"), "directory-error": appFixture("directory-error") },
   cases,
   execute: async (fixture, input) => {
     const response = await fixture.app.request(new Request(input.url, { method: input.method, headers: input.headers, body: input.body }));
@@ -124,6 +137,8 @@ function createTestApp(events: Array<{ event: string; client: string }>, overrid
     listWorkspaceDirectories: async () => [workspace],
     browseWorkspaceDirectories: async () => [workspace],
     registerWorkspace: async () => workspace,
+    updateWorkspace: async () => workspace,
+    deleteWorkspace: async () => undefined,
     resolveWorkspaceDirectory: async (workspaceId) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
     resolveWorkspaceSelection: async (selection) => ({ id: selection.workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
     listSessions: async () => [session],

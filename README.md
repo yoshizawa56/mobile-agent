@@ -128,7 +128,12 @@ agent run claude --no-worktree -n quick-fix
 agent resume review
 agent list --json
 agent list --global
+agent session list --global --json
 agent cleanup review --force
+agent workspace list
+agent workspace add ~/work/project --name project
+agent workspace update project --setup-hook ~/.config/agent/setup
+agent workspace delete project
 agent doctor --verbose
 agent tmux new-session -s project -c ~/work/project
 agent tmux new-session -s project -c ~/work/project --detached
@@ -153,6 +158,8 @@ With `--worktree`, the CLI creates an `agent/<name>` branch, copies configured u
 `agent tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `agent shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `agent run codex` or `agent run claude` from that shell preserves the parent shell/run metadata for agentd. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
 
 `build:agent` compiles the agent CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `agent serve tailscale` is available in the standalone binary and publishes only agentd. `agent dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `agent dev` or `agent dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
+
+`agent workspace` manages registered workspace directories and their personal worktree hooks and copy patterns. `add` and `register` create a registration; `update` accepts a workspace ID, name, or registered directory; `delete` removes only the registration and never deletes the directory. A workspace directory is its path-derived identity, so changing it requires deleting and adding a new registration. `agent session list|resume|cleanup` is the namespaced form of the lifecycle commands; the existing top-level `agent list|resume|cleanup` forms remain supported.
 
 ### Running multiple agentd instances
 

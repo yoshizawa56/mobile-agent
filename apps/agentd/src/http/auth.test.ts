@@ -31,6 +31,8 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
     listWorkspaceDirectories: async () => [],
     browseWorkspaceDirectories: async () => [],
     registerWorkspace: async () => { throw new Error("not used"); },
+    updateWorkspace: async () => { throw new Error("not used"); },
+    deleteWorkspace: async () => { throw new Error("not used"); },
     resolveWorkspaceDirectory: async () => { throw new Error("not used"); },
     resolveWorkspaceSelection: async () => { throw new Error("not used"); },
     listSessions: async () => [],

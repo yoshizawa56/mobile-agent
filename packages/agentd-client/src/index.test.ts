@@ -112,6 +112,60 @@ const queryTable: OperationTable<QueryFixture, "default", QueryInput, unknown, Q
   observe: (fixture) => ({ requests: [...fixture.requests] }),
 };
 
+type MutationRequest = { method: string; url: string; body: unknown };
+type MutationContext = { requests: readonly MutationRequest[] };
+type MutationFixture = { requests: MutationRequest[] };
+type MutationInput =
+  | { kind: "update"; workspaceId: string; input: { name: string }; response: unknown }
+  | { kind: "delete"; workspaceId: string; response: null };
+
+const mutationFixture = (): FixtureHandle<MutationFixture> => {
+  const originalFetch = globalThis.fetch;
+  return { fixture: { requests: [] }, cleanup: () => { globalThis.fetch = originalFetch; } };
+};
+
+const mutationCases = [
+  {
+    name: "updates a workspace through the typed RPC path",
+    input: {
+      kind: "update",
+      workspaceId: "workspace-1",
+      input: { name: "renamed" },
+      response: { id: "workspace-1", name: "renamed", directory: "/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
+    },
+    assert: [
+      returns<MutationContext, unknown>({ id: "workspace-1", name: "renamed", directory: "/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] }),
+      hasObserved<MutationContext, unknown>("requests", [{ method: "PATCH", url: "http://agentd.local/api/workspaces/workspace-1", body: { name: "renamed" } }]),
+    ],
+  },
+  {
+    name: "deletes a workspace through the typed RPC path",
+    input: { kind: "delete", workspaceId: "workspace-1", response: null },
+    assert: [
+      returns<MutationContext, unknown>(undefined),
+      hasObserved<MutationContext, unknown>("requests", [{ method: "DELETE", url: "http://agentd.local/api/workspaces/workspace-1", body: null }]),
+    ],
+  },
+] satisfies readonly OperationCase<"default", MutationInput, unknown, MutationContext>[];
+
+const mutationTable: OperationTable<MutationFixture, "default", MutationInput, unknown, MutationContext> = {
+  defaultFixture: mutationFixture,
+  cases: mutationCases,
+  execute: async (fixture, input) => {
+    globalThis.fetch = async (requestInput: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(requestInput, init);
+      fixture.requests.push({ method: request.method, url: request.url, body: request.method === "PATCH" ? await request.clone().json() : null });
+      return new Response(input.kind === "delete" ? null : JSON.stringify({ workspace: input.response }), {
+        status: input.kind === "delete" ? 204 : 200,
+        headers: input.kind === "delete" ? undefined : { "content-type": "application/json" },
+      });
+    };
+    const client = createAgentdClient({ httpBaseUrl: "http://agentd.local", websocketUrl: "ws://agentd.local/terminal" });
+    return input.kind === "update" ? client.updateWorkspace(input.workspaceId, input.input) : client.deleteWorkspace(input.workspaceId);
+  },
+  observe: (fixture) => ({ requests: [...fixture.requests] }),
+};
+
 type RouteInput = { kind: "serve" | "same-origin"; url: string };
 const routeCases = [
   {
@@ -146,5 +200,6 @@ const routeTable: OperationTable<undefined, "default", RouteInput, AgentdConnect
 describe("agentd RPC client", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, queryTable);
+  runOperationTable(register, mutationTable);
   runOperationTable(register, routeTable);
 });

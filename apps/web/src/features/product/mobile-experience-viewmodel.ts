@@ -45,7 +45,7 @@ export type MobileExperienceViewModel = {
   sessionOverview: SessionOverviewViewModel;
   terminalView: ReturnType<typeof usePaneViewModel>;
   paneBoard: ReturnType<typeof usePaneBoardViewModel>;
-  onWorkspaceSwitch: () => void;
+  onSessionSelect: () => void;
   onOpenNewPane: () => void;
 };
 
@@ -511,7 +511,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     sessionOverview,
     terminalView,
     paneBoard,
-    onWorkspaceSwitch: () => {
+    onSessionSelect: () => {
       if (terminalId) navigateTo(sessionsPath(terminalId));
     },
     onOpenNewPane: () => {

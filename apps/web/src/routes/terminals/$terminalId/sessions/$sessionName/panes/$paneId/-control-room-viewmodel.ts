@@ -5,11 +5,11 @@ import type { PaneViewModel } from "../../../../../../../features/pane/pane-view
 export type ControlRoomViewModel = {
   terminal: PaneViewModel;
   paneBoard: PaneBoardViewModel;
-  onWorkspaceSwitch: () => void;
+  onSessionSelect: () => void;
   onNewPane: () => void;
 };
 
 export function useControlRoomViewModel(): ControlRoomViewModel {
-  const { terminalView, paneBoard, onWorkspaceSwitch, onOpenNewPane } = useMobileExperience();
-  return { terminal: terminalView, paneBoard, onWorkspaceSwitch, onNewPane: onOpenNewPane };
+  const { terminalView, paneBoard, onSessionSelect, onOpenNewPane } = useMobileExperience();
+  return { terminal: terminalView, paneBoard, onSessionSelect, onNewPane: onOpenNewPane };
 }

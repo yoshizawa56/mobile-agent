@@ -7,7 +7,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { TmuxAdapter, type TmuxClient, type TmuxPaneRef, type TmuxWindowSize, type TmuxWindowSnapshot } from "./tmux.js";
+import { TmuxAdapter, type TmuxClient, type TmuxPaneRef, type TmuxWindowMouse, type TmuxWindowSize, type TmuxWindowSnapshot } from "./tmux.js";
 import { TmuxViewportManager, type ViewportEvent } from "./viewport-manager.js";
 
 type ViewportStep =
@@ -22,7 +22,7 @@ type ViewportStep =
   | { type: "poll" }
   | { type: "unfocus" };
 type ViewportFixture = { adapter: FakeTmuxAdapter; manager: TmuxViewportManager; events: ViewportEvent[]; prepared?: ReturnType<TmuxViewportManager["prepare"]>; lease?: Awaited<ReturnType<ReturnType<TmuxViewportManager["prepare"]>["attach"]>> };
-type ViewportContext = { width: number; height: number; zoomed: boolean; activePaneId: string; desktopFlags: string; windowSize: TmuxWindowSize; events: readonly ViewportEvent[]; refreshes: readonly string[] };
+type ViewportContext = { width: number; height: number; zoomed: boolean; activePaneId: string; desktopFlags: string; windowSize: TmuxWindowSize; mouse: TmuxWindowMouse; events: readonly ViewportEvent[]; refreshes: readonly string[] };
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
   const adapter = new FakeTmuxAdapter();
@@ -34,9 +34,9 @@ const viewportFixture = (): FixtureHandle<ViewportFixture> => {
 const attach = { type: "attach" as const, cols: 80, rows: 24 };
 const prepare = { type: "prepare" as const };
 const cases = [
-  { name: "enters a phone-sized zoomed viewport without changing desktop state", steps: [prepare, attach], assert: [hasObserved<ViewportContext, undefined>("activePaneId", "%0"), hasObserved<ViewportContext, undefined>("desktopFlags", "attached,focused,active-pane"), hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }]), hasObserved<ViewportContext, undefined>("width", 80), hasObserved<ViewportContext, undefined>("height", 24), hasObserved<ViewportContext, undefined>("zoomed", true)] },
+  { name: "enters a phone-sized zoomed viewport without changing desktop state", steps: [prepare, attach], assert: [hasObserved<ViewportContext, undefined>("activePaneId", "%0"), hasObserved<ViewportContext, undefined>("desktopFlags", "attached,focused,active-pane"), hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }]), hasObserved<ViewportContext, undefined>("width", 80), hasObserved<ViewportContext, undefined>("height", 24), hasObserved<ViewportContext, undefined>("zoomed", true), hasObserved<ViewportContext, undefined>("mouse", "on")] },
   { name: "returns to the desktop viewport when desktop becomes active", steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }], assert: [hasObserved<ViewportContext, undefined>("activePaneId", "%1"), hasObserved<ViewportContext, undefined>("desktopFlags", "attached,focused"), hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }, { owner: "desktop", reason: "desktop_activity" }]), hasObserved<ViewportContext, undefined>("width", 120), hasObserved<ViewportContext, undefined>("height", 40), hasObserved<ViewportContext, undefined>("zoomed", false)] },
-  { name: "restores the original layout when the phone disconnects first", steps: [prepare, attach, { type: "release" }], assert: [hasObserved<ViewportContext, undefined>("activePaneId", "%1"), hasObserved<ViewportContext, undefined>("windowSize", "latest"), hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }, { owner: "desktop", reason: "detached" }]), hasObserved<ViewportContext, undefined>("zoomed", false)] },
+  { name: "restores the original layout when the phone disconnects first", steps: [prepare, attach, { type: "release" }], assert: [hasObserved<ViewportContext, undefined>("activePaneId", "%1"), hasObserved<ViewportContext, undefined>("windowSize", "latest"), hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }, { owner: "desktop", reason: "detached" }]), hasObserved<ViewportContext, undefined>("zoomed", false), hasObserved<ViewportContext, undefined>("mouse", "off")] },
   { name: "does not restore a stale phone snapshot after desktop takeover", steps: [prepare, attach, { type: "desktop-size", width: 100, height: 30 }, { type: "hook", event: "client-resized" }, { type: "release" }], assert: [hasObserved<ViewportContext, undefined>("width", 100), hasObserved<ViewportContext, undefined>("height", 30), hasObserved<ViewportContext, undefined>("activePaneId", "%1"), hasObserved<ViewportContext, undefined>("zoomed", false)] },
   { name: "reapplies the mobile zoom after a split clears the window zoom", steps: [prepare, attach, { type: "clear-mobile-zoom" }, { type: "reassert" }], assert: [hasObserved<ViewportContext, undefined>("zoomed", true), hasObserved<ViewportContext, undefined>("activePaneId", "%0")] },
   { name: "stages the selected pane before the mobile client receives its first draw", steps: [{ type: "prepare", cols: 96, rows: 32 }, { type: "attach", cols: 96, rows: 32 }], assert: [hasObserved<ViewportContext, undefined>("width", 96), hasObserved<ViewportContext, undefined>("height", 32), hasObserved<ViewportContext, undefined>("zoomed", true), hasObserved<ViewportContext, undefined>("activePaneId", "%0"), hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile"])] },
@@ -62,7 +62,7 @@ const table: ScenarioTable<ViewportFixture, "default", ViewportStep, undefined, 
       if (step.type === "unfocus") fixture.adapter.desktop.flags = fixture.adapter.desktop.flags.replace(",focused", "");
     }
   },
-  observe: (fixture) => ({ width: fixture.adapter.state.width, height: fixture.adapter.state.height, zoomed: fixture.adapter.state.zoomed, activePaneId: fixture.adapter.state.activePaneId, desktopFlags: fixture.adapter.desktop.flags, windowSize: fixture.adapter.state.windowSize, events: [...fixture.events], refreshes: [...fixture.adapter.refreshes] }),
+  observe: (fixture) => ({ width: fixture.adapter.state.width, height: fixture.adapter.state.height, zoomed: fixture.adapter.state.zoomed, activePaneId: fixture.adapter.state.activePaneId, desktopFlags: fixture.adapter.desktop.flags, windowSize: fixture.adapter.state.windowSize, mouse: fixture.adapter.state.mouse, events: [...fixture.events], refreshes: [...fixture.adapter.refreshes] }),
 };
 
 describe("tmux viewport manager", () => {
@@ -70,17 +70,18 @@ describe("tmux viewport manager", () => {
 });
 
 class FakeTmuxAdapter extends TmuxAdapter {
-  public readonly state = { width: 120, height: 40, zoomed: false, activePaneId: "%1", layout: "layout-120x40", windowSize: "latest" as TmuxWindowSize };
+  public readonly state = { width: 120, height: 40, zoomed: false, activePaneId: "%1", layout: "layout-120x40", windowSize: "latest" as TmuxWindowSize, mouse: "off" as TmuxWindowMouse };
   public readonly refreshes: string[] = [];
   public readonly desktop: TmuxClient = { name: "/dev/desktop", pid: 100, tty: "/dev/desktop", sessionName: "agentd", windowId: "@0", paneId: "%1", width: 120, height: 40, flags: "attached,focused", activity: 1 };
   private readonly mobile: TmuxClient = { name: "/dev/mobile", pid: 200, tty: "/dev/mobile", sessionName: "agentd", windowId: "@0", paneId: "%0", width: 80, height: 24, flags: "attached,active-pane", activity: 2 };
   public constructor() { super("/private/tmp/mobile-agent-fake.sock"); }
   public override resolvePane(_target: string): TmuxPaneRef { return { paneId: "%0", windowId: "@0", sessionName: "agentd" }; }
-  public override snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot { return { ...pane, layout: this.state.layout, visibleLayout: this.state.layout, zoomed: this.state.zoomed, activePaneId: this.state.activePaneId, width: this.state.width, height: this.state.height, windowSize: this.state.windowSize }; }
+  public override snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot { return { ...pane, layout: this.state.layout, visibleLayout: this.state.layout, zoomed: this.state.zoomed, activePaneId: this.state.activePaneId, width: this.state.width, height: this.state.height, windowSize: this.state.windowSize, mouse: this.state.mouse }; }
   public override findClientByPid(pid: number): TmuxClient | undefined { return pid === this.mobile.pid ? this.mobile : undefined; }
   public override listClients(): TmuxClient[] { return [this.mobile, this.desktop]; }
   public override clientView(clientName: string): TmuxClient { return clientName === this.mobile.name ? this.mobile : this.desktop; }
   public override setWindowSize(_windowId: string, value: TmuxWindowSize): void { this.state.windowSize = value; }
+  public override setWindowMouse(_windowId: string, value: TmuxWindowMouse): void { this.state.mouse = value; }
   public override resizeWindow(_windowId: string, width: number, height: number): void { this.state.width = width; this.state.height = height; }
   public override switchClient(_clientName: string, targetPane: string): void { this.state.activePaneId = targetPane; }
   public override setClientFlags(clientName: string, flags: string): void { if (clientName !== this.desktop.name) return; const current = new Set(this.desktop.flags.split(",").filter(Boolean)); for (const flag of flags.split(",")) { if (flag.startsWith("!")) current.delete(flag.slice(1)); else current.add(flag); } this.desktop.flags = [...current].join(","); }
@@ -88,5 +89,5 @@ class FakeTmuxAdapter extends TmuxAdapter {
   public override zoomPane(targetPane: string): void { this.state.zoomed = !this.state.zoomed; this.state.activePaneId = targetPane; }
   public override selectLayout(_windowId: string, layout: string): void { this.state.layout = layout; this.state.zoomed = false; }
   public override selectPane(paneId: string): void { this.state.activePaneId = paneId; }
-  public override restoreSnapshot(snapshot: TmuxWindowSnapshot): void { this.state.layout = snapshot.layout; this.state.width = snapshot.width; this.state.height = snapshot.height; this.state.zoomed = snapshot.zoomed; this.state.activePaneId = snapshot.activePaneId; this.state.windowSize = snapshot.windowSize; }
+  public override restoreSnapshot(snapshot: TmuxWindowSnapshot): void { this.state.layout = snapshot.layout; this.state.width = snapshot.width; this.state.height = snapshot.height; this.state.zoomed = snapshot.zoomed; this.state.activePaneId = snapshot.activePaneId; this.state.windowSize = snapshot.windowSize; this.state.mouse = snapshot.mouse; }
 }

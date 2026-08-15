@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PaneSummary } from "@mobile-agent/protocol";
+import { AppIcon } from "../../app-icon";
 import { paneStateLabel } from "./pane-board-viewmodel";
 
 export type PaneLayoutOverlayVariant = "ghost";
@@ -38,6 +39,13 @@ export function PaneLayoutOverlay({
     if (!onClose) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const onPointerDownOutside = (event: PointerEvent) => {
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const target = event.target;
+      if (target instanceof Node && overlay.contains(target)) return;
+      onClose();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -55,16 +63,18 @@ export function PaneLayoutOverlay({
       event.preventDefault();
       focusable[nextIndex]?.focus();
     };
+    document.addEventListener("pointerdown", onPointerDownOutside);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", onPointerDownOutside);
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus({ preventScroll: true });
     };
   }, [onClose]);
 
   return (
-    <section ref={overlayRef} id={id} className={`pane-layout-overlay pane-layout-overlay-${variant}`} role={onClose ? "dialog" : "region"} aria-modal={onClose ? true : undefined} aria-label="tmux window layout" tabIndex={onClose ? -1 : undefined}>
+    <section ref={overlayRef} id={id} className={`pane-layout-overlay pane-layout-overlay-${variant}`} role={onClose ? "dialog" : "region"} aria-modal={onClose ? true : undefined} aria-label="tmux window layout" tabIndex={onClose ? -1 : undefined} onPointerDown={onClose ? (event) => { if (isOverlayBackdropTarget(event.target, event.currentTarget)) onClose(); } : undefined}>
       <div className="layout-overlay-header">
         <div className="layout-overlay-title-group">
           <span className="section-kicker"><span className="live-mark" /> WINDOW MAP</span>
@@ -72,7 +82,7 @@ export function PaneLayoutOverlay({
         </div>
         <div className="layout-overlay-actions">
           <span className="layout-preview-count">{windows.length} windows</span>
-          {onClose ? <button ref={closeButtonRef} className="layout-close-button" type="button" onClick={onClose} aria-label="Close window map">×</button> : null}
+          {onClose ? <button ref={closeButtonRef} className="layout-close-button" type="button" onClick={onClose} aria-label="Close window map"><AppIcon name="close" size={16} /></button> : null}
         </div>
       </div>
 
@@ -136,6 +146,10 @@ export function PaneLayoutOverlay({
       </div>
     </section>
   );
+}
+
+export function isOverlayBackdropTarget(target: unknown, currentTarget: unknown): boolean {
+  return target !== null && target === currentTarget;
 }
 
 const FOCUSABLE_SELECTOR = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";

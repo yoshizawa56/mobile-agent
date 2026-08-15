@@ -16,7 +16,7 @@ tmux attach-session -t <target>
 tmux window / pane TUI
 ~~~
 
-xterm.js is responsible for interpreting terminal escape sequences, cursor state, scrollback, copy selection, and mouse input. agentd does not interpret terminal bytes. It forwards PTY input and output, resizes the PTY, and manages the tmux viewport lease.
+xterm.js is responsible for interpreting terminal escape sequences, cursor state, copy selection, and mouse input. tmux remains the owner of pane scrollback and copy mode; mobile touch scrolling is encoded as terminal mouse-wheel input and forwarded through the PTY. agentd does not interpret terminal bytes. It forwards PTY input and output, resizes the PTY, and manages the tmux viewport lease.
 
 When connecting, the current xterm.js cols and rows are sent to the PTY. The TUI therefore renders at the actual mobile terminal size. The initial implementation may expose that size change to a desktop client attached to the same tmux session.
 

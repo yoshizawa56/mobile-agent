@@ -1,3 +1,4 @@
+import { AppIcon } from "../../app-icon";
 import type { PaneBoardViewModel } from "./pane-board-viewmodel";
 import { paneStateLabel } from "./pane-board-viewmodel";
 import { PaneLayoutOverlay, type PaneLayoutOverlayVariant } from "./pane-layout-overlay-view";
@@ -8,7 +9,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
   return (
     <div className={`pane-board-shell${alwaysOpen ? " pane-board-shell-always" : ""}`}>
       <button className={`pane-picker-button${viewModel.isOpen ? " pane-picker-button-open" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
-        <span className="button-glyph">⌘</span>
+        <span className="button-glyph"><AppIcon name="layout" size={15} /></span>
         <span>All panes</span>
         <span className="button-count">{viewModel.panes.length || "—"}</span>
       </button>
@@ -25,8 +26,8 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
           </div>
           <div className="board-actions">
             <span className="board-count">{waitingCount ? `${waitingCount} needs you` : "All clear"}</span>
-            <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes">↻</button>
-            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="Close pane list">×</button>
+            <button className="icon-button" type="button" onClick={viewModel.refresh} aria-label="Refresh panes" title="Refresh panes"><AppIcon name="refresh" size={15} /></button>
+            <button className="icon-button board-close" type="button" onClick={viewModel.close} aria-label="Close pane list"><AppIcon name="close" size={15} /></button>
           </div>
         </div>
         <div className="board-divider" />
@@ -47,7 +48,7 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
             return (
               <button className={`pane-list-item${selected ? " pane-list-item-selected" : ""}`} type="button" key={pane.id} onClick={() => viewModel.select(pane)}>
                 <span className={`pane-avatar pane-avatar-${pane.kind}`}>
-                  {pane.kind === "shell" ? "⌁" : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
+                  {pane.kind === "shell" ? <AppIcon name="terminal" size={15} /> : (pane.agentId?.slice(0, 1) ?? "·").toUpperCase()}
                 </span>
                 <span className="pane-list-main">
                   <span className="pane-list-title"><strong>{pane.name}</strong><span className="pane-index-label">PANE {pane.paneIndex ?? "?"}</span>{selected ? <span className="selected-label">OPEN</span> : null}</span>

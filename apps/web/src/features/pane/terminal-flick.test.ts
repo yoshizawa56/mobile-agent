@@ -15,6 +15,7 @@ import {
 import {
   classifyTerminalFlick,
   installTerminalFlickInput,
+  terminalMouseWheelInput,
   terminalInputForFlick,
   type TerminalFlickDirection,
 } from "./terminal-flick";
@@ -40,6 +41,20 @@ const flickTable: OperationTable<undefined, "default", FlickMetrics, FlickResult
     const direction = classifyTerminalFlick(input);
     return direction ? { direction, input: terminalInputForFlick(direction) } : null;
   },
+  observe: () => ({}),
+};
+
+type MouseWheelInput = { direction: "up" | "down"; column: number; row: number };
+const mouseWheelCases = [
+  { name: "encodes tmux wheel up input", input: { direction: "up", column: 12, row: 4 }, assert: [returns<EmptyContext, string>("\u001b[<64;12;4M")] },
+  { name: "encodes tmux wheel down input", input: { direction: "down", column: 3, row: 18 }, assert: [returns<EmptyContext, string>("\u001b[<65;3;18M")] },
+  { name: "clamps mouse coordinates to the terminal origin", input: { direction: "up", column: 0, row: -2 }, assert: [returns<EmptyContext, string>("\u001b[<64;1;1M")] },
+] satisfies readonly OperationCase<"default", MouseWheelInput, string, EmptyContext>[];
+
+const mouseWheelTable: OperationTable<undefined, "default", MouseWheelInput, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: mouseWheelCases,
+  execute: (_fixture, input) => terminalMouseWheelInput(input.direction, input.column, input.row),
   observe: () => ({}),
 };
 
@@ -92,6 +107,14 @@ const gestureCases = [
     assert: [hasObserved<FlickContext, undefined>("scrollDeltas", [30, 24]), hasObserved<FlickContext, undefined>("inputs", [])],
   },
   {
+    name: "forwards a fast vertical gesture as scrolling",
+    steps: [
+      { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 120, clientY: 120 } },
+      { type: "pointerup", now: 180, values: { pointerId: 1, clientX: 120, clientY: 48 } },
+    ],
+    assert: [hasObserved<FlickContext, undefined>("scrollDeltas", [-72]), hasObserved<FlickContext, undefined>("inputs", [])],
+  },
+  {
     name: "discards a gesture when a second touch joins it",
     steps: [
       { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 10, clientY: 10 } },
@@ -118,6 +141,7 @@ const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined,
 describe("terminal flick input", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, flickTable);
+  runOperationTable(register, mouseWheelTable);
   runScenarioTable(register, gestureTable);
 });
 

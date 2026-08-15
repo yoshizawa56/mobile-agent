@@ -1,10 +1,11 @@
 import type { PaneViewModel } from "./pane-viewmodel";
+import { AppIcon } from "../../app-icon";
 import { PaneBoardView } from "../pane-board/pane-board-view";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import type { PaneLayoutOverlayVariant } from "../pane-board/pane-layout-overlay-view";
 import { useWindowMapGesture } from "./window-map-gesture";
 
-export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWorkspaceSwitch, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onWorkspaceSwitch?: () => void; onNewPane?: () => void }) {
+export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSessionSelect, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onSessionSelect?: () => void; onNewPane?: () => void }) {
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
@@ -17,17 +18,20 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
   return (
     <main ref={windowMapSurfaceRef} className="app-shell app-shell-terminal">
       <header className="app-topbar">
-        <div className="brand-lockup">
-          <span className="brand-mark">⌁</span>
-          <span className="brand-name">agent<span className="brand-dot">.</span></span>
-          <span className="brand-context">control room</span>
+        <div className="app-topbar-leading">
+          {onSessionSelect ? <button className="session-return-button" type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={16} /><span>Sessions</span></button> : null}
+          <div className="brand-lockup">
+            <span className="brand-mark">⌁</span>
+            <span className="brand-name">agent<span className="brand-dot">.</span></span>
+            <span className="brand-context">control room</span>
+          </div>
         </div>
         <div className="topbar-actions">
           <div className="connection-pill">
             <span className={`connection-dot connection-dot-${viewModel.status}`} />
             <span>{viewModel.status === "connected" ? "Tailnet connected" : viewModel.status}</span>
           </div>
-          <button className="topbar-icon" type="button" aria-label="Settings">⌘</button>
+          <button className="topbar-icon" type="button" aria-label="Settings" title="Settings"><AppIcon name="settings" size={17} /></button>
           <span className="profile-chip">TY</span>
         </div>
       </header>
@@ -37,7 +41,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
           <div className="rail-block">
             <div className="section-kicker">WORKSPACE</div>
             <div className="workspace-card">
-              <span className="workspace-icon">⌂</span>
+              <span className="workspace-icon"><AppIcon name="folder" size={17} /></span>
               <span className="workspace-copy">
                 <strong>{sessionName}</strong>
                 <small>{cwd}</small>
@@ -86,28 +90,18 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onWork
 
           <section className="terminal-card" aria-label={`${viewModel.target} terminal`}>
             <div className="terminal-toolbar">
+              {onSessionSelect ? <button className="terminal-action terminal-session-return" type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={15} /></button> : null}
               <div className="terminal-location">
                 <span className={`terminal-status-dot terminal-status-dot-${viewModel.status}`} />
-                <span className="terminal-shell-icon">⌁</span>
+                <span className="terminal-shell-icon"><AppIcon name="terminal" size={15} /></span>
                 <strong className="terminal-primary">{shellMode ? "zsh" : agentName}</strong>
                 <span className="terminal-slash">·</span>
                 <span className="terminal-session">{sessionName}</span>
                 <span className="terminal-cwd">{cwd}</span>
               </div>
-              <div className="terminal-toolbar-actions"><span className="terminal-pane-id">{viewModel.target}</span><span className="terminal-size">80 × 24</span>{onNewPane ? <button className="terminal-action terminal-new-pane-action" type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane">＋</button> : null}{onWorkspaceSwitch ? <button className="terminal-action terminal-workspace-action" type="button" onClick={onWorkspaceSwitch} aria-label="Open workspace switcher">☰</button> : null}<button className={`terminal-action terminal-selection-action${viewModel.selectionMode ? " terminal-selection-action-active" : ""}`} type="button" onClick={viewModel.selectionMode ? viewModel.exitSelectionMode : viewModel.enterSelectionMode} aria-pressed={viewModel.selectionMode} aria-label={viewModel.selectionMode ? "Exit terminal selection mode" : "Select terminal text"} title={viewModel.selectionMode ? "Exit selection mode" : "Select terminal text"}>⌗</button><button className="terminal-action" type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"}>⌄</button></div>
+              <div className="terminal-toolbar-actions"><span className="terminal-pane-id">{viewModel.target}</span><span className="terminal-size">80 × 24</span>{onNewPane ? <button className="terminal-action terminal-new-pane-action" type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane"><AppIcon name="new-pane" size={16} /></button> : null}<button className="terminal-action terminal-layout-action" type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}><AppIcon name="layout" size={16} /></button></div>
             </div>
-            {viewModel.selectionMode || viewModel.hasSelection || viewModel.selectionNotice ? (
-              <div className="terminal-selection-bar" role="toolbar" aria-label="Terminal text selection">
-                <span className="terminal-selection-state" role="status" aria-live="polite">{viewModel.selectionNotice ?? (viewModel.selectionMode ? "Drag to select a range" : "Selection active")}</span>
-                <div className="terminal-selection-actions">
-                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.copySelection()} disabled={!viewModel.hasSelection}>Copy</button>
-                  <button className="terminal-selection-button" type="button" onClick={viewModel.selectAll}>Select all</button>
-                  <button className="terminal-selection-button" type="button" onClick={() => void viewModel.pasteFromClipboard()}>Paste</button>
-                  <button className="terminal-selection-button terminal-selection-button-muted" type="button" onClick={viewModel.clearSelection}>Clear</button>
-                </div>
-              </div>
-            ) : null}
-            <div ref={viewModel.terminalContainerRef} className={`terminal-container${viewModel.selectionMode ? " terminal-container-selection-mode" : ""}`} />
+            <div ref={viewModel.terminalContainerRef} className="terminal-container" />
             <div className="terminal-statusbar">
               <span><span className="statusbar-led" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>
               <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>

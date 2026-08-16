@@ -4,22 +4,25 @@ import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import { agentdEventSchema, type AgentdEvent } from "@mobile-agent/protocol";
 import { isMockMode } from "../../mock/mock-data";
 import { openAgentdEvents } from "./agentd-api";
+import { paneQueryKey } from "../pane-board/pane-board-viewmodel";
 
 type QueryKey = readonly unknown[];
 
 /**
  * Returns the HTTP resources invalidated by a session update event.
  * The event contains no resource data; HTTP remains the source of truth.
+ * Pane queries are keyed by the connection's HTTP base URL (see paneQueryKey),
+ * so the connection is required to build the matching invalidation key.
  */
-export function invalidationQueryKeys(connectionKey: string, event: AgentdEvent): QueryKey[] {
+export function invalidationQueryKeys(connectionKey: string, connection: AgentdConnection | undefined, event: AgentdEvent): QueryKey[] {
   return [
     ["sessions", connectionKey],
-    ["panes", connectionKey, event.sessionName],
+    paneQueryKey(connection, event.sessionName),
   ];
 }
 
-export function invalidateAgentdEvent(queryClient: Pick<QueryClient, "invalidateQueries">, connectionKey: string, event: AgentdEvent): void {
-  for (const queryKey of invalidationQueryKeys(connectionKey, event)) {
+export function invalidateAgentdEvent(queryClient: Pick<QueryClient, "invalidateQueries">, connectionKey: string, connection: AgentdConnection | undefined, event: AgentdEvent): void {
+  for (const queryKey of invalidationQueryKeys(connectionKey, connection, event)) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }
@@ -78,7 +81,7 @@ export function useAgentdEvents(connection: AgentdConnection | undefined, connec
           return;
         }
         const parsed = agentdEventSchema.safeParse(payload);
-        if (parsed.success) invalidateAgentdEvent(queryClient, connectionKey, parsed.data);
+        if (parsed.success) invalidateAgentdEvent(queryClient, connectionKey, connection, parsed.data);
       });
       current.addEventListener("close", () => {
         if (socket === current) socket = undefined;

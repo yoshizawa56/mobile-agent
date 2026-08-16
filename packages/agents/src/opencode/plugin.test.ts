@@ -35,14 +35,26 @@ function fakeManager(overrides: { ensureThrows?: boolean; sessions?: Record<stri
   } as unknown as OpenCodeServerManager;
 }
 
-function fakeClient(sessions: Record<string, unknown> = {}): OpenCodeClient {
+type ClientRecords = {
+  createdTitles: (string | undefined)[];
+  renamedSessions: { sessionId: string; title: string }[];
+};
+
+function fakeClient(records: ClientRecords, sessions: Record<string, unknown> = {}): OpenCodeClient {
   return {
-    createSession: async () => "session-created",
+    createSession: async (title) => {
+      records.createdTitles.push(title);
+      return "session-created";
+    },
     sessionExists: async (sessionId: string) => Object.hasOwn(sessions, sessionId),
     sessionStatus: async () => "idle" as OpenCodeSessionStatus,
     abortSession: async () => true,
     replyPermission: async () => true,
     forkSession: async () => "session-forked",
+    setSessionTitle: async (sessionId: string, title: string) => {
+      records.renamedSessions.push({ sessionId, title });
+      return true;
+    },
     events: async function* () {
       yield* [];
     },
@@ -54,6 +66,7 @@ type EmptyContext = {};
 type PluginInput = {
   kind: "detect" | "prepare" | "prepare-resume" | "prepare-resume-missing" | "launch";
   command?: string;
+  name?: string;
 };
 
 type PluginResult = {
@@ -66,13 +79,14 @@ type PluginResult = {
     monitorPresent: boolean;
     sidecarKinds: readonly string[];
   };
+  titleCalls: ClientRecords;
 };
 
 const cases = [
   {
     name: "detects the opencode executable",
     input: { kind: "detect" as const, command: "/usr/local/bin/opencode" },
-    assert: [returns<EmptyContext, PluginResult>({ detected: { agentId: "opencode", confidence: 1 }, plan: {} as never })],
+    assert: [returns<EmptyContext, PluginResult>({ detected: { agentId: "opencode", confidence: 1 }, plan: {} as never, titleCalls: { createdTitles: [], renamedSessions: [] } })],
   },
   {
     name: "prepares a launch that attaches the TUI to the owned server",
@@ -87,6 +101,23 @@ const cases = [
         monitorPresent: true,
         sidecarKinds: ["opencode-serve"],
       },
+      titleCalls: { createdTitles: [undefined], renamedSessions: [] },
+    })],
+  },
+  {
+    name: "titles the new session with the agent session name",
+    input: { kind: "prepare" as const, name: "review" },
+    assert: [returns<EmptyContext, PluginResult>({
+      detected: null,
+      plan: {
+        command: "opencode",
+        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-created"],
+        cwd: "/workspace",
+        backendSessionId: "session-created",
+        monitorPresent: true,
+        sidecarKinds: ["opencode-serve"],
+      },
+      titleCalls: { createdTitles: ["review"], renamedSessions: [] },
     })],
   },
   {
@@ -102,6 +133,23 @@ const cases = [
         monitorPresent: true,
         sidecarKinds: ["opencode-serve"],
       },
+      titleCalls: { createdTitles: [], renamedSessions: [] },
+    })],
+  },
+  {
+    name: "keeps the agent session name on the resumed session title",
+    input: { kind: "prepare-resume" as const, name: "review" },
+    assert: [returns<EmptyContext, PluginResult>({
+      detected: null,
+      plan: {
+        command: "opencode",
+        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-resumed"],
+        cwd: "/workspace",
+        backendSessionId: "session-resumed",
+        monitorPresent: true,
+        sidecarKinds: ["opencode-serve"],
+      },
+      titleCalls: { createdTitles: [], renamedSessions: [{ sessionId: "session-resumed", title: "review" }] },
     })],
   },
   {
@@ -121,9 +169,10 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
   cases,
   execute: async (_fixture, input) => {
     const sessions: Record<string, unknown> = { "session-resumed": {} };
+    const records: ClientRecords = { createdTitles: [], renamedSessions: [] };
     const plugin: AgentPluginV1 = createOpenCodePlugin({
       serverManager: fakeManager(),
-      clientFactory: () => fakeClient(sessions),
+      clientFactory: () => fakeClient(records, sessions),
       monitorFactory: (options: OpenCodeMonitorOptions) => {
         void options;
         return new PassThroughMonitor();
@@ -132,7 +181,7 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
     switch (input.kind) {
       case "detect": {
         const detected = await plugin.detect({ command: input.command ?? "opencode", args: [], cwd: "/workspace", environment: {} });
-        return { detected: detected ? { agentId: detected.agentId, confidence: detected.confidence } : null, plan: {} as never };
+        return { detected: detected ? { agentId: detected.agentId, confidence: detected.confidence } : null, plan: {} as never, titleCalls: records };
       }
       case "launch":
         await plugin.launch({ cwd: "/workspace", args: [], environment: {} });
@@ -147,6 +196,7 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
           cwd: "/workspace",
           args: [],
           environment: {},
+          name: input.name,
           monitorContext: {
             sessionId: "mobile-session",
             executionId: "execution-1",
@@ -167,6 +217,7 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
             monitorPresent: Boolean(plan.monitor),
             sidecarKinds: plan.sidecars?.map((sidecar) => sidecar.kind) ?? [],
           },
+          titleCalls: records,
         };
       }
     }

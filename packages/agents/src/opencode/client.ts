@@ -72,15 +72,37 @@ export class OpenCodeClient {
     return healthy ? { healthy, version } : undefined;
   }
 
-  public async createSession(): Promise<string | undefined> {
+  /**
+   * Create a session on the server. The server derives the session ID; an
+   * optional `title` is stored as the session title so the session is
+   * recognizable in the OpenCode TUI and `session list`.
+   */
+  public async createSession(title?: string): Promise<string | undefined> {
     const response = await this.request(`${this.baseUrl}/session`, {
       method: "POST",
       headers: openCodeJsonHeaders,
-      body: "{}",
+      body: title ? JSON.stringify({ title }) : "{}",
     });
     if (!response.ok) return undefined;
     const body = await safeJson(response);
     return stringValue(objectValue(body)?.id);
+  }
+
+  /**
+   * Rename an existing session. Best effort: returns false when the server
+   * rejects the update (for example an older server without title support).
+   */
+  public async setSessionTitle(sessionId: string, title: string): Promise<boolean> {
+    const response = await this.request(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      headers: openCodeJsonHeaders,
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) {
+      this.options.onLog?.("warn", "opencode.session_title_update_failed", { sessionId });
+      return false;
+    }
+    return true;
   }
 
   public async sessionExists(sessionId: string): Promise<boolean> {

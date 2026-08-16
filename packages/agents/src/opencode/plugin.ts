@@ -3,7 +3,8 @@
  * drives a managed `opencode attach` TUI as the primary process.
  *
  * The plugin never touches OpenCode configuration; it only passes lifecycle
- * and transport arguments (worktree, loopback host, port, session id).
+ * and transport arguments (worktree, loopback host, port, session id) and
+ * mirrors the agent session name onto the OpenCode session title.
  */
 
 import type {
@@ -18,7 +19,7 @@ import type {
   LaunchSpec,
 } from "../index.js";
 import { agentCapabilities } from "../index.js";
-import { OpenCodeClient } from "./client.js";
+import { OpenCodeClient, type OpenCodeLog } from "./client.js";
 import { OpenCodeMonitor, type OpenCodeMonitorOptions } from "./monitor.js";
 import {
   defaultOpenCodeRegistryFile,
@@ -34,6 +35,7 @@ export type OpenCodePluginOptions = {
   registryFile?: string;
   executable?: string;
   attachExecutable?: string;
+  onLog?: OpenCodeLog;
 };
 
 export class OpenCodePluginError extends Error {
@@ -86,8 +88,8 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
       const root = input.cwd;
       const entry = await manager.ensure(root);
       const baseUrl = `http://127.0.0.1:${entry.port}`;
-      const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl);
-      const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null);
+      const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
+      const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name);
       const monitor = options.monitorFactory?.({
         baseUrl,
         sessionId,
@@ -129,9 +131,10 @@ async function resolveSessionId(
   client: OpenCodeClient,
   entry: OpenCodeServerEntry,
   resumeSessionId: string | null,
+  sessionName: string | undefined,
 ): Promise<string> {
   if (!resumeSessionId) {
-    const created = await client.createSession();
+    const created = await client.createSession(sessionName);
     if (!created) {
       throw new OpenCodePluginError(
         `OpenCode server on port ${entry.port} did not accept a new session; check 'opencode serve' diagnostics`,
@@ -145,6 +148,11 @@ async function resolveSessionId(
       `OpenCode session ${resumeSessionId} no longer exists on the owned server; start a new session instead of resuming`,
       "opencode_session_not_found",
     );
+  }
+  // Keep the session title in sync with the agent session name. This is
+  // cosmetic; a title update failure must not block the resume.
+  if (sessionName) {
+    await client.setSessionTitle(resumeSessionId, sessionName);
   }
   return resumeSessionId;
 }

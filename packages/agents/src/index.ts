@@ -30,6 +30,8 @@ export type LaunchInput = {
   cwd: string;
   args?: string[];
   environment?: Record<string, string>;
+  /** Logical session name to surface in the backend UI (for example an OpenCode session title). */
+  name?: string;
 };
 
 export type LaunchSpec = {

@@ -30,6 +30,7 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@mobile-agent/agents": "workspace:*",
     "@mobile-agent/application": "workspace:*",
     "@mobile-agent/agentd-http": "workspace:*",
     "@mobile-agent/domain": "workspace:*",

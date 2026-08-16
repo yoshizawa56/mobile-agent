@@ -382,7 +382,7 @@ export const createPaneRequestSchema = z.object({
   // initial directory. Split panes always inherit the target pane cwd.
   cwd: z.string().trim().min(1).max(4_096).optional(),
   workspaceId: z.string().trim().min(1).max(256).optional(),
-  agentId: z.enum(["codex", "claude"]).nullable(),
+  agentId: z.enum(["codex", "claude", "opencode"]).nullable(),
   useWorktree: z.boolean(),
   placement: panePlacementSchema,
   targetPaneId: z.string().trim().min(1).max(64).nullable(),

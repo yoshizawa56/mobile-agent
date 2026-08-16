@@ -122,6 +122,9 @@ function classifyBackendResumeState(session: AgentSessionRecord): { state: Sessi
   if (session.backend === "codex" && !session.backendSessionId) {
     return { state: "unknown", reason: "backend_session_discovery_required" };
   }
+  if (session.backend === "opencode" && !session.backendSessionId) {
+    return { state: "unavailable", reason: "backend_session_missing" };
+  }
   return { state: "available", reason: null };
 }
 

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { ApplicationError, type AgentSessionRepository, type AgentdApplication, type PaneRepository, type WorkspaceRepository, WorkspaceCrud } from "@mobile-agent/application";
-import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type PaneState, type WorkspaceRecord } from "@mobile-agent/domain";
+import { normalizeAgentSessionName, paneKindForCommand, type AgentBackend, type AgentSessionRecord, type PaneRecord, type PaneState, type WorkspaceRecord } from "@mobile-agent/domain";
 import type { CreatePaneRequest, PaneSummary, TerminalEndpoint, TmuxSession } from "@mobile-agent/protocol";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter, type TmuxPane, type TmuxLiveSnapshot } from "../tmux.js";
 import { TmuxViewportManager } from "../viewport-manager.js";
@@ -441,10 +441,10 @@ function readUnmanagedAgentObservation(tmux: TmuxAdapter, pane: TmuxPane, fallba
 
 function executableName(command: string): string | null {
   const executable = command.trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase();
-  return executable === "codex" || executable === "claude" ? executable : null;
+  return executable === "codex" || executable === "claude" || executable === "opencode" ? executable : null;
 }
 
-function isManagedAgentCommand(command: string, backend: "codex" | "claude", agentCommand: string): boolean {
+function isManagedAgentCommand(command: string, backend: AgentBackend, agentCommand: string): boolean {
   const executable = command.trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase();
   const configuredAgent = (process.env.AGENTD_AGENT_COMMAND ?? "agent").trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase();
   const resolvedAgent = agentCommand.trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase();

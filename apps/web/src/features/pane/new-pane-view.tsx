@@ -78,6 +78,7 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                 <select className="min-h-[45px] w-full rounded-[9px] border border-[#24552e] bg-[rgb(6_20_9_/_82%)] px-[13px] font-mono text-base text-[#d8ffdc] outline-none focus:border-lime-deep focus:shadow-[0_0_0_3px_rgb(57_214_91_/_12%)] max-[920px]:min-h-12" value={viewModel.agentId} onChange={(event) => viewModel.onAgentChange(event.target.value as NewPaneAgent)}>
                   <option value="codex">Codex</option>
                   <option value="claude">Claude</option>
+                  <option value="opencode">OpenCode</option>
                 </select>
               </label>
             </>

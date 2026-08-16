@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel } from "@mobile-agent/logging";
+import { defaultOpenCodeRegistryFile, OpenCodeServerManager } from "@mobile-agent/agents";
+import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel, type Logger } from "@mobile-agent/logging";
 import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence";
 import { createAgentdServer } from "./server.js";
 
@@ -96,12 +97,45 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
     if (stopped) return;
     stopped = true;
     removePidRecord(options.pidFile, process.pid);
-    app.stop();
-    logger.close();
+    // Release the OpenCode servers this agentd instance owns so they are not
+    // orphaned when the daemon exits. Best effort: a failed cleanup must not
+    // block or fail the shutdown.
+    void disposeOwnedOpenCodeServers({
+      logger,
+      registryFile: defaultOpenCodeRegistryFile(process.env),
+    }).finally(() => {
+      app.stop();
+      logger.close();
+    });
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   return app;
+}
+
+/**
+ * Stop every OpenCode server recorded in the Mobile Agent owned-server
+ * registry. Entries pointing at processes this user cannot signal (EPERM) are
+ * never force-stopped; the registry is cleared so stale ownership is not kept.
+ */
+export async function disposeOwnedOpenCodeServers(options: { registryFile: string; logger?: Logger }): Promise<void> {
+  const manager = new OpenCodeServerManager({
+    registryFile: options.registryFile,
+    onLog: (level, message, extra) => {
+      if (level === "warn" || level === "error") {
+        options.logger?.warn("opencode.server_cleanup", { message, ...extra });
+      } else {
+        options.logger?.debug("opencode.server_cleanup", { message, ...extra });
+      }
+    },
+  });
+  try {
+    await manager.disposeAll();
+  } catch (error) {
+    options.logger?.warn("opencode.server_cleanup_failed", {
+      ...errorFields(error),
+    });
+  }
 }
 
 function normalizeCommand(args: string[]): { command: AgentdCommand; rest: string[] } {

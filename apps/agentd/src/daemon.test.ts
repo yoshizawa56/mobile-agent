@@ -1,4 +1,7 @@
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "vitest";
 import {
   noFixture,
@@ -8,7 +11,7 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { buildDaemonSpawnArgs, type AgentdCliOptions } from "./daemon.js";
+import { buildDaemonSpawnArgs, disposeOwnedOpenCodeServers, type AgentdCliOptions } from "./daemon.js";
 
 type Input = { options: AgentdCliOptions; sourceEntry: string };
 type Result = string[];
@@ -54,4 +57,58 @@ const table: OperationTable<undefined, "default", Input, Result, Context> = {
 
 describe("agentd daemon lifecycle", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+});
+
+type CleanupInput = { registryEntries: number; staleLock: boolean };
+type CleanupResult = { registryAfter: Record<string, unknown>; completed: boolean };
+
+const cleanupCases = [
+  {
+    name: "clears the owned-server registry when the daemon shuts down",
+    input: { registryEntries: 1, staleLock: false },
+    assert: [returns<CleanupContext, CleanupResult>({ registryAfter: {}, completed: true })],
+  },
+  {
+    name: "completes even when a stale lock was left behind",
+    input: { registryEntries: 1, staleLock: true },
+    assert: [returns<CleanupContext, CleanupResult>({ registryAfter: {}, completed: true })],
+  },
+  {
+    name: "handles an empty registry",
+    input: { registryEntries: 0, staleLock: false },
+    assert: [returns<CleanupContext, CleanupResult>({ registryAfter: {}, completed: true })],
+  },
+] satisfies readonly OperationCase<"default", CleanupInput, CleanupResult, CleanupContext>[];
+
+type CleanupContext = {};
+
+const cleanupTable: OperationTable<undefined, "default", CleanupInput, CleanupResult, CleanupContext> = {
+  defaultFixture: noFixture(),
+  cases: cleanupCases,
+  execute: async (_fixture, input) => {
+    const root = mkdtempSync(join(tmpdir(), "mobile-agent-daemon-cleanup-"));
+    const registryFile = join(root, "opencode-servers.json");
+    try {
+      if (input.registryEntries > 0) {
+        writeFileSync(registryFile, JSON.stringify({
+          "/workspace": { pid: 999_999, port: 41_000, version: "1.2.3", startedAt: "2026-08-15T00:00:00.000Z" },
+        }));
+      } else {
+        writeFileSync(registryFile, "{}");
+      }
+      if (input.staleLock) writeFileSync(`${registryFile}.lock`, "999999\n");
+      await disposeOwnedOpenCodeServers({ registryFile });
+      return {
+        registryAfter: JSON.parse(readFileSync(registryFile, "utf8")) as Record<string, unknown>,
+        completed: true,
+      };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  observe: () => ({}),
+};
+
+describe("agentd owned runtime cleanup", () => {
+  runOperationTable(it as unknown as TestRegistrar, cleanupTable);
 });

@@ -57,7 +57,7 @@ export const agentSessions = sqliteTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    backend: text("backend", { enum: ["codex", "claude"] }).notNull(),
+    backend: text("backend", { enum: ["codex", "claude", "opencode"] }).notNull(),
     status: text("status", {
       enum: ["starting", "setup", "setup_failed", "ready", "running", "resuming", "interrupted", "exited"],
     }).notNull(),

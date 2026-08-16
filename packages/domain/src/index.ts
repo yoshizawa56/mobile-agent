@@ -15,7 +15,7 @@ export type PaneState = (typeof paneStates)[number];
 export type PaneId = string;
 export type WorkspaceId = string;
 
-export const agentBackends = ["codex", "claude"] as const;
+export const agentBackends = ["codex", "claude", "opencode"] as const;
 export type AgentBackend = (typeof agentBackends)[number];
 
 export const agentSessionStates = [

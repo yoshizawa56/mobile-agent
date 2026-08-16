@@ -3,7 +3,7 @@ import type { TerminalEndpoint, TmuxSession } from "../connection/connection-flo
 import type { WorkspacePickerViewModel } from "../workspace/workspace-picker-viewmodel";
 
 export type NewPaneKind = "agent" | "shell";
-export type NewPaneAgent = "codex" | "claude";
+export type NewPaneAgent = "codex" | "claude" | "opencode";
 
 export type NewPaneViewModel = {
   terminal: TerminalEndpoint;

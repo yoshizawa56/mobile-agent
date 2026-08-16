@@ -1,4 +1,7 @@
 import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
+import { createOpenCodePlugin } from "./opencode/plugin.js";
+
+export * from "./opencode/index.js";
 
 export const agentCapabilities = ["input", "approval", "stop", "resume", "structured_events"] as const;
 export type AgentCapability = (typeof agentCapabilities)[number];
@@ -52,6 +55,8 @@ export type ActionDescriptor = {
   id: string;
   label: string;
   dangerous?: boolean;
+  /** Provider-specific context needed to execute the action (for example a permission ID). */
+  metadata?: Record<string, unknown>;
 };
 
 export interface AgentObserver {
@@ -73,7 +78,33 @@ export type AgentObservationSink = (observation: AgentObservation) => void | Pro
 export interface AgentMonitor {
   start(sink: AgentObservationSink): Promise<void>;
   stop(): Promise<void>;
+  /** Actions this monitor can execute while it is running. */
+  actions?(): ActionDescriptor[];
+  /** Execute an action previously published through `action_requested` or `actions()`. */
+  execute?(action: ActionDescriptor, params?: unknown): Promise<void>;
 }
+
+/**
+ * A prepared launch: the foreground (primary) process plus any owned sidecar
+ * processes that must outlive or accompany it. Sidecars are started before
+ * the primary process spawns and must be disposed through `dispose`.
+ */
+export type SidecarSpec = {
+  kind: string;
+  pid: number;
+  health: () => Promise<boolean>;
+  stop: () => Promise<void>;
+};
+
+export type LaunchPlan = {
+  primary: LaunchSpec;
+  monitor?: AgentMonitor;
+  sidecars?: readonly SidecarSpec[];
+  /** Durable backend identifier produced during preparation (for example an OpenCode session ID). */
+  backendSessionId?: string | null;
+  /** Release owned runtime resources (for example a shared sidecar server). */
+  dispose?: () => Promise<void>;
+};
 
 export interface AgentPluginV1 {
   manifest: AgentManifest;
@@ -81,6 +112,13 @@ export interface AgentPluginV1 {
   launch(input: LaunchInput): Promise<LaunchSpec>;
   createObserver(): AgentObserver;
   createMonitor?(input: AgentMonitorContext): AgentMonitor;
+  /**
+   * Optional entry point for backends that need owned sidecars (for example a
+   * shared local server) or must resolve durable identifiers before the
+   * foreground process can start. When present, the host should prefer it
+   * over `launch` + `createMonitor`.
+   */
+  prepareLaunch?(input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null }): Promise<LaunchPlan>;
   actions(): ActionDescriptor[];
 }
 
@@ -140,7 +178,9 @@ export const claudePlugin: AgentPluginV1 = createBackendPlugin({
   createMonitor: createClaudeMonitor,
 });
 
-export const defaultAgentPlugins: readonly AgentPluginV1[] = [shellPlugin, codexPlugin, claudePlugin];
+export const opencodePlugin: AgentPluginV1 = createOpenCodePlugin();
+
+export const defaultAgentPlugins: readonly AgentPluginV1[] = [shellPlugin, codexPlugin, claudePlugin, opencodePlugin];
 
 function createBackendPlugin(options: {
   id: "codex" | "claude";

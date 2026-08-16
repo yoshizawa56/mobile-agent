@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { buildAgentShellCommand, configureManagedTmuxSession, resolveAgentCommand, TmuxAdapter } from "@mobile-agent/agentd/tmux";
-import { AgentPluginRegistry, defaultAgentPlugins, type AgentMonitor, type AgentObservation } from "@mobile-agent/agents";
+import { AgentPluginRegistry, defaultAgentPlugins, defaultOpenCodeRegistryFile, openCodeMonitorActions, OpenCodeServerManager, type AgentMonitor, type AgentObservation } from "@mobile-agent/agents";
 import { WorkspaceSelectionCatalog, workspaceIdForPath } from "@mobile-agent/agentd/workspace-selection";
 import { AgentdPairingControlAdapter, PairingControlError } from "@mobile-agent/cli-adapters";
 import { WorkspaceCrud, type UpdateWorkspaceInput } from "@mobile-agent/application";
@@ -82,6 +82,15 @@ type ProcessResult = {
   interrupted: boolean;
   pid?: number;
   signal?: NodeJS.Signals | null;
+};
+
+type BackendLaunch = {
+  command: string[];
+  monitor?: AgentMonitor;
+  /** Durable backend session ID produced during preparation (OpenCode). */
+  backendSessionId?: string | null;
+  /** Abort the backend session when the primary process is interrupted. */
+  abortSession?: () => Promise<void>;
 };
 
 type CodexSessionCandidate = {
@@ -269,7 +278,7 @@ export class AgentCommand {
       switch (command) {
         case "run": {
           const backend = args[1];
-          if (backend !== "codex" && backend !== "claude") throw new AgentCommandError("run requires codex or claude");
+          if (backend !== "codex" && backend !== "claude" && backend !== "opencode") throw new AgentCommandError("run requires codex, claude, or opencode");
           status = await this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
           break;
         }
@@ -1017,16 +1026,32 @@ export class AgentCommand {
     // observed a successful child spawn. Codex remains null until discovery.
     await this.sessions.update(updateSession(current, { backendSessionId: null }));
     sessionLogger.debug("session.status_changed", { status: current.status });
-    const command = buildRunCommand(current, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    sessionLogger.debug("backend.command_ready", { argumentCount: command.length });
+    let launch: BackendLaunch;
+    try {
+      launch = await this.createBackendLaunch(current, options.backendArgs, backendBinary, runDir, sessionLogger);
+    } catch (error) {
+      sessionLogger.debug("session.launch_failed", {
+        ...errorFields(error),
+      });
+      current = updateSession(current, { status: "exited", lastExitStatus: 1 });
+      await this.sessions.update(current).catch(() => undefined);
+      throw error;
+    }
+    if (launch.backendSessionId) {
+      sessionLogger.debug("backend.session_prepared", { backendSessionIdPresent: true });
+    }
     await this.adoptSessionPane(current);
     this.markCurrentPane({ kind: "agent", agentId: backend, name: current.name });
     const previousPaneCwd = this.adoptTmuxPaneCwd(runDir);
     let result: ProcessResult;
     try {
       await this.publishAgentObservation(current, "running");
-      result = await this.runBackend(current, command, runDir, startedAt);
+      result = await this.runBackend(current, launch.command, runDir, startedAt, {
+        monitor: launch.monitor,
+        backendSessionId: launch.backendSessionId,
+      });
       await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
+      await this.abortRemoteSessionIfInterrupted(current, launch.abortSession, result);
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
@@ -1066,8 +1091,6 @@ export class AgentCommand {
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     logger.debug("backend.resolved", { executable: basename(backendBinary) });
     await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env, logger);
-    const command = buildResumeCommand(session, options.backendArgs, this.defaultCodexRemote, backendBinary);
-    logger.debug("backend.command_ready", { argumentCount: command.length, resume: true });
     if (session.executionPid !== null && session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
       throw new AgentCommandError(`session '${session.name}' is already running (pid ${session.executionPid})`);
     }
@@ -1077,6 +1100,15 @@ export class AgentCommand {
     if (!claimed) throw new AgentCommandError(`session '${session.name}' is already being resumed`);
     const current = updateSession(session, { status: "resuming", resuming: true, executionId, executionPid: process.pid, executionStartedAt });
     await this.sessions.update(current);
+    let launch: BackendLaunch;
+    try {
+      launch = await this.createBackendLaunch(current, options.backendArgs, backendBinary, runDir, logger, true);
+    } catch (error) {
+      logger.debug("session.launch_failed", { ...errorFields(error) });
+      await this.sessions.update(updateSession(current, { status: "exited", lastExitStatus: 1 })).catch(() => undefined);
+      throw error;
+    }
+    logger.debug("backend.command_ready", { argumentCount: launch.command.length, resume: true });
     await this.adoptSessionPane(current);
     const startedAt = Math.floor(Date.now() / 1000);
     this.markCurrentPane({ kind: "agent", agentId: session.backend, name: current.name });
@@ -1084,8 +1116,12 @@ export class AgentCommand {
     let result: ProcessResult;
     try {
       await this.publishAgentObservation(current, "running");
-      result = await this.runBackend(current, command, runDir, startedAt);
+      result = await this.runBackend(current, launch.command, runDir, startedAt, {
+        monitor: launch.monitor,
+        backendSessionId: launch.backendSessionId,
+      });
       await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
+      await this.abortRemoteSessionIfInterrupted(current, launch.abortSession, result);
     } finally {
       await this.releaseSessionPane(current);
       this.restoreCurrentPaneMetadata();
@@ -1317,7 +1353,7 @@ export class AgentCommand {
     const startedAt = Date.now();
     logger.debug("doctor.started", { verbose: options.verbose });
     let status = 0;
-    for (const command of ["git", "zsh", "codex", "claude"]) {
+    for (const command of ["git", "zsh", "codex", "claude", "opencode"]) {
       const path = commandPath(command, this.env);
       logger.debug("doctor.command_checked", { command, available: Boolean(path) });
       if (path) this.write(`${command}: ${path}\n`);
@@ -1636,7 +1672,13 @@ export class AgentCommand {
     return join(dir, `${kind}.log`);
   }
 
-  private async runBackend(session: AgentSessionRecord, command: string[], runDir: string, startedAt: number): Promise<ProcessResult> {
+  private async runBackend(
+    session: AgentSessionRecord,
+    command: string[],
+    runDir: string,
+    startedAt: number,
+    options: { monitor?: AgentMonitor; backendSessionId?: string | null } = {},
+  ): Promise<ProcessResult> {
     const logger = this.currentLogger.child({
       sessionId: session.id,
       sessionName: session.name,
@@ -1651,7 +1693,8 @@ export class AgentCommand {
     });
     this.setTerminalTitle(session.name);
     const nameWatcher = session.backend === "codex" && session.backendSessionId === null && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
-    const monitor = this.createAgentMonitor(session, runDir, startedAt);
+    const monitor = options.monitor ?? this.createAgentMonitor(session, runDir, startedAt);
+    const preparedBackendSessionId = options.backendSessionId ?? null;
     let monitorStarted = false;
     let result: ProcessResult;
     try {
@@ -1675,11 +1718,20 @@ export class AgentCommand {
           cwd: runDir,
           pid,
           });
-          if (session.backend !== "claude" || !session.backendSessionId) return;
-          try {
-            await this.sessions.update(session);
-          } catch (error) {
-            this.warn(`Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
+          if (session.backend === "claude" && session.backendSessionId) {
+            try {
+              await this.sessions.update(session);
+            } catch (error) {
+              this.warn(`Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            return;
+          }
+          if (session.backend === "opencode" && preparedBackendSessionId) {
+            try {
+              await this.sessions.update(updateSession(session, { backendSessionId: preparedBackendSessionId }));
+            } catch (error) {
+              this.warn(`OpenCode session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
+            }
           }
         },
         onError: (error) => logger.debug("subprocess.spawn_failed", {
@@ -1727,6 +1779,62 @@ export class AgentCommand {
       backendSessionId: session.backendSessionId,
       environment: this.env,
     });
+  }
+
+  private async createBackendLaunch(
+    session: AgentSessionRecord,
+    backendArgs: string[],
+    backendBinary: string,
+    runDir: string,
+    logger: Logger,
+    resume = false,
+  ): Promise<BackendLaunch> {
+    const plugin = this.agentPlugins.get(session.backend);
+    if (plugin?.prepareLaunch && session.backend === "opencode") {
+      const plan = await plugin.prepareLaunch({
+        cwd: runDir,
+        args: backendArgs,
+        environment: stringEnvironment(this.env),
+        monitorContext: {
+          sessionId: session.id,
+          executionId: session.executionId ?? "",
+          cwd: runDir,
+          startedAt: new Date().toISOString(),
+          backendSessionId: session.backendSessionId,
+          environment: this.env,
+        },
+        resumeSessionId: session.backendSessionId ?? null,
+      });
+      logger.debug("backend.command_ready", { argumentCount: plan.primary.args.length, prepared: true });
+      return {
+        command: [plan.primary.command, ...plan.primary.args],
+        monitor: plan.monitor,
+        backendSessionId: plan.backendSessionId ?? null,
+        abortSession: plan.monitor?.execute
+          ? async () => {
+              await plan.monitor!.execute!({ ...openCodeMonitorActions.abort });
+            }
+          : undefined,
+      };
+    }
+    const command = resume
+      ? buildResumeCommand(session, backendArgs, this.defaultCodexRemote, backendBinary)
+      : buildRunCommand(session, backendArgs, this.defaultCodexRemote, backendBinary);
+    logger.debug("backend.command_ready", { argumentCount: command.length, resume });
+    return { command, monitor: undefined, backendSessionId: null };
+  }
+
+  private async abortRemoteSessionIfInterrupted(
+    session: AgentSessionRecord,
+    abortSession: (() => Promise<void>) | undefined,
+    result: ProcessResult,
+  ): Promise<void> {
+    if (!result.interrupted || !abortSession) return;
+    try {
+      await abortSession();
+    } catch (error) {
+      this.warn(`OpenCode session abort failed for '${session.name}': ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async publishPluginObservation(session: AgentSessionRecord, observation: AgentObservation): Promise<void> {
@@ -1851,7 +1959,30 @@ export class AgentCommand {
     this.audit("agent_session.deleted", session.id, { name: session.name });
     logger.debug("session.deleted", { force, durationMs: Date.now() - startedAt });
     this.removeHookOutputs(session);
+    await this.disposeOpenCodeServerIfUnused(session);
     return true;
+  }
+
+  /**
+   * Release the owned OpenCode server for a project root once no managed
+   * OpenCode session still targets that root. The port is freed and the
+   * sidecar is stopped only when Mobile Agent owns it.
+   */
+  private async disposeOpenCodeServerIfUnused(session: AgentSessionRecord): Promise<void> {
+    if (session.backend !== "opencode") return;
+    const runDir = session.worktreePath ?? session.workspaceRoot;
+    const remaining = (await this.sessions.list(session.workspaceId)).some(
+      (candidate) => candidate.backend === "opencode" && (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
+    );
+    if (remaining) return;
+    try {
+      const manager = new OpenCodeServerManager({
+        registryFile: defaultOpenCodeRegistryFile(this.env),
+      });
+      await manager.dispose(runDir);
+    } catch (error) {
+      this.warn(`OpenCode server release failed for '${runDir}': ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private removeHookOutputs(session: AgentSessionRecord): void {
@@ -2259,7 +2390,7 @@ export class AgentCommand {
   agent [-v|--verbose] <command> [OPTIONS]
   agent tmux new-session [-s NAME] [-c PATH] [--detached]
   agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]
-  agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
+  agent run <codex|claude|opencode> [OPTIONS] [-- BACKEND_ARGS...]
   agent workspace list [--json]
   agent workspace add DIRECTORY [OPTIONS]
   agent workspace update WORKSPACE [OPTIONS]
@@ -2637,8 +2768,8 @@ function commandPath(command: string, env: NodeJS.ProcessEnv): string | undefine
 }
 
 function resolveBackendCommand(backend: AgentBackend, env: NodeJS.ProcessEnv): string {
-  const override = env[backend === "codex" ? "AGENT_CODEX_BIN" : "AGENT_CLAUDE_BIN"];
-  return resolveExecutable(override ?? backend, env);
+  const override = backend === "codex" ? "AGENT_CODEX_BIN" : backend === "claude" ? "AGENT_CLAUDE_BIN" : "AGENT_OPENCODE_BIN";
+  return resolveExecutable(env[override] ?? backend, env);
 }
 
 function resolveExecutable(value: string, env: NodeJS.ProcessEnv): string {
@@ -2786,6 +2917,12 @@ function codexRemoteEndpoint(args: string[], fallback: string): string {
 
 function hasOption(name: string, args: string[]): boolean {
   return args.some((argument) => argument === name || argument.startsWith(`${name}=`));
+}
+
+function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
 }
 
 function optionValue(name: string, args: string[]): string | undefined {

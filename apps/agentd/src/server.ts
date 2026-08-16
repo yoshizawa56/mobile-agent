@@ -12,6 +12,7 @@ import { AgentdControlServer } from "./auth/control.js";
 import { AuthService } from "./auth/service.js";
 import { createAgentdApplication } from "./application/agentd.js";
 import { AgentdEventHub } from "./events.js";
+import { createImagePaster } from "./image-paste.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
 import { buildAgentShellCommand, configureManagedTmuxSession, TmuxAdapter } from "./tmux.js";
 import { defaultPaneCleanupIntervalMs, defaultPaneRetentionMs, defaultTmuxPollIntervalMs, TmuxStateMonitor } from "./tmux-state.js";
@@ -123,6 +124,7 @@ export function createAgentdServer(options: AgentdOptions) {
   });
 
   const terminalSessions = new TerminalSessionRegistry();
+  const imagePaster = createImagePaster({ tmux });
   const app = createAgentdApp({
     auth,
     application,
@@ -137,6 +139,7 @@ export function createAgentdServer(options: AgentdOptions) {
         viewportManager,
         sessions: terminalSessions,
         authDeviceId: context.deviceId,
+        imagePaster,
       });
     },
     onEventsConnection: (socket: AgentdSocket, context) => {

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, it, vi } from "vitest";
 import { agentdSocketReadyState } from "@mobile-agent/application";
-import { clientControlMessageSchema, serverControlMessageSchema, terminalProtocolVersion } from "@mobile-agent/protocol";
+import { clientControlMessageSchema, maxPasteImageBase64Length, serverControlMessageSchema, terminalProtocolVersion } from "@mobile-agent/protocol";
 import {
   hasObserved,
   runScenarioTable,
@@ -11,14 +11,17 @@ import {
   type TestRegistrar,
 } from "@mobile-agent/test-support";
 import type { PtyProcess } from "./pty.js";
+import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
 import { TerminalSession, TerminalSessionRegistry, type TerminalSessionOptions } from "./terminal-session.js";
 
 type SessionStep =
   | { type: "connect"; socket: "first" | "second"; target?: string; credentials?: "resume-first" }
+  | { type: "raw-connect"; socket: "first" | "second" }
   | { type: "network-close"; socket: "first" | "second" }
   | { type: "detach"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
   | { type: "send-input"; value: string }
+  | { type: "paste-image"; image?: string }
   | { type: "advance"; milliseconds: number };
 type SessionContext = {
   prepareCalls: number;
@@ -30,8 +33,11 @@ type SessionContext = {
   secondReady: boolean;
   secondErrors: readonly string[];
   firstClosedReasons: readonly string[];
+  firstErrors: readonly string[];
   binaryFrames: readonly string[];
   writes: readonly string[];
+  pasteCalls: number;
+  pasteTargets: readonly string[];
 };
 type SessionFixture = ReturnType<typeof createHarness> & { sockets: Partial<Record<"first" | "second", FakeSocket>> };
 
@@ -112,6 +118,26 @@ const cases = [
     steps: [{ type: "connect", socket: "first" }, { type: "network-close", socket: "first" }, { type: "advance", milliseconds: 100 }],
     assert: [hasObserved<SessionContext, undefined>("releaseCalls", 1), hasObserved<SessionContext, undefined>("killed", 1), hasObserved<SessionContext, undefined>("registrySize", 0)],
   },
+  {
+    name: "pastes an image into the attached pane and claims the viewport",
+    steps: [{ type: "connect", socket: "first" }, { type: "paste-image" }],
+    assert: [
+      hasObserved<SessionContext, undefined>("pasteCalls", 1),
+      hasObserved<SessionContext, undefined>("pasteTargets", ["%0"]),
+      hasObserved<SessionContext, undefined>("firstErrors", []),
+      hasObserved<SessionContext, undefined>("leaseClaimCalls", 1),
+    ],
+  },
+  {
+    name: "rejects an image paste before the pane is attached",
+    steps: [{ type: "raw-connect", socket: "first" }, { type: "paste-image" }],
+    assert: [hasObserved<SessionContext, undefined>("pasteCalls", 0), hasObserved<SessionContext, undefined>("firstErrors", ["not_attached"])],
+  },
+  {
+    name: "rejects an oversized image paste without calling the paster",
+    steps: [{ type: "connect", socket: "first" }, { type: "paste-image", image: "A".repeat(maxPasteImageBase64Length) }],
+    assert: [hasObserved<SessionContext, undefined>("pasteCalls", 0), hasObserved<SessionContext, undefined>("firstErrors", ["paste_image_too_large"])],
+  },
 ] satisfies readonly ScenarioCase<"default", SessionStep, undefined, SessionContext>[];
 
 const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, SessionContext> = {
@@ -130,6 +156,12 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
         socket.receive(attachFrame(step.target ?? "%0", credentials));
         await flush();
       }
+      if (step.type === "raw-connect") {
+        const socket = new FakeSocket();
+        fixture.sockets[step.socket] = socket;
+        new TerminalSession(socket, fixture.options);
+        await flush();
+      }
       if (step.type === "network-close") fixture.sockets[step.socket]?.networkClose();
       if (step.type === "detach") {
         fixture.sockets[step.socket]?.receive(JSON.stringify({ type: "detach", version: terminalProtocolVersion }));
@@ -138,6 +170,10 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
       if (step.type === "emit-output") fixture.pty.emitOutput(step.value);
       if (step.type === "send-input") {
         fixture.sockets.second?.receive(Buffer.from(step.value), true);
+        await flush();
+      }
+      if (step.type === "paste-image") {
+        fixture.sockets.first?.receive(JSON.stringify({ type: "paste_image", version: terminalProtocolVersion, name: "photo.png", mimeType: "image/png", data: step.image ?? "AAEC" }));
         await flush();
       }
       if (step.type === "advance") vi.advanceTimersByTime(step.milliseconds);
@@ -153,8 +189,12 @@ const table: ScenarioTable<SessionFixture, "default", SessionStep, undefined, Se
     secondReady: fixture.sockets.second?.controls().some((message) => message.type === "ready") ?? false,
     secondErrors: fixture.sockets.second?.controls().filter((message) => message.type === "error").map((message) => message.code) ?? [],
     firstClosedReasons: fixture.sockets.first?.controls().filter((message) => message.type === "closed").map((message) => message.reason) ?? [],
+    firstErrors: fixture.sockets.first?.controls().filter((message) => message.type === "error").map((message) => message.code) ?? [],
     binaryFrames: fixture.sockets.second?.binaryFrames() ?? [],
     writes: [...fixture.pty.writes],
+    pasteCalls: fixture.paster.mock.calls.length,
+    pasteTargets: fixture.paster.mock.calls.map((call) => call[0].paneId),
+    leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
   }),
 };
 
@@ -171,8 +211,9 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}) {
   lease.release = vi.fn(() => { leaseActive = false; });
   const spawn = vi.fn(() => pty.asPty());
   const registry = new TerminalSessionRegistry();
-  const options: TerminalSessionOptions = { cwd: "/tmp", defaultTarget: "agentd", viewportManager: manager as unknown as TerminalSessionOptions["viewportManager"], spawnPty: spawn as unknown as TerminalSessionOptions["spawnPty"], sessions: registry, ...overrides };
-  return { manager, prepared, lease, pty, spawn, registry, options };
+  const paster = vi.fn<(input: ImagePasteInput) => ImagePasteResult>(() => ({ bytes: 3, name: "photo.png", tempFilePath: "/tmp/photo.png", clipboard: "unavailable" }));
+  const options: TerminalSessionOptions = { cwd: "/tmp", defaultTarget: "agentd", viewportManager: manager as unknown as TerminalSessionOptions["viewportManager"], spawnPty: spawn as unknown as TerminalSessionOptions["spawnPty"], sessions: registry, imagePaster: paster, ...overrides };
+  return { manager, prepared, lease, pty, spawn, registry, paster, options };
 }
 
 function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {

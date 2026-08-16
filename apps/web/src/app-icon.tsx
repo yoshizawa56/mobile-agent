@@ -1,4 +1,4 @@
-export type AppIconName = "arrow-left" | "close" | "folder" | "layout" | "new-pane" | "refresh" | "settings" | "split-bottom" | "split-right" | "terminal" | "window";
+export type AppIconName = "arrow-left" | "close" | "folder" | "layout" | "new-pane" | "paperclip" | "refresh" | "settings" | "split-bottom" | "split-right" | "terminal" | "window";
 
 export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number }) {
   const iconProps = {
@@ -24,6 +24,8 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
       return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M12 4.5v15M12 12h8.5" /></svg>;
     case "new-pane":
       return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M12 4.5v15M16 10v4M14 12h4" /></svg>;
+    case "paperclip":
+      return <svg {...iconProps}><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>;
     case "refresh":
       return <svg {...iconProps}><path d="M20 11a8 8 0 0 0-14.7-4L3 9" /><path d="M3 4v5h5M4 13a8 8 0 0 0 14.7 4L21 15" /><path d="M21 20v-5h-5" /></svg>;
     case "settings":

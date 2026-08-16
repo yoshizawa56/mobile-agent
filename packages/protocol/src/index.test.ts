@@ -14,6 +14,7 @@ import {
   clientControlMessageSchema,
   createPaneRequestSchema,
   createSessionRequestSchema,
+  maxPasteImageBase64Length,
   paneListResponseSchema,
   serverControlMessageSchema,
   terminalProtocolVersion,
@@ -70,6 +71,13 @@ const clientCases = [
   { name: "rejects an invalid terminal size", input: { type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 }, assert: [isInvalid(["cols"])] },
   { name: "accepts a resumed attach with paired credentials", input: { type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" })] },
   { name: "rejects an attach with only one resume credential", input: { type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1" }, assert: [isInvalid()] },
+  { name: "accepts an image paste request", input: { type: "paste_image", version: terminalProtocolVersion, name: "screenshot.png", mimeType: "image/png", data: "iVBORw0KGgo=" }, assert: [isValid({ type: "paste_image", version: terminalProtocolVersion, name: "screenshot.png", mimeType: "image/png", data: "iVBORw0KGgo=" })] },
+  { name: "accepts an image paste without a mime type", input: { type: "paste_image", version: terminalProtocolVersion, name: "photo", data: "AAEC" }, assert: [isValid()] },
+  { name: "rejects an image paste with an empty payload", input: { type: "paste_image", version: terminalProtocolVersion, name: "photo.png", data: "" }, assert: [isInvalid(["data"])] },
+  { name: "rejects an image paste with a non-base64 payload", input: { type: "paste_image", version: terminalProtocolVersion, name: "photo.png", data: "not base64!" }, assert: [isInvalid(["data"])] },
+  { name: "rejects an image paste with a control character in the name", input: { type: "paste_image", version: terminalProtocolVersion, name: "photo\n.png", data: "AAEC" }, assert: [isInvalid(["name"])] },
+  { name: "rejects an image paste with a colon in the name", input: { type: "paste_image", version: terminalProtocolVersion, name: "photo:1.png", data: "AAEC" }, assert: [isInvalid(["name"])] },
+  { name: "rejects an oversized image paste", input: { type: "paste_image", version: terminalProtocolVersion, name: "big.png", data: "A".repeat(maxPasteImageBase64Length + 1) }, assert: [isInvalid(["data"])] },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 const serverCases = [

@@ -284,6 +284,38 @@ export class TmuxAdapter {
     return this.require(["capture-pane", "-p", "-e", "-S", String(-Math.abs(lines)), "-t", paneId]);
   }
 
+  /**
+   * Stores raw bytes in a named tmux buffer. `pasteBuffer` later writes the
+   * bytes straight into the pane's PTY without tmux interpreting them as
+   * input, which is how terminal-emulator paste semantics are reproduced for
+   * sequences such as iTerm2 inline images.
+   */
+  public setBuffer(name: string, data: Buffer): void {
+    const fullArgs = [...this.commandPrefix, "set-buffer", "-b", name, "-n", name];
+    const result = spawnSync("tmux", fullArgs, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      input: data,
+      env: this.environment,
+    });
+    if (result.status !== 0) {
+      throw new TmuxError(
+        result.stderr?.trim() || `tmux set-buffer failed for ${name}`,
+        fullArgs,
+        { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" },
+      );
+    }
+  }
+
+  public pasteBuffer(name: string, targetPaneId: string): void {
+    this.require(["paste-buffer", "-b", name, "-t", targetPaneId]);
+  }
+
+  /** Removes a named buffer; missing buffers are treated as already removed. */
+  public deleteBuffer(name: string): void {
+    this.command(["delete-buffer", "-b", name]);
+  }
+
   public resolvePane(target: string): TmuxPaneRef {
     const output = this.require([
       "display-message",

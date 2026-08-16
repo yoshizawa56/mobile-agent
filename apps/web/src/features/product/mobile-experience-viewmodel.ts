@@ -387,14 +387,14 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onAgentChange: setNewPaneAgent,
     onPlacementChange: (placement) => {
       setNewPanePlacement(placement);
-      if (placement !== "window") setNewPaneSelectionMode("workspace");
       if (placement !== "window" && !newPaneTargetPaneId) setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
     },
     onTargetPaneChange: setNewPaneTargetPaneId,
     onCreate: () => {
-      const needsWorkspace = newPaneKind === "agent" && newPanePlacement === "window";
-      const workspaceId = needsWorkspace ? newPaneWorkspaceId || workspaces[0]?.id : undefined;
-      if (!selectedSession || !selectedTerminal || isCreatingPane || (needsWorkspace && !workspaceId) || !agentdConnection) return;
+      const useWorktree = newPaneSelectionMode === "worktree";
+      const workspaceRequired = useWorktree || (newPaneKind === "agent" && newPanePlacement === "window");
+      const workspaceId = workspaceRequired ? newPaneWorkspaceId || workspaces[0]?.id : undefined;
+      if (!selectedSession || !selectedTerminal || isCreatingPane || (workspaceRequired && !workspaceId) || !agentdConnection) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
       void createPane({
@@ -403,7 +403,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         name: newPaneName,
         ...(workspaceId ? { workspaceId } : {}),
         agentId: newPaneKind === "agent" ? newPaneAgent : null,
-        useWorktree: needsWorkspace && newPaneSelectionMode === "worktree",
+        useWorktree,
         placement: newPanePlacement,
         targetPaneId: newPanePlacement === "window" ? null : newPaneTargetPaneId,
       }, agentdConnection)

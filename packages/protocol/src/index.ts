@@ -393,20 +393,14 @@ export const createPaneRequestSchema = z.object({
   if (value.placement !== "window" && value.cwd) {
     context.addIssue({ code: "custom", path: ["cwd"], message: "split panes always inherit the target pane cwd" });
   }
-  if (value.placement !== "window" && value.workspaceId) {
-    context.addIssue({ code: "custom", path: ["workspaceId"], message: "split panes always inherit the target pane cwd" });
+  if (value.placement !== "window" && value.workspaceId && !value.useWorktree) {
+    context.addIssue({ code: "custom", path: ["workspaceId"], message: "workspaceId on a split pane requires useWorktree" });
   }
   if (value.kind === "agent" && !value.agentId) {
     context.addIssue({ code: "custom", path: ["agentId"], message: "agentId is required for an agent pane" });
   }
   if (value.kind === "shell" && value.agentId) {
     context.addIssue({ code: "custom", path: ["agentId"], message: "agentId is not allowed for a shell pane" });
-  }
-  if (value.kind === "shell" && value.useWorktree) {
-    context.addIssue({ code: "custom", path: ["useWorktree"], message: "useWorktree is only allowed for an agent pane" });
-  }
-  if (value.kind === "agent" && value.useWorktree && value.placement !== "window") {
-    context.addIssue({ code: "custom", path: ["placement"], message: "worktree agent panes must open in a new tmux window" });
   }
   if (value.placement === "window" && value.targetPaneId) {
     context.addIssue({ code: "custom", path: ["targetPaneId"], message: "targetPaneId is only used for a split pane" });

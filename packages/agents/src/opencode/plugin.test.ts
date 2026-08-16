@@ -42,7 +42,7 @@ type ClientRecords = {
 
 function fakeClient(records: ClientRecords, sessions: Record<string, unknown> = {}): OpenCodeClient {
   return {
-    createSession: async (title) => {
+    createSession: async (title?: string) => {
       records.createdTitles.push(title);
       return "session-created";
     },

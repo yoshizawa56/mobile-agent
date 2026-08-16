@@ -66,6 +66,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>("worktree");
   const [newPanePlacement, setNewPanePlacement] = useState<PanePlacement>("window");
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>(null);
+  const [newPaneReturnPaneId, setNewPaneReturnPaneId] = useState<string | null>(null);
   const [newPaneError, setNewPaneError] = useState<string | null>(null);
   const [isCreatingPane, setIsCreatingPane] = useState(false);
   const [workspaceCandidates, setWorkspaceCandidates] = useState<WorkspaceDirectory[]>([]);
@@ -418,8 +419,14 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .catch((error: unknown) => setNewPaneError(errorMessage(error) ?? "Could not open pane"))
         .finally(() => setIsCreatingPane(false));
     },
-    onBack: () => terminalId && selectedSession && navigateTo(sessionPath(terminalId, selectedSession.name)),
-  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
+    onBack: () => {
+      if (!terminalId || !selectedSession) return;
+      const returnPane = newPaneReturnPaneId
+        ? sessionPanes.find((pane) => pane.tmuxPaneId === newPaneReturnPaneId || pane.id === newPaneReturnPaneId) ?? null
+        : null;
+      navigateTo(returnPane ? panePath(terminalId, selectedSession.name, returnPane.id) : sessionPath(terminalId, selectedSession.name));
+    },
+  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneReturnPaneId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -439,6 +446,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneSelectionMode("worktree");
       setNewPanePlacement("window");
       setNewPaneTargetPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
+      setNewPaneReturnPaneId(sessionPanes[0]?.tmuxPaneId ?? null);
       if (terminalId && selectedSession) navigateTo(newPanePath(terminalId, selectedSession.name));
     },
     onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
@@ -526,6 +534,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setNewPaneSelectionMode("worktree");
       setNewPanePlacement(selectedPaneId ? "right" : "window");
       setNewPaneTargetPaneId(selectedPaneId ?? sessionPanes[0]?.tmuxPaneId ?? null);
+      setNewPaneReturnPaneId(selectedPaneId || sessionPanes[0]?.tmuxPaneId || null);
       navigateTo(newPanePath(terminalId, selectedSession.name));
     },
   };

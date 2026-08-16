@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { AgentdConnection } from "@mobile-agent/agentd-client";
 import type { PaneSummary as ProtocolPaneSummary } from "@mobile-agent/protocol";
 import { fetchPanes } from "../api/agentd-api";
+import { isMockMode } from "../../mock/mock-data";
 
 export type PaneSummary = ProtocolPaneSummary;
 
@@ -33,7 +34,11 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     },
     enabled: Boolean(connection) && (alwaysOpen || isOpen),
     staleTime: 1_000,
-    refetchInterval: isOpen ? 3_000 : false,
+    // While the window map is open poll for live layout updates. In the control
+    // room agentd pushes session_updated events over WebSocket, so the idle
+    // fallback can be a long safety net; mock mode has no event socket and
+    // keeps polling so state changes are still detected.
+    refetchInterval: isOpen ? 3_000 : alwaysOpen ? (isMockMode() ? 3_000 : 10_000) : false,
   });
 
   const open = useCallback(() => setIsOpen(true), []);

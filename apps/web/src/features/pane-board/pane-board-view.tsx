@@ -13,11 +13,6 @@ export function PaneBoardView({ viewModel, alwaysOpen = false, showLayout = fals
 
   return (
     <div className="relative min-h-0">
-      <button className={`hidden items-center gap-2 rounded-[10px] border border-line bg-paper px-2.5 py-2 font-bold text-[0.68rem] text-[#4c574f] max-[920px]:max-w-[calc(100vw-36px)] ${alwaysOpen && !showLayout ? "max-[920px]:fixed max-[920px]:right-[18px] max-[920px]:top-[77px] max-[920px]:z-[8] max-[920px]:flex max-[920px]:shadow-[0_9px_20px_rgb(39_46_38_/_12%)]" : ""} ${viewModel.isOpen ? "pointer-events-none invisible" : ""}`} type="button" onClick={viewModel.toggle} aria-expanded={viewModel.isOpen} aria-controls="tmux-window-map">
-        <span className="text-lime-deep"><AppIcon name="layout" size={15} /></span>
-        <span>All panes</span>
-        <span className="min-w-[17px] rounded-[5px] bg-[#e5e9df] px-1 py-0.5 text-center font-mono text-[0.57rem] text-[#73806f]">{viewModel.panes.length || "—"}</span>
-      </button>
       <aside className={`flex min-h-[480px] flex-col rounded-[15px] border border-line bg-[rgb(248_248_244_/_82%)] p-[18px] text-[#303631] shadow-[0_18px_42px_rgb(39_46_38_/_6%)] max-[1180px]:p-3.5 max-[920px]:min-h-0 ${mobileBoardClass} ${showLayout ? "relative min-h-0 overflow-hidden border-transparent bg-transparent p-0 shadow-none" : ""}`} data-open={viewModel.isOpen} aria-label="tmux panes">
         {showLayout ? (
           <PaneLayoutOverlay id="tmux-window-map" panes={viewModel.panes} selectedTarget={viewModel.selectedTarget} onSelect={viewModel.select} onClose={viewModel.close} variant={layoutVariant} />

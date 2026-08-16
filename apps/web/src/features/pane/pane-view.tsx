@@ -4,44 +4,50 @@ import { PaneBoardView } from "../pane-board/pane-board-view";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import type { PaneLayoutOverlayVariant } from "../pane-board/pane-layout-overlay-view";
 import { useWindowMapGesture } from "./window-map-gesture";
-import { useRef } from "react";
+import { ToastPattern } from "../notifications/waiting-notification-patterns";
+import { toToastAgent, useWaitingNotices } from "../notifications/waiting-notification-controller";
 
 export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSessionSelect, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onSessionSelect?: () => void; onNewPane?: () => void }) {
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
   const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
   const agentName = selectedPane?.agentId ?? (selectedPane?.kind === "shell" ? "shell" : "agent");
-  const sessionName = selectedPane?.sessionName ?? "mobile-agent";
-  const cwd = selectedPane?.cwd ?? "~/work/mobile-agent";
   const shellMode = selectedPane?.kind === "shell";
   const waitingCount = paneBoard.panes.filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval").length;
+  const runningCount = paneBoard.panes.filter((pane) => pane.state === "running").length;
   const connectionDotClass = viewModel.status === "connected"
     ? "bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]"
     : viewModel.status === "connecting" ? "bg-amber" : "bg-red";
-  const agentBadgeClass = selectedPane?.kind === "shell" ? "text-[#a6d5ae] bg-[#14301b]" : "text-[#9bffa7] bg-[#12351b]";
+  const agentBadgeClass = shellMode ? "text-[#a6d5ae] bg-[#14301b]" : "text-[#9bffa7] bg-[#12351b]";
   const ownerPillClass = viewModel.viewportOwner === "desktop"
     ? "border-[#735c2c] text-amber bg-[#231b0b]"
     : "border-[#2b6838] text-lime bg-[#0b2110] shadow-[0_0_20px_rgb(57_214_91_/_9%)]";
- const terminalActionClass = "grid size-[27px] place-items-center rounded-[10px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:size-11 max-[920px]:min-w-11 max-[920px]:rounded-lg max-[920px]:text-base max-[620px]:size-6 max-[620px]:min-w-6 max-[620px]:text-[0.55rem]";
-  const terminalSessionReturnClass = `${terminalActionClass} hidden max-[920px]:grid`;
+  const headerButtonClass = "grid size-8 shrink-0 place-items-center rounded-lg border border-line-strong bg-[rgb(10_22_13_/_86%)] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[620px]:size-9";
+  const windowMapButtonClass = "flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line-strong bg-[rgb(10_22_13_/_86%)] px-2 text-[#81a986] transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[620px]:h-9";
+  const windowMapCountClass = "flex items-center gap-1 rounded-[4px] px-[5px] py-[2px] font-mono text-[0.5rem] font-bold leading-none";
+  const windowMapWaitingClass = `bg-[#221b0c] text-amber ${windowMapCountClass}`;
+  const windowMapRunningClass = `bg-[#0b1c0f] text-lime ${windowMapCountClass}`;
 
   return (
     <main ref={windowMapSurfaceRef} className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-hidden text-ink [touch-action:pan-x_pan-y]">
-      <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-line bg-[rgb(6_13_8_/_88%)] px-8 backdrop-blur-[18px] max-[920px]:h-16 max-[920px]:px-[18px] max-[620px]:h-[50px] max-[620px]:px-[14px]">
-        <div className="flex items-center gap-4">
-          {onSessionSelect ? <button className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-[rgb(10_22_13_/_86%)] px-2 py-1.5 font-mono text-[0.62rem] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[920px]:hidden" type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={16} /><span>Sessions</span></button> : null}
-          <span className="grid size-7 rotate-[-8deg] place-items-center rounded-[9px] border border-[#2c6b38] bg-[#071309] font-mono text-lg leading-none text-lime shadow-[inset_0_0_0_1px_rgb(139_255_154_/_8%),0_0_24px_rgb(57_214_91_/_12%)]">⌁</span>
-          <span className="text-base font-bold tracking-[-0.035em]">agent<span className="text-lime-deep">.</span></span>
-          <span className="ml-0.5 border-l border-line-strong pl-3 text-[0.72rem] tracking-[0.04em] text-muted max-[920px]:hidden">control room</span>
-        </div>
-        <div className="flex items-center gap-3 max-[620px]:gap-[7px]">
-          <div className="flex items-center gap-[7px] rounded-full border border-line-strong bg-[rgb(10_22_13_/_86%)] px-[11px] py-[7px] font-mono text-[0.66rem] tracking-[-0.02em] text-[#91b999]">
-            <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
-            <span className="max-[920px]:hidden">{viewModel.status === "connected" ? "Tailnet connected" : viewModel.status}</span>
-          </div>
-          <button className="grid size-8 place-items-center rounded-[10px] border border-line-strong bg-[rgb(10_22_13_/_86%)] text-[0.8rem] text-muted transition-colors hover:border-[#3d7548] hover:bg-[#102417] hover:text-lime max-[620px]:hidden" type="button" aria-label="Settings" title="Settings"><AppIcon name="settings" size={17} /></button>
-          <span className="grid size-[30px] place-items-center rounded-[10px] bg-lime text-[0.66rem] font-extrabold text-[#041006] shadow-[0_0_18px_rgb(139_255_154_/_18%)]">TY</span>
+      <header className="flex min-h-[52px] shrink-0 items-center gap-2 border-b border-line bg-[rgb(6_13_8_/_92%)] px-[10px] backdrop-blur-[18px] max-[620px]:min-h-[50px] max-[620px]:px-[8px]">
+        {onSessionSelect ? (
+          <button className={headerButtonClass} type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={16} /></button>
+        ) : null}
+        <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
+        <span className="grid size-5 shrink-0 place-items-center rounded-[6px] bg-[#14301b] text-lime"><AppIcon name="terminal" size={13} /></span>
+        <span className={`shrink-0 rounded-[6px] px-[6px] py-[3px] font-mono text-[0.52rem] font-extrabold ${agentBadgeClass}`}>{shellMode ? "shell" : agentName}</span>
+        <strong className="min-w-0 truncate text-[0.74rem] font-bold text-[#d8f4dc]">{title}</strong>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <button className={windowMapButtonClass} type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}>
+            <AppIcon name="layout" size={15} />
+            {waitingCount > 0 ? <span className={windowMapWaitingClass}><span className="size-[5px] animate-pulse rounded-full bg-amber" />{waitingCount}</span> : null}
+            {runningCount > 0 ? <span className={windowMapRunningClass}><span className="size-[5px] rounded-full bg-lime-deep" />{runningCount}</span> : null}
+          </button>
+          {onNewPane ? (
+            <button className={headerButtonClass} type="button" onClick={onNewPane} aria-label="Add a pane" title="Add a pane"><AppIcon name="new-pane" size={16} /></button>
+          ) : null}
         </div>
       </header>
 
@@ -52,8 +58,8 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
             <div className="relative mt-[13px] flex items-center gap-2.5 rounded-xl border border-line bg-[rgb(10_22_13_/_72%)] px-2.5 py-3">
               <span className="grid size-7 place-items-center rounded-lg bg-[#12301a] text-lime"><AppIcon name="folder" size={17} /></span>
               <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <strong className="overflow-hidden text-[0.75rem] text-ellipsis whitespace-nowrap">{sessionName}</strong>
-                <small className="overflow-hidden text-[0.65rem] leading-[1.45] text-muted text-ellipsis whitespace-nowrap">{cwd}</small>
+                <strong className="overflow-hidden text-[0.75rem] text-ellipsis whitespace-nowrap">{selectedPane?.workspaceId ?? "session"}</strong>
+                <small className="overflow-hidden text-[0.65rem] leading-[1.45] text-muted text-ellipsis whitespace-nowrap">{selectedPane?.cwd ?? "~/work"}</small>
               </span>
               <span className="size-[5px] shrink-0 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" />
             </div>
@@ -79,11 +85,11 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
         <section className="flex min-w-0 min-h-0 flex-col gap-5 max-[920px]:flex-1 max-[920px]:gap-0 max-[620px]:gap-[7px]">
           <div className="flex min-h-[74px] items-start justify-between gap-5 max-[920px]:hidden">
             <div className="min-w-0">
-              <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> LIVE SESSION</div>
+              <div className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(97_143_55_/_12%)]" /> LIVE SESSION</div>
               <h1 className="mb-[9px] mt-[10px] max-w-[650px] text-[clamp(1.25rem,2.2vw,1.85rem)] font-bold leading-[1.05] tracking-[-0.055em] text-ink">{title}</h1>
               <div className="flex flex-wrap items-center gap-2 font-mono text-[0.65rem] text-muted">
                 <span className={`rounded-md px-[7px] py-1 text-[0.61rem] font-extrabold uppercase tracking-[0.02em] ${agentBadgeClass}`}>{agentName}</span>
-                <span>{cwd}</span>
+                <span>{selectedPane?.cwd ?? "~/work"}</span>
                 <span className="text-line-strong">·</span>
                 <span className="max-[620px]:hidden">{viewModel.target}</span>
               </div>
@@ -98,43 +104,24 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
           </div>
 
           <section className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]" aria-label={`${viewModel.target} terminal`}>
-            <div className="flex min-h-[45px] shrink-0 items-center justify-between gap-3 border-b border-[#15351d] bg-[#071008] px-3.5 font-mono text-[0.63rem] text-[#8cb793] max-[920px]:min-h-[calc(44px+var(--safe-area-top))] max-[920px]:gap-[5px] max-[920px]:border-b-[#17391f] max-[920px]:px-[max(8px,var(--safe-area-left))] max-[920px]:pb-0 max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[620px]:min-h-[calc(34px+var(--safe-area-top))] max-[620px]:gap-[7px] max-[620px]:text-[0.5rem]">
-              {onSessionSelect ? <button className={terminalSessionReturnClass} type="button" onClick={onSessionSelect} aria-label="Back to session selection" title="Back to session selection"><AppIcon name="arrow-left" size={15} /></button> : null}
-              <div className="flex min-w-0 flex-1 items-center justify-start gap-[7px] max-[620px]:gap-[5px]">
-                <span className={`inline-block size-[7px] shrink-0 rounded-full ${connectionDotClass}`} />
-                <span className="text-lime"><AppIcon name="terminal" size={15} /></span>
-                <strong className="overflow-hidden text-ellipsis whitespace-nowrap">{shellMode ? "zsh" : agentName}</strong>
-                <span className="text-[#3e6547]">·</span>
-                <span className="max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap">{sessionName}</span>
-                <span className="max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap text-[#3e6547] max-[620px]:hidden">{cwd}</span>
-              </div>
-              <div className="flex shrink-0 items-center gap-2 max-[920px]:gap-0">
-                <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">{viewModel.target}</span>
-                <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">80 × 24</span>
-                {onNewPane ? <button className={terminalActionClass} type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane"><AppIcon name="new-pane" size={16} /></button> : null}
-                <button className={terminalActionClass} type="button" onClick={() => fileInputRef.current?.click()} aria-label="Paste an image" title="Paste an image"><AppIcon name="paperclip" size={16} /></button>
-                <input
-                  ref={fileInputRef}
-                  className="hidden"
-                  type="file"
-                  accept="image/*"
-                  aria-hidden="true"
-                  tabIndex={-1}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) viewModel.pasteImage(file);
-                    event.target.value = "";
-                  }}
-                />
-                <button className={terminalActionClass} type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}><AppIcon name="layout" size={16} /></button>
-              </div>
+            <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3">
+              <div ref={viewModel.terminalContainerRef} className="terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none]" />
             </div>
-            <div ref={viewModel.terminalContainerRef} className="terminal-container flex min-h-0 w-full flex-1 touch-none bg-[#111318] px-6 pb-[18px] pt-[23px] [-webkit-touch-callout:none] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3" />
             {viewModel.pasteState !== "idle" ? (
-              <div className="pointer-events-none absolute top-[52px] right-[13px] z-10 flex items-center gap-2 rounded-[9px] border border-[#1d4c29] bg-[rgb(7_16_8_/_94%)] px-3 py-2 font-mono text-[0.62rem] text-[#b9dfbd] shadow-[0_6px_24px_rgb(0_0_0_/_45%)] max-[620px]:top-[41px]" role="status">
+              <div className="pointer-events-none absolute top-[16px] right-[16px] z-10 flex items-center gap-2 rounded-[9px] border border-[#1d4c29] bg-[rgb(7_16_8_/_94%)] px-3 py-2 font-mono text-[0.62rem] text-[#b9dfbd] shadow-[0_6px_24px_rgb(0_0_0_/_45%)]" role="status">
                 <span className={`size-1.5 shrink-0 rounded-full ${viewModel.pasteState === "failed" ? "bg-red" : "bg-lime-deep"}`} />
                 {viewModel.pasteState === "pasting" ? "Pasting image…" : viewModel.pasteState === "pasted" ? "Image pasted" : "Image paste failed"}
               </div>
+            ) : null}
+            {notices.length ? (
+              <ToastPattern
+                agents={notices.map(toToastAgent)}
+                onOpen={(agent) => {
+                  dismissNotice(agent.id);
+                  const pane = paneBoard.panes.find((candidate) => candidate.tmuxPaneId === agent.target);
+                  if (pane) paneBoard.select(pane);
+                }}
+              />
             ) : null}
             <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
               <span className="inline-flex items-center gap-1.5 text-[#8cb793]"><span className="size-[5px] rounded-full bg-lime-deep" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>

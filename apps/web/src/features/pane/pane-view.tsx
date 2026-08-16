@@ -4,9 +4,11 @@ import { PaneBoardView } from "../pane-board/pane-board-view";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import type { PaneLayoutOverlayVariant } from "../pane-board/pane-layout-overlay-view";
 import { useWindowMapGesture } from "./window-map-gesture";
+import { useRef } from "react";
 
 export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSessionSelect, onNewPane }: { viewModel: PaneViewModel; paneBoard: PaneBoardViewModel; layoutVariant?: PaneLayoutOverlayVariant; onSessionSelect?: () => void; onNewPane?: () => void }) {
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
   const agentName = selectedPane?.agentId ?? (selectedPane?.kind === "shell" ? "shell" : "agent");
@@ -110,10 +112,30 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
                 <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">{viewModel.target}</span>
                 <span className="text-[0.58rem] text-[#3e6547] max-[920px]:hidden">80 × 24</span>
                 {onNewPane ? <button className={terminalActionClass} type="button" onClick={onNewPane} aria-label="Open a new pane" title="Open a new pane"><AppIcon name="new-pane" size={16} /></button> : null}
+                <button className={terminalActionClass} type="button" onClick={() => fileInputRef.current?.click()} aria-label="Paste an image" title="Paste an image"><AppIcon name="paperclip" size={16} /></button>
+                <input
+                  ref={fileInputRef}
+                  className="hidden"
+                  type="file"
+                  accept="image/*"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) viewModel.pasteImage(file);
+                    event.target.value = "";
+                  }}
+                />
                 <button className={terminalActionClass} type="button" onClick={paneBoard.toggle} aria-expanded={paneBoard.isOpen} aria-controls="tmux-window-map" aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"} title={paneBoard.isOpen ? "Close window map" : "Open window map"}><AppIcon name="layout" size={16} /></button>
               </div>
             </div>
             <div ref={viewModel.terminalContainerRef} className="terminal-container flex min-h-0 w-full flex-1 touch-none bg-[#111318] px-6 pb-[18px] pt-[23px] [-webkit-touch-callout:none] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3" />
+            {viewModel.pasteState !== "idle" ? (
+              <div className="pointer-events-none absolute top-[52px] right-[13px] z-10 flex items-center gap-2 rounded-[9px] border border-[#1d4c29] bg-[rgb(7_16_8_/_94%)] px-3 py-2 font-mono text-[0.62rem] text-[#b9dfbd] shadow-[0_6px_24px_rgb(0_0_0_/_45%)] max-[620px]:top-[41px]" role="status">
+                <span className={`size-1.5 shrink-0 rounded-full ${viewModel.pasteState === "failed" ? "bg-red" : "bg-lime-deep"}`} />
+                {viewModel.pasteState === "pasting" ? "Pasting image…" : viewModel.pasteState === "pasted" ? "Image pasted" : "Image paste failed"}
+              </div>
+            ) : null}
             <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
               <span className="inline-flex items-center gap-1.5 text-[#8cb793]"><span className="size-[5px] rounded-full bg-lime-deep" /> {viewModel.status === "connected" ? "streaming" : viewModel.status}</span>
               <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>

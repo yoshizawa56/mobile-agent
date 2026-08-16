@@ -3,10 +3,12 @@ import { agentdSocketReadyState, type AgentdSocket, type AgentdSocketData } from
 import { spawnPty, type PtyProcess } from "./pty.js";
 import {
   clientControlMessageSchema,
+  maxPasteImageBytes,
   terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
 } from "@mobile-agent/protocol";
+import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
 import { TmuxViewportManager, type PreparedViewport, type ViewportLease } from "./viewport-manager.js";
 
 type TerminalViewportManager = {
@@ -24,6 +26,8 @@ export type TerminalSessionOptions = {
   spawnPty?: typeof spawnPty;
   sessions?: TerminalSessionRegistry;
   authDeviceId?: string;
+  /** Delivers pasted images into the attached tmux pane (see image-paste.ts). */
+  imagePaster?: (input: ImagePasteInput) => ImagePasteResult;
 };
 
 /**
@@ -229,6 +233,9 @@ export class TerminalSession {
           this.sendError("mobile_claim_failed", error);
         }
         return;
+      case "paste_image":
+        this.handlePasteImage(message);
+        return;
       case "resize":
         if (!this.isAttached()) {
           this.sendError("not_attached", "Attach before resizing the terminal");
@@ -410,6 +417,34 @@ export class TerminalSession {
 
       this.state = "awaiting_attach";
       this.sendError("attach_failed", error, true);
+    }
+  }
+
+  private handlePasteImage(message: Extract<ClientControlMessage, { type: "paste_image" }>): void {
+    if (!this.isAttached() || !this.lease) {
+      this.sendError("not_attached", "Attach before pasting an image");
+      return;
+    }
+    const bytes = Buffer.from(message.data, "base64");
+    if (bytes.length > maxPasteImageBytes) {
+      this.sendError("paste_image_too_large", `Image exceeds the ${maxPasteImageBytes} byte paste limit`);
+      return;
+    }
+    const imagePaster = this.options.imagePaster;
+    if (!imagePaster) {
+      this.sendError("paste_image_unavailable", "Image paste is not available on this host");
+      return;
+    }
+    try {
+      this.lease.claimMobile();
+      imagePaster({
+        paneId: this.lease.paneId,
+        name: message.name,
+        mimeType: message.mimeType,
+        bytes,
+      });
+    } catch (error) {
+      this.sendError("paste_image_failed", error);
     }
   }
 

@@ -17,6 +17,7 @@ import { createTerminalInputBatcher, createTerminalOutputScheduler } from "./ter
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
+export type PanePasteState = "idle" | "pasting" | "pasted" | "failed";
 
 export type PaneResumeState = {
   sessionId: string;
@@ -30,10 +31,12 @@ export type PaneViewModel = {
   errorMessage: string | null;
   viewportOwner: PaneViewportOwner;
   viewportReason: string | null;
+  pasteState: PanePasteState;
   terminalContainerRef: RefCallback<HTMLDivElement>;
   reconnect: () => void;
   claim: () => void;
   detach: () => void;
+  pasteImage: (file: File) => void;
 };
 
 export function usePaneViewModel({ target, connection }: { target: string; connection?: AgentdConnection }): PaneViewModel {
@@ -54,9 +57,15 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
   const terminalClosedRef = useRef(false);
   const currentTargetRef = useRef(target);
   const pendingDetachRef = useRef<Promise<void> | null>(null);
+  const [pasteState, setPasteState] = useState<PanePasteState>("idle");
+  const pasteResetTimerRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     currentTargetRef.current = target;
   }, [target]);
+
+  useEffect(() => () => {
+    if (pasteResetTimerRef.current !== null) window.clearTimeout(pasteResetTimerRef.current);
+  }, []);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current === null) return;
@@ -82,6 +91,43 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     clearRetryTimer();
     detachRef.current?.();
   }, [clearRetryTimer]);
+
+  const schedulePasteReset = useCallback(() => {
+    if (pasteResetTimerRef.current !== null) window.clearTimeout(pasteResetTimerRef.current);
+    pasteResetTimerRef.current = window.setTimeout(() => {
+      pasteResetTimerRef.current = null;
+      setPasteState("idle");
+    }, PASTE_NOTICE_DURATION_MS);
+  }, []);
+
+  const pasteImage = useCallback((file: File) => {
+    void (async () => {
+      if (isMockMode()) {
+        setPasteState("pasted");
+        schedulePasteReset();
+        return;
+      }
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        setPasteState("failed");
+        schedulePasteReset();
+        return;
+      }
+      try {
+        setPasteState("pasting");
+        const data = await fileToBase64(file);
+        sendControl(socket, createPasteImageMessage({
+          name: file.name || "image",
+          mimeType: file.type || undefined,
+          data,
+        }));
+        setPasteState("pasted");
+      } catch {
+        setPasteState("failed");
+      }
+      schedulePasteReset();
+    })();
+  }, [schedulePasteReset]);
 
   useEffect(() => mobileAgentBridge.onAppStateChange((state) => {
     if (state === "active" && !terminalClosedRef.current) reconnect();
@@ -439,11 +485,48 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     errorMessage,
     viewportOwner,
     viewportReason,
+    pasteState,
     terminalContainerRef,
     reconnect,
     claim,
     detach,
+    pasteImage,
   };
+}
+
+export function createPasteImageMessage({
+  name,
+  mimeType,
+  data,
+}: {
+  name: string;
+  mimeType?: string;
+  data: string;
+}): Extract<ClientControlMessage, { type: "paste_image" }> {
+  return {
+    type: "paste_image",
+    version: terminalProtocolVersion,
+    name,
+    ...(mimeType ? { mimeType } : {}),
+    data,
+  };
+}
+
+export function fileToBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the selected image"));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Could not read the selected image"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma === -1 ? result : result.slice(comma + 1));
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export function createTerminalAttachMessage({
@@ -522,6 +605,7 @@ function binaryStringToBytes(data: string): ArrayBuffer {
 }
 
 const TERMINAL_DETACH_TIMEOUT_MS = 2_000;
+const PASTE_NOTICE_DURATION_MS = 3_000;
 
 function detachSocketAndWait(socket: WebSocket): Promise<void> {
   if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();

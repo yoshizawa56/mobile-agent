@@ -3,6 +3,11 @@ import { z } from "zod";
 export const protocolVersion = 1 as const;
 export const terminalProtocolVersion = protocolVersion;
 
+/** Largest image (in bytes) the mobile client may paste into a pane. */
+export const maxPasteImageBytes = 10 * 1024 * 1024;
+/** Base64 encoding of `maxPasteImageBytes`, used to bound the wire message. */
+export const maxPasteImageBase64Length = Math.ceil(maxPasteImageBytes / 3) * 4;
+
 export const agentdHealthSchema = z.object({
   ok: z.literal(true),
   service: z.literal("agentd"),
@@ -332,6 +337,16 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("claim"),
     ...terminalFrameVersionSchema.shape,
+  }),
+  z.object({
+    type: z.literal("paste_image"),
+    ...terminalFrameVersionSchema.shape,
+    // Display name for the inline-image protocol and for tools that read the
+    // pasted file. Kept on the client because the OS picker knows it.
+    name: z.string().trim().min(1).max(255).regex(/^[^\u0000-\u001f\u007f:;]+$/, "name contains a control character, ':' or ';'"),
+    mimeType: z.string().trim().min(1).max(255).regex(/^[^\u0000-\u001f\u007f]+$/).optional(),
+    // Standard base64 (with padding) so agentd can decode without URL handling.
+    data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(1).max(maxPasteImageBase64Length),
   }),
 ]);
 

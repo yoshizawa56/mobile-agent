@@ -11,6 +11,7 @@ import {
   type TestRegistrar,
 } from "@mobile-agent/test-support";
 import {
+  createPasteImageMessage,
   createTerminalAttachMessage,
   handleControlMessage,
   resumeStateFromReady,
@@ -45,6 +46,29 @@ const attachTable: OperationTable<undefined, "default", AttachInput, AttachResul
   defaultFixture: noFixture(),
   cases: attachCases,
   execute: (_fixture, input) => createTerminalAttachMessage(input),
+  observe: () => ({}),
+};
+
+type PasteImageInput = { name: string; mimeType?: string; data: string };
+type PasteImageResult = Extract<ClientControlMessage, { type: "paste_image" }>;
+
+const pasteImageCases = [
+  {
+    name: "builds a versioned image paste with a mime type",
+    input: { name: "screenshot.png", mimeType: "image/png", data: "iVBORw0KGgo=" },
+    assert: [returns<EmptyContext, PasteImageResult>({ type: "paste_image", version: terminalProtocolVersion, name: "screenshot.png", mimeType: "image/png", data: "iVBORw0KGgo=" })],
+  },
+  {
+    name: "omits the mime type when the picker did not provide one",
+    input: { name: "photo", data: "AAEC" },
+    assert: [returns<EmptyContext, PasteImageResult>({ type: "paste_image", version: terminalProtocolVersion, name: "photo", data: "AAEC" })],
+  },
+] satisfies readonly OperationCase<"default", PasteImageInput, PasteImageResult, EmptyContext>[];
+
+const pasteImageTable: OperationTable<undefined, "default", PasteImageInput, PasteImageResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: pasteImageCases,
+  execute: (_fixture, input) => createPasteImageMessage(input),
   observe: () => ({}),
 };
 
@@ -149,6 +173,7 @@ const controlTable: OperationTable<ControlFixture, "default", ControlInput, unde
 describe("terminal pane handshake helpers", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, attachTable);
+  runOperationTable(register, pasteImageTable);
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
   runOperationTable(register, controlTable);

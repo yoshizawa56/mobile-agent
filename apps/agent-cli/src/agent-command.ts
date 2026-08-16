@@ -1955,6 +1955,7 @@ export class AgentCommand {
         cwd: runDir,
         args: backendArgs,
         environment: stringEnvironment(this.env),
+        name: session.name,
         monitorContext: {
           sessionId: session.id,
           executionId: session.executionId ?? "",

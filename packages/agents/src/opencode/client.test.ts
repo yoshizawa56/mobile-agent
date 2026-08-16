@@ -161,10 +161,12 @@ const sseTable: OperationTable<undefined, "default", SseInput, SseResult, EmptyC
 type CallRecord = { url: string; init: RequestInit | undefined };
 
 type EndpointInput = {
-  kind: "health" | "create" | "abort" | "permission" | "fork" | "status";
+  kind: "health" | "create" | "abort" | "permission" | "fork" | "status" | "title";
   sessionId?: string;
   permissionId?: string;
   responseBody?: unknown;
+  responseStatus?: number;
+  title?: string;
 };
 
 type EndpointResult = {
@@ -187,6 +189,30 @@ const endpointCases = [
     assert: [returns<EmptyContext, EndpointResult>({
       value: "session-new",
       calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: "{}" }],
+    })],
+  },
+  {
+    name: "create session posts the requested title",
+    input: { kind: "create" as const, title: "review", responseBody: { id: "session-new" } },
+    assert: [returns<EmptyContext, EndpointResult>({
+      value: "session-new",
+      calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: JSON.stringify({ title: "review" }) }],
+    })],
+  },
+  {
+    name: "update session title patches the session title",
+    input: { kind: "title" as const, sessionId: "session-1", title: "review", responseBody: true },
+    assert: [returns<EmptyContext, EndpointResult>({
+      value: true,
+      calls: [{ url: "http://127.0.0.1:4096/session/session-1", method: "PATCH", body: JSON.stringify({ title: "review" }) }],
+    })],
+  },
+  {
+    name: "reports a rejected session title update",
+    input: { kind: "title" as const, sessionId: "session-1", title: "review", responseBody: { error: "unsupported" }, responseStatus: 400 },
+    assert: [returns<EmptyContext, EndpointResult>({
+      value: false,
+      calls: [{ url: "http://127.0.0.1:4096/session/session-1", method: "PATCH", body: JSON.stringify({ title: "review" }) }],
     })],
   },
   {
@@ -231,7 +257,7 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
     const client = new OpenCodeClient("http://127.0.0.1:4096", {
       request: async (url, init) => {
         calls.push({ url: String(url), init });
-        return new Response(JSON.stringify(input.responseBody), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify(input.responseBody), { status: input.responseStatus ?? 200, headers: { "content-type": "application/json" } });
       },
     });
     let value: unknown;
@@ -240,7 +266,7 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
         value = await client.health();
         break;
       case "create":
-        value = await client.createSession();
+        value = await client.createSession(input.title);
         break;
       case "abort":
         value = await client.abortSession(input.sessionId!);
@@ -253,6 +279,9 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
         break;
       case "status":
         value = await client.sessionStatus(input.sessionId!);
+        break;
+      case "title":
+        value = await client.setSessionTitle(input.sessionId!, input.title!);
         break;
     }
     return {

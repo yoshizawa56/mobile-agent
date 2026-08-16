@@ -11,7 +11,14 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { buildDaemonSpawnArgs, disposeOwnedOpenCodeServers, type AgentdCliOptions } from "./daemon.js";
+import {
+  buildDaemonSpawnArgs,
+  consumeRestartMarker,
+  disposeOwnedOpenCodeServers,
+  hasRestartMarker,
+  writeRestartMarker,
+  type AgentdCliOptions,
+} from "./daemon.js";
 
 type Input = { options: AgentdCliOptions; sourceEntry: string };
 type Result = string[];
@@ -111,4 +118,53 @@ const cleanupTable: OperationTable<undefined, "default", CleanupInput, CleanupRe
 
 describe("agentd owned runtime cleanup", () => {
   runOperationTable(it as unknown as TestRegistrar, cleanupTable);
+});
+
+type MarkerInput = { refreshServers?: boolean };
+type MarkerResult = { present: boolean; consumed: boolean | undefined; consumedAgain: boolean | undefined };
+
+const markerCases = [
+  {
+    name: "a restart marker without refresh keeps the servers",
+    input: {},
+    assert: [returns<MarkerContext, MarkerResult>({ present: true, consumed: false, consumedAgain: undefined })],
+  },
+  {
+    name: "a restart marker defaults to keeping servers and is consumed once",
+    input: { refreshServers: false },
+    assert: [returns<MarkerContext, MarkerResult>({ present: true, consumed: false, consumedAgain: undefined })],
+  },
+  {
+    name: "a restart marker with refresh is reported once",
+    input: { refreshServers: true },
+    assert: [returns<MarkerContext, MarkerResult>({ present: true, consumed: true, consumedAgain: undefined })],
+  },
+] satisfies readonly OperationCase<"default", MarkerInput, MarkerResult, MarkerContext>[];
+
+type MarkerContext = {};
+
+const markerTable: OperationTable<undefined, "default", MarkerInput, MarkerResult, MarkerContext> = {
+  defaultFixture: noFixture(),
+  cases: markerCases,
+  execute: (_fixture, input) => {
+    const root = mkdtempSync(join(tmpdir(), "mobile-agent-daemon-marker-"));
+    try {
+      const pidFile = join(root, "agentd.pid");
+      writeRestartMarker(pidFile, input.refreshServers === true);
+      const present = hasRestartMarker(pidFile);
+      const consumed = consumeRestartMarker(pidFile);
+      return {
+        present,
+        consumed,
+        consumedAgain: consumeRestartMarker(pidFile),
+      };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  observe: () => ({}),
+};
+
+describe("agentd restart marker", () => {
+  runOperationTable(it as unknown as TestRegistrar, markerTable);
 });

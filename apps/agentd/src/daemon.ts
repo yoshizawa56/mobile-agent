@@ -14,6 +14,7 @@ export type AgentdCliOptions = {
   agentdBaseUrl?: string;
   logLevel?: LogLevel;
   logFile?: string;
+  refreshServers?: boolean;
 };
 
 type AgentdCommand = "start" | "status" | "stop" | "restart" | "ensure";
@@ -24,6 +25,57 @@ type AgentdPidRecord = {
   port: number;
   startedAt: string;
 };
+
+/**
+ * A restart marker next to the pid file tells a stopping daemon to leave the
+ * owned OpenCode servers running and, when a refresh was requested, the
+ * replacing daemon to restart them on their existing ports so configuration or
+ * environment changes are picked up while the server URLs stay stable. The
+ * marker is consumed by the replacing daemon at boot; stale markers left by a
+ * crashed restart are cleared there.
+ */
+export function restartMarkerPath(pidFile: string): string {
+  return `${pidFile}.restart`;
+}
+
+export function writeRestartMarker(pidFile: string, refreshServers: boolean): void {
+  const path = restartMarkerPath(pidFile);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${JSON.stringify({ pid: process.pid, refreshServers, startedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+}
+
+/** Report whether a restart was requested, without removing the marker. */
+export function hasRestartMarker(pidFile: string): boolean {
+  return existsSync(restartMarkerPath(pidFile));
+}
+
+/** Remove the marker if present; returns the refresh flag, or undefined when absent. */
+export function consumeRestartMarker(pidFile: string): boolean | undefined {
+  const path = restartMarkerPath(pidFile);
+  if (!existsSync(path)) return undefined;
+  let refreshServers = true;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { refreshServers?: unknown };
+    refreshServers = parsed.refreshServers !== false;
+  } catch {
+    // An unreadable marker defaults to a plain restart (keep servers).
+  }
+  try {
+    unlinkSync(path);
+  } catch {
+    // The marker may already have been removed; its presence already signaled a restart.
+  }
+  return refreshServers;
+}
+
+function removeRestartMarker(pidFile: string): void {
+  const path = restartMarkerPath(pidFile);
+  try {
+    unlinkSync(path);
+  } catch {
+    // No marker to remove.
+  }
+}
 
 type ParsedAgentdOptions = {
   options: AgentdCliOptions;
@@ -92,14 +144,34 @@ export async function startAgentd(args: string[] | AgentdCliOptions = []): Promi
     throw error;
   }
 
+  // A restart keeps the owned OpenCode servers running. When the marker asked
+  // for a refresh, replace them on their existing ports so configuration or
+  // environment changes are picked up; otherwise keep them so running sessions
+  // are not interrupted. The marker is consumed here, and stale markers from a
+  // crashed restart are cleared too. Best effort: a failed refresh must not
+  // block the daemon.
+  if (consumeRestartMarker(options.pidFile) === true) {
+    void refreshOwnedOpenCodeServers({
+      logger,
+      registryFile: defaultOpenCodeRegistryFile(process.env),
+    });
+  }
+
   let stopped = false;
   const shutdown = () => {
     if (stopped) return;
     stopped = true;
     removePidRecord(options.pidFile, process.pid);
-    // Release the OpenCode servers this agentd instance owns so they are not
-    // orphaned when the daemon exits. Best effort: a failed cleanup must not
-    // block or fail the shutdown.
+    // A restart keeps the owned OpenCode servers running so running sessions
+    // are not interrupted (and the replacing daemon can refresh them on the
+    // same ports when asked); only an explicit stop releases them so they are
+    // not orphaned when the daemon exits. Best effort: a failed cleanup must
+    // not block or fail the shutdown.
+    if (hasRestartMarker(options.pidFile)) {
+      app.stop();
+      logger.close();
+      return;
+    }
     void disposeOwnedOpenCodeServers({
       logger,
       registryFile: defaultOpenCodeRegistryFile(process.env),
@@ -138,6 +210,32 @@ export async function disposeOwnedOpenCodeServers(options: { registryFile: strin
   }
 }
 
+/**
+ * Restart every owned OpenCode server on the port it already uses, so a
+ * `agent daemon restart` picks up configuration and environment changes while
+ * keeping the server URLs stable. Best effort; failures are logged and the
+ * affected root is released from the registry.
+ */
+export async function refreshOwnedOpenCodeServers(options: { registryFile: string; logger?: Logger }): Promise<void> {
+  const manager = new OpenCodeServerManager({
+    registryFile: options.registryFile,
+    onLog: (level, message, extra) => {
+      if (level === "warn" || level === "error") {
+        options.logger?.warn("opencode.server_refresh", { message, ...extra });
+      } else {
+        options.logger?.debug("opencode.server_refresh", { message, ...extra });
+      }
+    },
+  });
+  try {
+    await manager.refreshAll();
+  } catch (error) {
+    options.logger?.warn("opencode.server_refresh_failed", {
+      ...errorFields(error),
+    });
+  }
+}
+
 function normalizeCommand(args: string[]): { command: AgentdCommand; rest: string[] } {
   const [command, ...rest] = args;
   if (!command || command.startsWith("-")) return { command: "start", rest: args };
@@ -166,10 +264,12 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   let logLevel = parseLogLevel(process.env.AGENT_LOG_LEVEL, "info");
   let logFile = process.env.AGENT_LOG_FILE;
   let foreground = false;
+  let refreshServers = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--foreground") foreground = true;
+    else if (argument === "--refresh-servers") refreshServers = true;
     else if (argument === "--host") host = requireValue(argument, args[++index]);
     else if (argument.startsWith("--host=")) host = argument.slice("--host=".length);
     else if (argument === "--port") port = parsePort(argument, requireValue(argument, args[++index]));
@@ -188,7 +288,9 @@ function parseAgentdOptions(args: string[]): ParsedAgentdOptions {
   }
 
   validateAgentdControlSocketPath(controlSocket);
-  return { options: { host, port, pidFile, controlSocket, agentdBaseUrl, logLevel, logFile }, foreground };
+  const options: AgentdCliOptions = { host, port, pidFile, controlSocket, agentdBaseUrl, logLevel, logFile };
+  if (refreshServers) options.refreshServers = true;
+  return { options, foreground };
 }
 
 async function statusAgentd(options: AgentdCliOptions): Promise<number> {
@@ -239,7 +341,18 @@ async function stopAgentd(options: AgentdCliOptions, quiet = false): Promise<num
 }
 
 async function restartAgentd(options: AgentdCliOptions): Promise<number> {
-  await stopAgentd(options, true);
+  // Tell the running daemon to keep its OpenCode servers alive so sessions keep
+  // their ports across the restart. With --refresh-servers the replacing daemon
+  // restarts them on the same ports so configuration changes are picked up.
+  // Consumed by the replacing daemon at boot; cleared by a failed restart so a
+  // later stop still cleans up.
+  writeRestartMarker(options.pidFile, options.refreshServers === true);
+  try {
+    await stopAgentd(options, true);
+  } catch (error) {
+    removeRestartMarker(options.pidFile);
+    throw error;
+  }
 
   // launchd/systemd may restart a KeepAlive service as soon as its old process
   // exits. Reuse that process when it becomes healthy before spawning a second
@@ -393,11 +506,13 @@ function displayHost(host: string): string {
 function printUsage(command: AgentdCommand): void {
   const usage = command === "start"
     ? "Usage: agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--agentd-base-url URL] [--log-level LEVEL] [--log-file PATH]"
-    : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
+    : command === "restart"
+      ? "Usage: agent daemon restart [--refresh-servers] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]"
+      : `Usage: agent daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
   const behavior = command === "start"
     ? "Starts agentd in the background and waits until it is healthy by default. Use --foreground when a service manager should own the agentd process."
     : command === "restart"
-      ? "Stops agentd and starts it in the background, unless a service manager takes over the replacement process."
+      ? "Stops agentd and starts it in the background, unless a service manager takes over the replacement process. Running OpenCode servers are kept; use --refresh-servers to restart them on the same ports so configuration or environment changes are picked up."
       : undefined;
   process.stdout.write(`${usage}\n${behavior ? `\n${behavior}\n` : ""}\nCommands: start, status, stop, restart, ensure\n`);
 }

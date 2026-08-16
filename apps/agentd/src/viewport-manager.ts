@@ -282,7 +282,10 @@ export class TmuxViewportManager {
     record.mobileClient = client;
 
     this.protectDesktopClients(record);
-    this.reconcileMobileViewport(record, options.cols, options.rows);
+    // The client has just received its first draw from tmux. Force one
+    // authoritative redraw so xterm cannot retain cells from the pre-zoom
+    // split, regardless of whether the window already matched the request.
+    this.reconcileMobileViewport(record, options.cols, options.rows, true);
     this.rememberLatestDesktop(record);
     this.emit(record, "mobile", "attached");
 
@@ -307,7 +310,7 @@ export class TmuxViewportManager {
     this.reconcileMobileViewport(record, cols, rows);
   }
 
-  private reconcileMobileViewport(record: LeaseRecord, cols: number, rows: number): void {
+  private reconcileMobileViewport(record: LeaseRecord, cols: number, rows: number, forceRefresh = false): void {
     record.owner = "mobile";
     record.mobileCols = cols;
     record.mobileRows = rows;
@@ -316,10 +319,15 @@ export class TmuxViewportManager {
     // tmux mouse handling enabled for the lifetime of this viewport lease.
     this.adapter.setWindowMouse(record.pane.windowId, "on");
     this.adapter.setWindowSize(record.pane.windowId, "manual");
-    this.adapter.resizeWindow(record.pane.windowId, cols, rows);
 
     const current = this.adapter.snapshotWindow(record.pane);
-    if (!current.zoomed || current.activePaneId !== record.pane.paneId) {
+    const sizeChanged = current.width !== cols || current.height !== rows;
+    if (sizeChanged) {
+      this.adapter.resizeWindow(record.pane.windowId, cols, rows);
+    }
+
+    const topologyChanged = !current.zoomed || current.activePaneId !== record.pane.paneId;
+    if (topologyChanged) {
       if (current.zoomed) this.adapter.selectLayout(record.pane.windowId, current.layout);
       this.adapter.selectPane(record.pane.paneId);
       this.adapter.zoomPane(record.pane.paneId);
@@ -333,13 +341,19 @@ export class TmuxViewportManager {
         // The client may disappear during a reconnect. The final refresh below
         // will fail and the caller can release this lease for a clean retry.
       }
-      if (client.windowId !== record.pane.windowId || client.paneId !== record.pane.paneId) {
+      const clientChanged = client.windowId !== record.pane.windowId || client.paneId !== record.pane.paneId;
+      if (clientChanged) {
         this.adapter.switchClient(record.mobileClient.name, record.pane.paneId, true);
       }
       // The viewport commands above can be delivered as incremental terminal
       // updates. Reset and redraw once after the authoritative state is in
-      // place so xterm cannot retain cells from the pre-zoom split.
-      this.adapter.refreshClient(record.mobileClient.name);
+      // place so xterm cannot retain cells from the pre-zoom split. In the
+      // steady state the client only needs the natural pane-output diffs,
+      // exactly like a direct SSH session; forcing a full redraw here would
+      // interleave screen replays with every input echo.
+      if (forceRefresh || sizeChanged || topologyChanged || clientChanged) {
+        this.adapter.refreshClient(record.mobileClient.name);
+      }
     }
   }
 
@@ -357,6 +371,14 @@ export class TmuxViewportManager {
       return;
     }
 
+    if (cols === undefined && rows === undefined) {
+      // The mobile client already owns the viewport. A bare claim is sent
+      // with every input frame; it must not run any tmux command. The
+      // terminal is a pure I/O device here: only a desktop takeover needs
+      // reconciliation, and that path is taken above.
+      return;
+    }
+
     this.resizeMobile(record, nextCols, nextRows);
   }
 
@@ -366,6 +388,7 @@ export class TmuxViewportManager {
       this.claimMobile(record, cols, rows);
       return;
     }
+    if (cols === record.mobileCols && rows === record.mobileRows) return;
     this.reconcileMobileViewport(record, cols, rows);
   }
 

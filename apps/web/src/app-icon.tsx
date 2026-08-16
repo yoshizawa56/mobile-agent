@@ -1,4 +1,4 @@
-export type AppIconName = "arrow-left" | "close" | "folder" | "layout" | "new-pane" | "refresh" | "settings" | "terminal";
+export type AppIconName = "arrow-left" | "close" | "folder" | "layout" | "new-pane" | "refresh" | "settings" | "split-bottom" | "split-right" | "terminal" | "window";
 
 export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number }) {
   const iconProps = {
@@ -28,7 +28,13 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
       return <svg {...iconProps}><path d="M20 11a8 8 0 0 0-14.7-4L3 9" /><path d="M3 4v5h5M4 13a8 8 0 0 0 14.7 4L21 15" /><path d="M21 20v-5h-5" /></svg>;
     case "settings":
       return <svg {...iconProps}><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="M19.4 15a1.8 1.8 0 0 0 .2 2l.1.1-1.7 1.7-.1-.1a1.8 1.8 0 0 0-2-.2 1.8 1.8 0 0 0-1 1.6v.1h-2.4v-.1a1.8 1.8 0 0 0-1-1.6 1.8 1.8 0 0 0-2 .2l-.1.1-1.7-1.7.1-.1a1.8 1.8 0 0 0 .2-2 1.8 1.8 0 0 0-1.6-1H6.3v-2.4h.1a1.8 1.8 0 0 0 1.6-1 1.8 1.8 0 0 0-.2-2l-.1-.1 1.7-1.7.1.1a1.8 1.8 0 0 0 2 .2 1.8 1.8 0 0 0 1-1.6v-.1h2.4v.1a1.8 1.8 0 0 0 1 1.6 1.8 1.8 0 0 0 2-.2l.1-.1 1.7 1.7-.1.1a1.8 1.8 0 0 0-.2 2 1.8 1.8 0 0 0 1.6 1h.1V13h-.1a1.8 1.8 0 0 0-1.6 2Z" /></svg>;
+    case "split-bottom":
+      return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M3.5 12h17" /></svg>;
+    case "split-right":
+      return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M12 4.5v15" /></svg>;
     case "terminal":
       return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="m7.5 9 3 3-3 3M13.5 15h3" /></svg>;
+    case "window":
+      return <svg {...iconProps}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M3.5 9.5h17M9 6.5h1" /></svg>;
   }
 }

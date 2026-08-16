@@ -258,7 +258,7 @@ const agentTable: ScenarioTable<AgentFixture, AgentFixtureKey, AgentStep, AgentR
   }),
 };
 
-type ExtendedFixtureKey = "managed-session" | "shell-context" | "worktree-shell" | "unmanaged-pane" | "rollback" | "log-level" | "diagnostics";
+type ExtendedFixtureKey = "managed-session" | "shell-context" | "worktree-shell" | "shell-worktree" | "unmanaged-pane" | "rollback" | "log-level" | "diagnostics";
 type ExtendedStep = { [Key in ExtendedFixtureKey]: { type: Key } }[ExtendedFixtureKey];
 type ExtendedResult = { code: number };
 type ExtendedFixture = AgentFixture & {
@@ -272,7 +272,9 @@ type ExtendedContext = {
   output: string;
   log: string;
   workspace: string;
+  worktree: string;
   shellWorktree: string;
+  remainingWorktrees: readonly string[];
   created?: { name: string; cwd: string; command?: string };
   options: readonly { name: string; key: string; value: string }[];
   environments: readonly { name: string; key: string; value: string }[];
@@ -350,6 +352,33 @@ const extendedCases = [
       },
     ],
   },
+  {
+    name: "creates and cleans up a self-contained shell worktree with hooks",
+    fixture: "shell-worktree",
+    steps: [{ type: "shell-worktree" }],
+    assert: [
+      returns<ExtendedContext, ExtendedResult>({ code: 0 }),
+      {
+        name: "runs the setup hook inside the worktree after copying unmanaged files",
+        check: (ctx: ExtendedContext) => expect(ctx.log).toContain(`setup cwd=${join(ctx.worktree, "review")} worktree=${join(ctx.worktree, "review")} workspace=${ctx.workspace}`),
+      },
+      {
+        name: "runs the cleanup hook with the worktree as cwd",
+        check: (ctx: ExtendedContext) => expect(ctx.log).toContain(`cleanup cwd=${join(ctx.worktree, "review")}`),
+      },
+      {
+        name: "starts the interactive shell inside the worktree",
+        check: (ctx: ExtendedContext) => expect(ctx.log).toContain(`shell cwd=${join(ctx.worktree, "review")}`),
+      },
+      {
+        name: "copies unmanaged files and removes the worktree afterwards",
+        check: (ctx: ExtendedContext) => {
+          expect(ctx.log).toContain("setup env=secret-from-workspace nested=local-config");
+          expect(ctx.remainingWorktrees).toEqual([]);
+        },
+      },
+    ],
+  },
   { name: "returns an unmanaged pane to shell metadata after the agent exits", fixture: "unmanaged-pane", steps: [{ type: "unmanaged-pane" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), unmanagedPaneAssertion] },
   { name: "rolls back a partially configured managed tmux session", fixture: "rollback", steps: [{ type: "rollback" }], assert: [hasError<ExtendedContext, ExtendedResult>({ message: /simulated tmux option failure/ }), rollbackAssertion] },
   { name: "keeps daemon log-level configuration out of attached CLI verbosity", fixture: "log-level", steps: [{ type: "log-level" }], assert: [returns<ExtendedContext, ExtendedResult>({ code: 0 }), { name: "does not emit command diagnostics", check: (ctx: ExtendedContext) => expect(ctx.output).not.toContain("command.started") }] },
@@ -395,6 +424,13 @@ const extendedFixtureFactories: Readonly<Record<ExtendedFixtureKey, () => Promis
     fixture.env.AGENTD_SHELL_BIN = shell;
     return toExtendedHandle(fixture);
   },
+  "shell-worktree": async () => {
+    const fixture = createExtendedFixture();
+    const shell = join(fixture.root, "worktree-shell");
+    writeExecutable(shell, "#!/bin/sh\nprintf 'shell cwd=%s\\n' \"$PWD\" >>\"$TEST_AGENT_LOG\"\nexit 0\n");
+    fixture.env = { ...fixture.env, AGENTD_SHELL_BIN: shell };
+    return toExtendedHandle(fixture);
+  },
   "unmanaged-pane": async () => {
     const fixture = createExtendedFixture();
     fixture.env = { ...fixture.env, TMUX_PANE: "%7" };
@@ -437,6 +473,18 @@ const extendedTable: ScenarioTable<ExtendedFixture, ExtendedFixtureKey, Extended
         const shell = join(fixture.root, "worktree-shell");
         return { code: await runExtendedCommand(fixture, ["shell", "--shell", shell, "--", child]) };
       }
+      case "shell-worktree": {
+        const shell = join(fixture.root, "worktree-shell");
+        const registered = await runExtendedCommand(fixture, [
+          "workspace", "add", ".",
+          "--setup-hook", fixture.setupHook,
+          "--cleanup-hook", fixture.cleanupHook,
+          "--copy-pattern", ".env",
+          "--copy-pattern", "config/*.local.json",
+        ]);
+        if (registered !== 0) return { code: registered };
+        return { code: await runExtendedCommand(fixture, ["shell", "--shell", shell, "--worktree", "review"]) };
+      }
       case "unmanaged-pane":
         return { code: await runExtendedCommand(fixture, ["run", "claude", "--no-worktree", "-n", "unmanaged"]) };
       case "rollback":
@@ -453,7 +501,9 @@ const extendedTable: ScenarioTable<ExtendedFixture, ExtendedFixtureKey, Extended
     output: fixture.outputStream.value(),
     log: safeRead(fixture.log),
     workspace: realpathSync(fixture.workspace),
+    worktree: fixture.worktreeRoot,
     shellWorktree: fixture.shellWorktree ?? "",
+    remainingWorktrees: safeExec(["git", "-C", fixture.workspace, "worktree", "list", "--porcelain"]).split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length)).filter((path) => path !== realpathSync(fixture.workspace)),
     created: fixture.tmux.created,
     options: [...fixture.tmux.options],
     environments: [...fixture.tmux.environments],

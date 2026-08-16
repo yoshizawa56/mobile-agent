@@ -169,10 +169,7 @@ async function createPane(
   if (!tmux.hasSession(input.sessionName)) {
     throw new ApplicationError("session_not_found", `tmux session does not exist: ${input.sessionName}`);
   }
-  if (input.kind === "agent" && input.useWorktree && input.placement !== "window") {
-    throw new ApplicationError("worktree_split_unsupported", "Worktree agent panes must open in a new tmux window");
-  }
-  if (input.placement !== "window" && (input.cwd || input.workspaceId)) {
+  if (input.placement !== "window" && (input.cwd || (input.workspaceId && !input.useWorktree))) {
     throw new ApplicationError("split_directory_override_unsupported", "Split panes always inherit the target pane cwd");
   }
   if (input.kind === "agent" && !input.agentId) {
@@ -196,8 +193,10 @@ async function createPane(
       AGENTD_MANAGED_SESSION_NAME: input.sessionName,
       AGENTD_PANE_NAME: paneName,
       ...(input.useWorktree ? { AGENTD_WORKTREE_SESSION_NAME: paneName } : {}),
+      ...(workspace ? { AGENTD_WORKSPACE_ID: workspace.id } : {}),
     },
     input.kind === "agent" ? agentCommand(commandInput, workspace) : undefined,
+    input.kind === "shell" && input.useWorktree ? ["--worktree", paneName] : [],
   );
   const tmuxPaneId = input.placement === "window"
     ? tmux.newWindow(input.sessionName, cwd, command)

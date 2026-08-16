@@ -638,11 +638,13 @@ export function buildAgentShellCommand(
   binary = resolveAgentCommand(),
   environment: Record<string, string> = {},
   command?: string,
+  wrapperArgs: readonly string[] = [],
 ): string {
   const prefix = Object.entries(environment)
     .map(([name, value]) => `${name}=${shellQuote(value)}`)
     .join(" ");
-  const wrapper = `${shellQuote(binary)} shell`;
+  const args = [shellQuote(binary), "shell", ...wrapperArgs.map(shellQuote)];
+  const wrapper = args.join(" ");
   return `${prefix ? `${prefix} ` : ""}${wrapper}${command ? ` -- ${command}` : ""}`;
 }
 

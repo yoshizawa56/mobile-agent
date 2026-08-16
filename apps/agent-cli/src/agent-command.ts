@@ -152,12 +152,32 @@ type ShellOptions = {
   shell?: string;
   command: string[];
   exitAfterCommand: boolean;
+  worktree: boolean;
+  worktreeName: string | null;
 };
 
 type TmuxNewSessionOptions = {
   name: string;
   cwd: string;
   detached: boolean;
+};
+
+/**
+ * Self-contained worktree lifecycle for `agent shell --worktree`. The shell
+ * creates the worktree, runs copy patterns and the setup hook, then removes
+ * the worktree and runs the cleanup hook on exit. No AgentSession record is
+ * persisted; the process owns everything it creates.
+ */
+type WorktreeShellContext = {
+  name: string;
+  workspaceRoot: string;
+  worktreeRoot: string | null;
+  worktreePath: string | null;
+  branch: string | null;
+  baseCommit: string | null;
+  setupHook: string | null;
+  cleanupHook: string | null;
+  worktreeCopyPatterns: readonly string[];
 };
 
 type WorkspaceListOptions = {
@@ -284,7 +304,7 @@ export class AgentCommand {
         }
         case "shell":
           if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: agent shell [--shell PATH] [--exit-after-command] [-- COMMAND...]\n");
+            this.write("Usage: agent shell [--shell PATH] [--worktree [NAME]] [--exit-after-command] [-- COMMAND...]\n");
             status = 0;
             break;
           }
@@ -454,6 +474,8 @@ export class AgentCommand {
   private parseShellOptions(args: string[]): ShellOptions {
     let shell: string | undefined;
     let exitAfterCommand = false;
+    let worktree = false;
+    let worktreeName: string | null = null;
     let command: string[] = [];
 
     for (let index = 0; index < args.length; index += 1) {
@@ -465,11 +487,24 @@ export class AgentCommand {
       if (argument === "--shell") shell = requireOptionValue(argument, args[++index]);
       else if (argument.startsWith("--shell=")) shell = argument.slice("--shell=".length);
       else if (argument === "--exit-after-command") exitAfterCommand = true;
-      else throw new AgentCommandError(`unknown shell option: ${argument}`);
+      else if (argument === "-w" || argument === "--worktree") {
+        worktree = true;
+        const next = args[index + 1];
+        if (next && !next.startsWith("-")) {
+          worktreeName = next;
+          index += 1;
+        }
+      } else if (argument.startsWith("--worktree=")) {
+        worktree = true;
+        worktreeName = argument.slice("--worktree=".length);
+      } else if (argument === "--no-worktree") {
+        worktree = false;
+        worktreeName = null;
+      } else throw new AgentCommandError(`unknown shell option: ${argument}`);
     }
 
     if (exitAfterCommand && command.length === 0) throw new AgentCommandError("--exit-after-command requires a command after --");
-    return { shell, command, exitAfterCommand };
+    return { shell, command, exitAfterCommand, worktree, worktreeName };
   }
 
   private async runShell(options: ShellOptions): Promise<number> {
@@ -483,6 +518,8 @@ export class AgentCommand {
     };
     this.markCurrentPane({ kind: "shell", agentId: null, name: paneName }, shellMetadataEnvironment);
 
+    let worktreeContext: WorktreeShellContext | null = null;
+
     try {
       let shellCwd = this.cwd;
       if (options.command.length > 0) {
@@ -491,12 +528,43 @@ export class AgentCommand {
         shellCwd = await this.resolveWorktreeShellCwd(shellEnvironment);
       }
 
+      if (options.worktree) {
+        this.ensureDatabase();
+        const workspace = await this.resolveWorkspace();
+        if (!workspace.isGit) throw new AgentCommandError("a managed worktree requires a git workspace");
+        const worktreeName = options.worktreeName ?? paneName;
+        const created = this.createWorktree(workspace, worktreeName);
+        const context: WorktreeShellContext = {
+          name: worktreeName,
+          workspaceRoot: workspace.rootPath,
+          worktreeRoot: created.worktreeRoot,
+          worktreePath: created.worktreePath,
+          branch: created.branch,
+          baseCommit: created.baseCommit,
+          setupHook: workspace.setupScriptPath ? this.resolveHookPath(workspace.setupScriptPath, workspace.rootPath) : null,
+          cleanupHook: workspace.cleanupScriptPath ? this.resolveHookPath(workspace.cleanupScriptPath, workspace.rootPath) : null,
+          worktreeCopyPatterns: workspace.worktreeCopyPatterns,
+        };
+        worktreeContext = context;
+        if (!(await this.copyWorktreeFiles(context, context.worktreeCopyPatterns))) {
+          throw new AgentCommandError("worktree file copy failed");
+        }
+        if (!(await this.runShellHook(context, "setup"))) {
+          throw new AgentCommandError("setup hook failed");
+        }
+        shellCwd = context.worktreePath!;
+      }
+
       const shellBinary = resolveExecutable(options.shell ?? this.env.SHELL ?? "sh", this.env);
       const interactiveShellEnvironment: NodeJS.ProcessEnv = { ...shellEnvironment };
       delete interactiveShellEnvironment.AGENTD_WORKTREE_SESSION_NAME;
       return await spawnAttached(shellBinary, ["-i"], shellCwd, interactiveShellEnvironment).then((result) => result.code);
     } finally {
-      this.restoreCurrentPaneMetadata(shellMetadataEnvironment);
+      try {
+        if (worktreeContext) await this.disposeWorktreeShell(worktreeContext);
+      } finally {
+        this.restoreCurrentPaneMetadata(shellMetadataEnvironment);
+      }
     }
   }
 
@@ -1397,6 +1465,20 @@ export class AgentCommand {
   private async resolveWorkspace(): Promise<WorkspaceContext> {
     const startedAt = Date.now();
     this.currentLogger.debug("workspace.resolve_started", { cwd: this.cwd });
+    const selectedWorkspaceId = this.env.AGENTD_WORKSPACE_ID?.trim();
+    if (selectedWorkspaceId) {
+      const selected = await this.workspaces.findById(selectedWorkspaceId);
+      if (selected) {
+        this.currentLogger.debug("workspace.resolve_finished", {
+          workspaceId: selected.id,
+          isGit: selected.isGit,
+          registered: true,
+          selected: true,
+          durationMs: Date.now() - startedAt,
+        });
+        return selected;
+      }
+    }
     const gitRoot = gitWorkspaceRoot(this.cwd);
     const root = gitRoot ?? this.cwd;
     const id = workspaceIdForPath(root);
@@ -1518,25 +1600,21 @@ export class AgentCommand {
     return worktreeId ? `agent/${worktreeId}/${name}` : `agent/${name}`;
   }
 
-  private async copyWorktreeFiles(session: AgentSessionRecord, configuredPatterns: readonly string[]): Promise<boolean> {
-    const logger = this.currentLogger.child({ sessionId: session.id, sessionName: session.name });
-    if (!session.useWorktree || !session.worktreePath || !configuredPatterns.length) {
-      logger.debug("worktree.copy_skipped", {
-        useWorktree: session.useWorktree,
-        configuredPatternCount: configuredPatterns.length,
-      });
+  private async copyWorktreeFiles(
+    target: { workspaceRoot: string; worktreePath: string | null },
+    configuredPatterns: readonly string[],
+  ): Promise<boolean> {
+    if (!target.worktreePath || !configuredPatterns.length) {
       return true;
     }
 
     const patterns = normalizeWorktreeCopyPatterns(configuredPatterns);
-    logger.debug("worktree.copy_started", { patternCount: patterns.length });
     if (patterns.some((pattern) => !isValidWorktreeCopyPattern(pattern))) {
-      logger.debug("worktree.copy_failed", { stage: "validate_patterns" });
       this.warn("workspace contains an invalid worktree copy pattern");
       return false;
     }
 
-    const sourceFiles = listUnmanagedFiles(session.workspaceRoot);
+    const sourceFiles = listUnmanagedFiles(target.workspaceRoot);
     const matchedFiles = new Set<string>();
     for (const pattern of patterns) {
       const matches = sourceFiles.filter((file) => matchesWorktreeCopyPattern(pattern, file));
@@ -1544,92 +1622,173 @@ export class AgentCommand {
       for (const file of matches) matchedFiles.add(file);
     }
 
-    this.currentLogger.child({ sessionId: session.id, sessionName: session.name }).debug("worktree.copy_candidates", {
-      patternCount: patterns.length,
-      sourceFileCount: sourceFiles.length,
-      matchedFileCount: matchedFiles.size,
-    });
-
     for (const relativePath of [...matchedFiles].sort()) {
-      const sourcePath = resolve(session.workspaceRoot, relativePath);
-      const targetPath = resolve(session.worktreePath, relativePath);
-      if (!isPathWithin(session.workspaceRoot, sourcePath) || !isPathWithin(session.worktreePath, targetPath)) {
-        logger.debug("worktree.copy_failed", { stage: "validate_target", relativePath });
+      const sourcePath = resolve(target.workspaceRoot, relativePath);
+      const targetPath = resolve(target.worktreePath, relativePath);
+      if (!isPathWithin(target.workspaceRoot, sourcePath) || !isPathWithin(target.worktreePath, targetPath)) {
         this.warn(`refusing to copy a path outside the worktree: ${relativePath}`);
         return false;
       }
       try {
         const sourceStat = lstatSync(sourcePath);
         if (!sourceStat.isFile()) {
-          logger.debug("worktree.copy_failed", { stage: "validate_source", relativePath });
           this.warn(`refusing to copy a non-regular file: ${relativePath}`);
           return false;
         }
-        if (!isPathWithin(session.workspaceRoot, realpathSafe(sourcePath))) {
-          logger.debug("worktree.copy_failed", { stage: "validate_source_path", relativePath });
+        if (!isPathWithin(target.workspaceRoot, realpathSafe(sourcePath))) {
           this.warn(`refusing to copy a source path outside the workspace: ${relativePath}`);
           return false;
         }
         mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
-        if (!isPathWithin(session.worktreePath, realpathSafe(dirname(targetPath)))) {
-          logger.debug("worktree.copy_failed", { stage: "validate_target_directory", relativePath });
+        if (!isPathWithin(target.worktreePath, realpathSafe(dirname(targetPath)))) {
           this.warn(`refusing to copy through a worktree symlink: ${relativePath}`);
           return false;
         }
         copyFileSync(sourcePath, targetPath);
         chmodSync(targetPath, sourceStat.mode & 0o777);
-        logger.debug("worktree.file_copied", { relativePath });
-        this.info(`copied unmanaged file '${relativePath}' into worktree`);
       } catch (error) {
-        logger.debug("worktree.copy_failed", { stage: "copy_file", relativePath, ...errorFields(error) });
         this.warn(`could not copy unmanaged file '${relativePath}': ${error instanceof Error ? error.message : String(error)}`);
         return false;
       }
     }
-    logger.debug("worktree.copy_finished", { matchedFileCount: matchedFiles.size });
     return true;
   }
 
   private async runHook(session: AgentSessionRecord, kind: "setup" | "cleanup"): Promise<boolean> {
     const hook = kind === "setup" ? session.setupHook : session.cleanupHook;
     if (!hook) return true;
-    const runDir = session.worktreePath ?? session.workspaceRoot;
+    const success = await this.runHookCore({
+      hook,
+      kind,
+      runDir: session.worktreePath ?? session.workspaceRoot,
+      name: session.name,
+      backend: session.backend,
+      workspaceRoot: session.workspaceRoot,
+      worktreePath: session.worktreePath ?? "",
+      backendSessionId: session.backendSessionId ?? "",
+      stateId: session.id,
+      resuming: session.resuming,
+      setupOutputFile: session.setupOutputFile ?? "",
+    });
+    const finalOutput = this.hookOutputFile(session.id, kind);
+    const next = updateSession(session, kind === "setup" ? { setupOutputFile: finalOutput } : { cleanupOutputFile: finalOutput });
+    Object.assign(session, next);
+    await this.sessions.update(next);
+    return success;
+  }
+
+  private async runShellHook(ctx: WorktreeShellContext, kind: "setup" | "cleanup"): Promise<boolean> {
+    const hook = kind === "setup" ? ctx.setupHook : ctx.cleanupHook;
+    if (!hook || !ctx.worktreePath) return true;
+    return this.runHookCore({
+      hook,
+      kind,
+      runDir: ctx.worktreePath,
+      name: ctx.name,
+      backend: "shell",
+      workspaceRoot: ctx.workspaceRoot,
+      worktreePath: ctx.worktreePath,
+      backendSessionId: "",
+      stateId: `shell-${ctx.name}`,
+      resuming: false,
+      setupOutputFile: "",
+    });
+  }
+
+  /**
+   * Remove the worktree owned by a `agent shell --worktree` pane after the
+   * shell exits. Runs the cleanup hook first, then removes the git worktree.
+   * A dirty worktree is kept and reported so uncommitted shell work is never
+   * silently destroyed.
+   */
+  private async disposeWorktreeShell(ctx: WorktreeShellContext): Promise<void> {
+    const logger = this.currentLogger.child({ sessionName: ctx.name, hook: "cleanup" });
+    const startedAt = Date.now();
+    if (await this.runShellHook(ctx, "cleanup")) {
+      logger.debug("hook.cleanup_finished", { durationMs: Date.now() - startedAt });
+    }
+    if (!ctx.worktreePath || !existsSync(ctx.worktreePath)) return;
+    if (!this.worktreeIsRegisteredAt(ctx.workspaceRoot, ctx.worktreePath)) {
+      this.warn(`managed path is not registered as a git worktree; refusing to delete it: ${ctx.worktreePath}`);
+      return;
+    }
+    const dirty = this.gitStatus(ctx.worktreePath) !== "";
+    if (dirty) {
+      this.warn(`shell worktree has uncommitted changes; keeping it: ${ctx.worktreePath} (branch ${ctx.branch ?? "unknown"})`);
+      return;
+    }
+    try {
+      gitRequired(ctx.workspaceRoot, ["worktree", "remove", "--", ctx.worktreePath], "git worktree removal failed");
+    } catch (error) {
+      this.warn(`git worktree removal failed; keeping worktree at '${ctx.worktreePath}'`);
+      return;
+    }
+    try {
+      if (ctx.worktreeRoot) unlinkEmptyDirectory(ctx.worktreeRoot);
+    } catch {
+      // A root containing another managed worktree is expected to remain.
+    }
+    if (ctx.branch) {
+      const head = gitOutputOrEmpty(ctx.workspaceRoot, ["rev-parse", "--verify", ctx.branch]);
+      if (head && head === ctx.baseCommit) gitStatusCode(ctx.workspaceRoot, ["branch", "-d", ctx.branch]);
+      else if (head) this.info(`keeping committed shell branch '${ctx.branch}'`);
+    }
+  }
+
+  private worktreeIsRegisteredAt(workspaceRoot: string, worktreePath: string): boolean {
+    return gitOutputOrEmpty(workspaceRoot, ["worktree", "list", "--porcelain"]).split("\n").some((line) => line === `worktree ${worktreePath}`);
+  }
+
+  private async runHookCore(input: {
+    hook: string;
+    kind: "setup" | "cleanup";
+    runDir: string;
+    name: string;
+    backend: string;
+    workspaceRoot: string;
+    worktreePath: string;
+    backendSessionId: string;
+    stateId: string;
+    resuming: boolean;
+    setupOutputFile: string;
+  }): Promise<boolean> {
+    const { hook, kind, runDir } = input;
     if (!existsSync(runDir)) {
       this.warn(`cannot run ${kind} hook; directory does not exist: ${runDir}`);
       return false;
     }
-    const outputFile = `${this.outputFileFor(session, kind)}.${randomUUID()}`;
+    const outputFile = `${this.hookOutputFile(input.stateId, kind)}.${randomUUID()}`;
     const logger = this.currentLogger.child({
-      sessionId: session.id,
-      sessionName: session.name,
+      sessionId: input.stateId,
+      sessionName: input.name,
       hook: kind,
     });
     const startedAt = Date.now();
     logger.debug("hook.started", { script: basename(hook), cwd: runDir });
     this.info(`running workspace hook '${hook}' (${kind})`);
     const args = [
-      "--name", session.name,
-      "--backend", session.backend,
-      "--workspace", session.workspaceRoot,
-      "--worktree", session.worktreePath ?? "",
-      "--session-id", session.backendSessionId ?? "",
-      "--state-id", session.id,
-      "--resuming", session.resuming ? "1" : "0",
+      "--name", input.name,
+      "--backend", input.backend,
+      "--workspace", input.workspaceRoot,
+      "--worktree", input.worktreePath,
+      "--session-id", input.backendSessionId,
+      "--state-id", input.stateId,
+      "--resuming", input.resuming ? "1" : "0",
     ];
-    if (kind === "cleanup" && session.setupOutputFile) args.push("--setup-output-file", session.setupOutputFile);
+    if (kind === "cleanup" && input.setupOutputFile) args.push("--setup-output-file", input.setupOutputFile);
     const child = spawn(hook, args, {
       cwd: runDir,
       env: {
         ...this.env,
-        AGENT_NAME: session.name,
-        AGENT_BACKEND: session.backend,
-        AGENT_WORKSPACE: session.workspaceRoot,
-        AGENT_WORKTREE: session.worktreePath ?? "",
-        AGENT_SESSION_ID: session.backendSessionId ?? "",
-        AGENT_STATE_ID: session.id,
+        AGENT_NAME: input.name,
+        AGENT_BACKEND: input.backend,
+        AGENT_WORKSPACE: input.workspaceRoot,
+        AGENT_WORKTREE: input.worktreePath,
+        AGENT_SESSION_ID: input.backendSessionId,
+        AGENT_STATE_ID: input.stateId,
         AGENT_HOOK_KIND: kind,
         AGENT_HOOK_SCRIPT: hook,
-        AGENT_SETUP_OUTPUT_FILE: session.setupOutputFile ?? "",
+        AGENT_SETUP_OUTPUT_FILE: input.setupOutputFile,
       },
       stdio: ["ignore", "pipe", "inherit"],
     });
@@ -1651,11 +1810,8 @@ export class AgentCommand {
       output.once("error", reject);
       output.end();
     });
-    const finalOutput = this.outputFileFor(session, kind);
+    const finalOutput = this.hookOutputFile(input.stateId, kind);
     renameSync(outputFile, finalOutput);
-    const next = updateSession(session, kind === "setup" ? { setupOutputFile: finalOutput } : { cleanupOutputFile: finalOutput });
-    Object.assign(session, next);
-    await this.sessions.update(next);
     logger.debug("hook.finished", {
       pid: child.pid,
       exitCode,
@@ -1666,10 +1822,14 @@ export class AgentCommand {
     return exitCode === 0;
   }
 
-  private outputFileFor(session: AgentSessionRecord, kind: "setup" | "cleanup"): string {
-    const dir = join(this.hookOutputRoot, session.id);
+  private hookOutputFile(stateId: string, kind: "setup" | "cleanup"): string {
+    const dir = join(this.hookOutputRoot, stateId);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     return join(dir, `${kind}.log`);
+  }
+
+  private outputFileFor(session: AgentSessionRecord, kind: "setup" | "cleanup"): string {
+    return this.hookOutputFile(session.id, kind);
   }
 
   private async runBackend(

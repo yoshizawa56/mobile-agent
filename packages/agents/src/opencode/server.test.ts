@@ -28,6 +28,7 @@ type Harness = {
   nextPid: number;
   ports: number[];
   healthyPorts: Set<number>;
+  availablePorts: Set<number>;
   spawnRecords: SpawnRecord[];
   alivePids: Set<number>;
   killed: { pid: number; signal: string }[];
@@ -39,11 +40,12 @@ type ServerInput = {
   seededEntry?: { root?: string; pid: number; port: number };
   seededAlive?: boolean;
   seededHealthy?: boolean;
+  seededPortAvailable?: boolean;
   healthOnSpawn?: boolean;
   portSequence?: number[];
   startupTimeoutMs?: number;
   healthPollIntervalMs?: number;
-  operation: "ensure" | "dispose" | "dispose-missing";
+  operation: "ensure" | "dispose" | "dispose-missing" | "refresh-all";
   staleLock?: boolean;
   unownedKillThrows?: boolean;
   childrenDieImmediately?: boolean;
@@ -51,6 +53,7 @@ type ServerInput = {
 
 type ServerResult = {
   entry: { workspaceRoot: string; pid: number; port: number; version: string } | undefined;
+  entries?: { workspaceRoot: string; pid: number; port: number; version: string }[];
   spawned: readonly SpawnRecord[];
   killed: readonly { pid: number; signal: string }[];
   registry: Record<string, unknown>;
@@ -63,6 +66,7 @@ function createHarness(): Harness {
     nextPid: 1_000,
     ports: [],
     healthyPorts: new Set(),
+    availablePorts: new Set(),
     spawnRecords: [],
     alivePids: new Set(),
     killed: [],
@@ -83,6 +87,7 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
       harness.ports.push(port);
       return port;
     },
+    probePort: async (port) => harness.availablePorts.has(port),
     request: async (url) => {
       const port = Number.parseInt(String(url).match(/127\.0\.0\.1:(\d+)/)?.[1] ?? "0", 10);
       if (!harness.healthyPorts.has(port)) return new Response("unhealthy", { status: 503 });
@@ -158,7 +163,7 @@ const cases = [
     })],
   },
   {
-    name: "restarts with a new port when the registered process is gone",
+    name: "restarts on the registered port when the registered process is gone",
     input: {
       operation: "ensure" as const,
       seededEntry: { root: "/ws", pid: 42, port: 7_000 },
@@ -166,15 +171,15 @@ const cases = [
       seededHealthy: false,
     },
     assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
+      entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
+      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
       killed: [],
-      registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
+      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
       failure: "none",
     })],
   },
   {
-    name: "restarts with a new port when the registered server is unhealthy",
+    name: "restarts on the registered port when the registered server is unhealthy",
     input: {
       operation: "ensure" as const,
       seededEntry: { root: "/ws", pid: 42, port: 7_000 },
@@ -182,9 +187,26 @@ const cases = [
       seededHealthy: false,
     },
     assert: [returns<EmptyContext, ServerResult>({
+      entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
+      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
+      killed: [{ pid: 42, signal: "SIGTERM" }],
+      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+      failure: "none",
+    })],
+  },
+  {
+    name: "falls back to a fresh port when the registered port is occupied",
+    input: {
+      operation: "ensure" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: false,
+      seededHealthy: false,
+      seededPortAvailable: false,
+    },
+    assert: [returns<EmptyContext, ServerResult>({
       entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
       spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [{ pid: 42, signal: "SIGTERM" }],
+      killed: [],
       registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
       failure: "none",
     })],
@@ -273,6 +295,60 @@ const cases = [
       failure: "none",
     })],
   },
+  {
+    name: "refreshAll restarts every owned server on its registered port",
+    input: {
+      operation: "refresh-all" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: true,
+    },
+    assert: [returns<EmptyContext, ServerResult>({
+      entry: undefined,
+      entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
+      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
+      killed: [{ pid: 42, signal: "SIGTERM" }],
+      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+      failure: "none",
+    })],
+  },
+  {
+    name: "refreshAll respawns a server whose process is already gone",
+    input: {
+      operation: "refresh-all" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: false,
+      seededHealthy: false,
+    },
+    assert: [returns<EmptyContext, ServerResult>({
+      entry: undefined,
+      entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
+      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
+      killed: [],
+      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+      failure: "none",
+    })],
+  },
+  {
+    name: "refreshAll drops a root whose replacement server never becomes healthy",
+    input: {
+      operation: "refresh-all" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: false,
+      healthOnSpawn: false,
+      startupTimeoutMs: 60,
+      healthPollIntervalMs: 10,
+    },
+    assert: [returns<EmptyContext, ServerResult>({
+      entry: undefined,
+      entries: [],
+      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
+      killed: [{ pid: 42, signal: "SIGTERM" }],
+      registry: {},
+      failure: "none",
+    })],
+  },
 ] satisfies readonly OperationCase<"default", ServerInput, ServerResult, EmptyContext>[];
 
 const table: OperationTable<undefined, "default", ServerInput, ServerResult, EmptyContext> = {
@@ -294,6 +370,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         }));
         if (input.seededAlive) harness.alivePids.add(input.seededEntry.pid);
         if (input.seededHealthy) harness.healthyPorts.add(input.seededEntry.port);
+        if (input.seededPortAvailable !== false) harness.availablePorts.add(input.seededEntry.port);
       }
       if (input.healthOnSpawn === false) harness.healthyPorts.clear();
       harness.childrenDieImmediately = input.childrenDieImmediately ?? false;
@@ -309,6 +386,8 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         } else if (input.operation === "dispose-missing") {
           const disposed = await manager.dispose("/ws");
           if (disposed) throw new Error("dispose returned true");
+        } else if (input.operation === "refresh-all") {
+          await manager.refreshAll();
         } else {
           entry = await manager.ensure("/ws");
         }
@@ -319,13 +398,23 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       const registry = existsSync(harness.registryFile)
         ? JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>
         : {};
-      return {
+      const normalizedRegistry = normalizeRegistry(registry);
+      const result: ServerResult = {
         entry: entry ? { workspaceRoot: entry.workspaceRoot, pid: entry.pid, port: entry.port, version: entry.version } : undefined,
         spawned: harness.spawnRecords,
         killed: harness.killed,
-        registry: normalizeRegistry(registry),
+        registry: normalizedRegistry,
         failure,
       };
+      if (input.operation === "refresh-all") {
+        result.entries = Object.entries(normalizedRegistry).map(([root, value]) => ({
+          workspaceRoot: root,
+          pid: (value as { pid: number }).pid,
+          port: (value as { port: number }).port,
+          version: (value as { version: string }).version,
+        }));
+      }
+      return result;
     } finally {
       rmSync(dirname(harness.registryFile), { recursive: true, force: true });
     }

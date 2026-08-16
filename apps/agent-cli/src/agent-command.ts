@@ -2565,7 +2565,8 @@ export class AgentCommand {
   agent doctor [--verbose]
   agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]
   agent daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
-  agent daemon <status|stop|restart|ensure> [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
+  agent daemon restart [--refresh-servers] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
+  agent daemon <status|stop|ensure> [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]
   agent serve tailscale [--port PORT] [--agentd-port PORT] [--log-level LEVEL] [--log-file PATH]
   agent dev [serve tailscale]
 
@@ -2574,7 +2575,7 @@ Global options:
 
 Lifecycle behavior:
   agent daemon start backgrounds agentd by default; use --foreground for a service manager.
-  agent daemon restart restarts agentd in the background.
+  agent daemon restart restarts agentd in the background, keeping running OpenCode servers; use --refresh-servers to restart them on the same ports so configuration changes are picked up.
   agent serve tailscale starts agentd automatically when needed, then configures Tailscale Serve in the background.
 
 Run options:

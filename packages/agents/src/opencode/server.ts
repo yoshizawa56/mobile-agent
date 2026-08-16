@@ -42,6 +42,7 @@ export type OpenCodeServerManagerOptions = {
   spawn?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; logFile: string }) => SpawnedChild;
   request?: OpenCodeRequest;
   allocatePort?: () => Promise<number>;
+  probePort?: (port: number) => Promise<boolean>;
   healthPollIntervalMs?: number;
   startupTimeoutMs?: number;
   logFileDirectory?: string;
@@ -64,6 +65,7 @@ export class OpenCodeServerManager {
   private readonly spawn: OpenCodeServerManagerOptions["spawn"];
   private readonly request: OpenCodeRequest;
   private readonly allocatePort: () => Promise<number>;
+  private readonly probePort: (port: number) => Promise<boolean>;
   private readonly healthPollIntervalMs: number;
   private readonly startupTimeoutMs: number;
   private readonly logFileDirectory: string;
@@ -76,6 +78,7 @@ export class OpenCodeServerManager {
     this.spawn = options.spawn ?? ((command, args, spawnOptions) => spawnServe(command, args, spawnOptions));
     this.request = options.request ?? ((url, init) => fetch(url, init));
     this.allocatePort = options.allocatePort ?? allocateLoopbackPort;
+    this.probePort = options.probePort ?? probeLoopbackPort;
     this.healthPollIntervalMs = options.healthPollIntervalMs ?? openCodeServerHealthPollMs;
     this.startupTimeoutMs = options.startupTimeoutMs ?? openCodeServerDefaultTimeoutMs;
     this.logFileDirectory = options.logFileDirectory ?? dirnameOf(options.registryFile);
@@ -85,7 +88,9 @@ export class OpenCodeServerManager {
 
   /**
    * Return the owned server for a project root, starting or restarting it as
-   * needed. Never stops a server whose pid is not owned by this registry.
+   * needed. A replacement server prefers the port previously recorded for the
+   * root so clients holding the server URL keep working. Never stops a server
+   * whose pid is not owned by this registry.
    */
   public async ensure(workspaceRoot: string): Promise<OpenCodeServerEntry> {
     return this.withFileLock(async () => {
@@ -99,7 +104,7 @@ export class OpenCodeServerManager {
         delete registry[workspaceRoot];
       }
 
-      const port = await this.allocatePort();
+      const port = existing ? await this.allocatePreferredPort(existing.port) : await this.allocatePort();
       const child = this.spawnServer(workspaceRoot, port);
       let health: { healthy: boolean; version: string } | undefined;
       try {
@@ -118,6 +123,24 @@ export class OpenCodeServerManager {
       registry[workspaceRoot] = entry;
       this.writeRegistry(registry);
       return entry;
+    });
+  }
+
+  /**
+   * Restart every owned server on the port it already uses, so configuration
+   * and environment changes made outside Mobile Agent are picked up while the
+   * server URLs stay stable. A root whose server cannot be restarted is dropped
+   * from the registry.
+   */
+  public async refreshAll(): Promise<void> {
+    await this.withFileLock(async () => {
+      const registry = this.readRegistry();
+      for (const [workspaceRoot, entry] of Object.entries(registry)) {
+        const refreshed = await this.restartOnPort(workspaceRoot, entry);
+        if (refreshed) registry[workspaceRoot] = refreshed;
+        else delete registry[workspaceRoot];
+      }
+      this.writeRegistry(registry);
     });
   }
 
@@ -239,24 +262,68 @@ export class OpenCodeServerManager {
 
   private disposeEntry(entry: OpenCodeServerEntry): void {
     this.onLog?.("debug", "opencode.server_disposing", { pid: entry.pid, port: entry.port });
-    if (!this.signaller.isAlive(entry.pid)) return;
+    void this.signalAndWaitExit(entry.pid);
+  }
+
+  /**
+   * Stop one registered server and start a replacement on the same port. Waits
+   * for the old process to release the port; falls back to a fresh port when
+   * the recorded one is taken by another process. Returns undefined when the
+   * replacement never becomes healthy.
+   */
+  private async restartOnPort(workspaceRoot: string, entry: OpenCodeServerEntry): Promise<OpenCodeServerEntry | undefined> {
+    this.onLog?.("debug", "opencode.server_refreshing", { workspaceRoot, pid: entry.pid, port: entry.port });
+    await this.signalAndWaitExit(entry.pid);
+    const port = await this.allocatePreferredPort(entry.port);
+    const child = this.spawnServer(workspaceRoot, port);
     try {
-      this.signaller.kill(entry.pid, "SIGTERM");
+      const health = await this.waitForHealth(port, child.pid);
+      return {
+        workspaceRoot,
+        pid: child.pid,
+        port,
+        version: health.version,
+        startedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.disposeChild(child);
+      this.onLog?.("warn", "opencode.server_refresh_failed", {
+        workspaceRoot,
+        port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private async signalAndWaitExit(pid: number): Promise<void> {
+    if (!this.isAlive(pid)) return;
+    try {
+      this.signaller.kill(pid, "SIGTERM");
     } catch (error) {
       // EPERM means the process belongs to another user; never force-stop a
       // server Mobile Agent does not own.
-      this.onLog?.("warn", "opencode.server_not_owned", { pid: entry.pid });
+      this.onLog?.("warn", "opencode.server_not_owned", { pid });
       return;
     }
     setTimeout(() => {
-      if (this.signaller.isAlive(entry.pid)) {
+      if (this.isAlive(pid)) {
         try {
-          this.signaller.kill(entry.pid, "SIGKILL");
+          this.signaller.kill(pid, "SIGKILL");
         } catch {
           // The process exited during the grace period.
         }
       }
     }, 2_000).unref?.();
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline && this.isAlive(pid)) {
+      await sleep(50);
+    }
+  }
+
+  private async allocatePreferredPort(preferred: number): Promise<number> {
+    if (await this.probePort(preferred)) return preferred;
+    return this.allocatePort();
   }
 
   private disposeChild(child: SpawnedChild): void {
@@ -387,6 +454,17 @@ function allocateLoopbackPort(): Promise<number> {
         resolvePromise(port);
       });
     });
+  });
+}
+
+function probeLoopbackPort(port: number): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const server: Server = createNetServer();
+    server.once("error", () => resolvePromise(false));
+    server.once("listening", () => {
+      server.close(() => resolvePromise(true));
+    });
+    server.listen(port, "127.0.0.1");
   });
 }
 

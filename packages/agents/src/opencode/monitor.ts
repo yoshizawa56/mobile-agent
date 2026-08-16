@@ -68,6 +68,7 @@ export class OpenCodeMonitor implements AgentMonitor {
   private lastState: MonitorState | undefined;
   private aborted = false;
   private reconnectAttempt = 0;
+  private abortController: AbortController | undefined;
 
   public constructor(private readonly options: OpenCodeMonitorOptions) {
     this.reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
@@ -115,18 +116,29 @@ export class OpenCodeMonitor implements AgentMonitor {
     this.stopped = false;
     this.aborted = false;
     this.reconnectAttempt = 0;
-    void this.runStream();
+    // A stream from a previous start must not outlive a restart. Aborting
+    // also releases the HTTP socket so the process can exit when stopped.
+    this.abortController?.abort();
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+    void this.runStream(signal);
   }
 
   public async stop(): Promise<void> {
     this.stopped = true;
+    // Abort the in-flight SSE request. Without this the open socket keeps the
+    // owning process alive after the primary backend exits, and the process
+    // hangs whenever the OpenCode server is intentionally retained (for
+    // example when session cleanup is declined).
+    this.abortController?.abort();
+    this.abortController = undefined;
   }
 
-  private async runStream(): Promise<void> {
+  private async runStream(signal: AbortSignal | undefined): Promise<void> {
     while (!this.stopped) {
       let stream: AsyncGenerator<OpenCodeEvent>;
       try {
-        stream = this.options.client.events();
+        stream = this.options.client.events(signal);
         this.stream = stream;
       } catch (error) {
         this.options.onLog?.("warn", "opencode.stream_open_failed", { error: messageOf(error) });

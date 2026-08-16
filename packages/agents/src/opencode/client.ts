@@ -163,10 +163,12 @@ export class OpenCodeClient {
    * Open the `/global/event` SSE stream. Events are normalized into
    * `OpenCodeEvent`; malformed chunks are skipped. The generator ends by
    * throwing `OpenCodeStreamClosedError` so callers can reconnect.
+   * Pass a signal to abort the connection so the socket is released.
    */
-  public async *events(): AsyncGenerator<OpenCodeEvent> {
+  public async *events(signal?: AbortSignal): AsyncGenerator<OpenCodeEvent> {
     const response = await this.request(`${this.baseUrl}/global/event`, {
       headers: { Accept: "text/event-stream" },
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
       throw new OpenCodeStreamClosedError(`OpenCode event stream returned ${response.status}`);

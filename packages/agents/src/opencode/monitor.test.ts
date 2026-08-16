@@ -1,5 +1,6 @@
 import { describe, it } from "vitest";
 import {
+  hasObserved,
   noFixture,
   returns,
   runOperationTable,
@@ -37,11 +38,18 @@ type FakeState = {
   started: boolean;
   drainedIndex: number;
   aborted: boolean;
+  streamSignals: number;
+  streamAborted: boolean;
   permissionCalls: { sessionId: string; permissionId: string; response: "allow" | "deny"; remember: boolean }[];
   abortCalls: number;
 };
 
 type EmptyContext = {};
+
+type MonitorContext = {
+  streamSignals: number;
+  streamAborted: boolean;
+};
 
 type MonitorResult = {
   states: readonly string[];
@@ -232,25 +240,25 @@ const cases = [
     },
     assert: [returns<EmptyContext, MonitorResult>({ states: ["running", "waiting_input"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
   },
-] satisfies readonly OperationCase<"default", MonitorInput, MonitorResult, EmptyContext>[];
+  {
+    name: "stop aborts the open event stream so the process is not held alive",
+    input: {
+      endAfterDrain: false,
+      queue: [],
+    },
+    assert: [hasObserved<MonitorContext, MonitorResult>("streamAborted", true)],
+  },
+] satisfies readonly OperationCase<"default", MonitorInput, MonitorResult, MonitorContext>[];
 
-const table: OperationTable<undefined, "default", MonitorInput, MonitorResult, EmptyContext> = {
-  defaultFixture: noFixture(),
+const table: OperationTable<FakeState, "default", MonitorInput, MonitorResult, MonitorContext> = {
+  defaultFixture: () => ({ fixture: createFakeState() }),
   cases,
-  execute: async (_fixture, input) => {
-    const state: FakeState = {
-      queue: [...input.queue],
-      streamFailures: input.streamFailures ?? 0,
-      sessionExists: input.sessionExists ?? true,
-      sessionStatus: input.sessionStatus,
-      endAfterDrain: input.endAfterDrain ?? true,
-      generatorEnded: false,
-      started: false,
-      drainedIndex: 0,
-      aborted: false,
-      permissionCalls: [],
-      abortCalls: 0,
-    };
+  execute: async (state, input) => {
+    state.queue = [...input.queue];
+    state.streamFailures = input.streamFailures ?? 0;
+    state.sessionExists = input.sessionExists ?? true;
+    state.sessionStatus = input.sessionStatus;
+    state.endAfterDrain = input.endAfterDrain ?? true;
     const monitor = new OpenCodeMonitor({
       baseUrl: "http://127.0.0.1:4096",
       sessionId: input.sessionId ?? primarySessionId,
@@ -277,17 +285,44 @@ const table: OperationTable<undefined, "default", MonitorInput, MonitorResult, E
       abortCalls: state.abortCalls,
     };
   },
-  observe: () => ({}),
+  observe: (state, _result) => ({
+    streamSignals: state.streamSignals,
+    streamAborted: state.streamAborted,
+  }),
 };
 
 describe("opencode monitor", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
+function createFakeState(): FakeState {
+  return {
+    queue: [],
+    streamFailures: 0,
+    sessionExists: true,
+    sessionStatus: undefined,
+    endAfterDrain: true,
+    generatorEnded: false,
+    started: false,
+    drainedIndex: 0,
+    aborted: false,
+    streamSignals: 0,
+    streamAborted: false,
+    permissionCalls: [],
+    abortCalls: 0,
+  };
+}
+
 function createFakeClient(state: FakeState): OpenCodeMonitorClient {
   return {
-    async *events() {
+    async *events(signal?: AbortSignal) {
       state.started = true;
+      if (signal) {
+        state.streamSignals += 1;
+        signal.addEventListener("abort", () => {
+          state.streamAborted = true;
+        });
+      }
       if (state.streamFailures > 0) {
         state.streamFailures -= 1;
         throw new OpenCodeStreamClosedError("test stream failure");

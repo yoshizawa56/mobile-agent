@@ -1,4 +1,4 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   noFixture,
   returns,
@@ -37,6 +37,8 @@ type FakeState = {
   started: boolean;
   drainedIndex: number;
   aborted: boolean;
+  streamSignals: number;
+  streamAborted: boolean;
   permissionCalls: { sessionId: string; permissionId: string; response: "allow" | "deny"; remember: boolean }[];
   abortCalls: number;
 };
@@ -248,6 +250,8 @@ const table: OperationTable<undefined, "default", MonitorInput, MonitorResult, E
       started: false,
       drainedIndex: 0,
       aborted: false,
+      streamSignals: 0,
+      streamAborted: false,
       permissionCalls: [],
       abortCalls: 0,
     };
@@ -282,12 +286,48 @@ const table: OperationTable<undefined, "default", MonitorInput, MonitorResult, E
 
 describe("opencode monitor", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+
+  it("stop aborts the open event stream so the process is not held alive", async () => {
+    const state: FakeState = {
+      queue: [],
+      streamFailures: 0,
+      sessionExists: true,
+      sessionStatus: undefined,
+      endAfterDrain: false,
+      generatorEnded: false,
+      started: false,
+      drainedIndex: 0,
+      aborted: false,
+      streamSignals: 0,
+      streamAborted: false,
+      permissionCalls: [],
+      abortCalls: 0,
+    };
+    const monitor = new OpenCodeMonitor({
+      baseUrl: "http://127.0.0.1:4096",
+      sessionId: primarySessionId,
+      workspaceRoot: "/workspace",
+      client: createFakeClient(state),
+      reconnectDelayMs: () => 1,
+    });
+    await monitor.start(() => undefined);
+    await sleep(10);
+    expect(state.streamSignals).toBeGreaterThan(0);
+    await monitor.stop();
+    expect(state.streamAborted).toBe(true);
+  });
 });
 
 function createFakeClient(state: FakeState): OpenCodeMonitorClient {
   return {
-    async *events() {
+    async *events(signal?: AbortSignal) {
       state.started = true;
+      if (signal) {
+        state.streamSignals += 1;
+        signal.addEventListener("abort", () => {
+          state.streamAborted = true;
+        });
+      }
       if (state.streamFailures > 0) {
         state.streamFailures -= 1;
         throw new OpenCodeStreamClosedError("test stream failure");

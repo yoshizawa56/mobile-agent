@@ -122,7 +122,7 @@ export type WorkspaceSelectionMode = (typeof workspaceSelectionModes)[number];
 
 /**
  * The host-side directory choices exposed to the mobile client. The path is
- * resolved by agentd from an allowed-root policy; clients send the stable id
+ * resolved by muximod from an allowed-root policy; clients send the stable id
  * back instead of choosing an arbitrary cwd.
  */
 export type WorkspaceDirectoryOption = Pick<WorkspaceRecord, "id" | "name" | "rootPath" | "isGit" | "setupScriptPath" | "cleanupScriptPath" | "worktreeCopyPatterns">;

@@ -1,7 +1,7 @@
-import type { MobileAgentAppInfo } from "../../platform/mobile-bridge";
+import type { MuximoAppInfo } from "../../platform/muximo-bridge";
 
 export type ConnectionSettingsViewModel = {
-  appInfo: MobileAgentAppInfo;
+  appInfo: MuximoAppInfo;
   hasSavedProfile: boolean;
   isScanningQr: boolean;
   isPairingQr: boolean;

@@ -6,14 +6,14 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
         {viewModel.hasSavedProfile ? <button className="inline-flex items-center gap-[7px] font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime" type="button" onClick={viewModel.onBack}>‹ <span>connections</span></button> : <span className="font-mono text-[0.64rem] text-[#76ad7e]">connection setup</span>}
-        <span className="inline-flex items-center gap-2 font-mono text-[0.55rem] tracking-[0.11em] text-[#78ae80]"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> AGENTD CONNECTION</span>
+        <span className="inline-flex items-center gap-2 font-mono text-[0.55rem] tracking-[0.11em] text-[#78ae80]"><span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> MUXIMOD CONNECTION</span>
       </header>
 
       <section className="mx-auto w-full max-w-[570px] flex-1 px-6 py-[58px] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(30px+var(--safe-area-bottom))] max-[620px]:pt-[38px]">
         <div className="mb-[34px] max-[620px]:mb-[27px]">
-          <span className="flex items-center gap-2 font-mono text-[0.58rem] font-bold tracking-[0.14em] text-lime-deep"><span className="h-px w-[19px] bg-lime-deep shadow-[0_0_9px_rgb(57_214_91_/_60%)]" /> PAIR WITH AGENTD</span>
+          <span className="flex items-center gap-2 font-mono text-[0.58rem] font-bold tracking-[0.14em] text-lime-deep"><span className="h-px w-[19px] bg-lime-deep shadow-[0_0_9px_rgb(57_214_91_/_60%)]" /> PAIR WITH MUXIMOD</span>
           <h1 className="my-[14px] mb-[10px] text-[clamp(1.65rem,5vw,2.15rem)] font-bold leading-[1.05] tracking-[-0.06em] text-[#dbffdf] max-[620px]:mt-3 max-[620px]:text-[1.62rem]">Scan the pairing QR</h1>
-          <p className="m-0 max-w-[430px] text-[0.79rem] leading-[1.55] text-[#719176] max-[620px]:text-[0.88rem]">Run agent pair on the host, then scan the QR code shown in the terminal.</p>
+          <p className="m-0 max-w-[430px] text-[0.79rem] leading-[1.55] text-[#719176] max-[620px]:text-[0.88rem]">Run muximo pair on the host, then scan the QR code shown in the terminal.</p>
         </div>
 
         {viewModel.errorMessage && !viewModel.isPairingQr ? <p className="mb-4 rounded-xl border border-red/38 bg-red/30 p-[0.85rem_1rem] text-[#ffb0aa]" role="alert">{viewModel.errorMessage}</p> : null}

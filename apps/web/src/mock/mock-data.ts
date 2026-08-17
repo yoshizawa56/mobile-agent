@@ -1,16 +1,16 @@
-import type { PaneSummary } from "@mobile-agent/protocol";
+import type { PaneSummary } from "@muximo/protocol";
 
 export const mockPanes: PaneSummary[] = [
   {
     id: "pane-review",
     tmuxPaneId: "%0",
-    sessionName: "mobile-agent",
+    sessionName: "muximo",
     windowId: "@0",
     paneIndex: 0,
     kind: "agent",
     name: "Review the viewport lease",
-    cwd: "~/work/mobile-agent",
-    workspaceId: "mobile-agent",
+    cwd: "~/work/muximo",
+    workspaceId: "muximo",
     agentId: "codex",
     state: "waiting_input",
     title: "codex · review",
@@ -19,13 +19,13 @@ export const mockPanes: PaneSummary[] = [
   {
     id: "pane-build",
     tmuxPaneId: "%1",
-    sessionName: "mobile-agent",
+    sessionName: "muximo",
     windowId: "@0",
     paneIndex: 1,
     kind: "agent",
     name: "Ship the iOS shell",
-    cwd: "~/work/mobile-agent",
-    workspaceId: "mobile-agent",
+    cwd: "~/work/muximo",
+    workspaceId: "muximo",
     agentId: "claude",
     state: "running",
     title: "claude · implementation",
@@ -34,13 +34,13 @@ export const mockPanes: PaneSummary[] = [
   {
     id: "pane-shell",
     tmuxPaneId: "%2",
-    sessionName: "mobile-agent",
+    sessionName: "muximo",
     windowId: "@1",
     paneIndex: 0,
     kind: "shell",
     name: "Local shell",
-    cwd: "~/work/mobile-agent",
-    workspaceId: "mobile-agent",
+    cwd: "~/work/muximo",
+    workspaceId: "muximo",
     agentId: null,
     state: "running",
     title: "zsh",
@@ -64,7 +64,7 @@ export const mockPanes: PaneSummary[] = [
 ];
 
 export const mockTerminalOutput = [
-  "\x1b[1;38;5;111m mobile-agent \x1b[0m  \x1b[38;5;244m/ review viewport\x1b[0m",
+  "\x1b[1;38;5;111m muximo \x1b[0m  \x1b[38;5;244m/ review viewport\x1b[0m",
   "",
   "\x1b[38;5;151m╭─ agent status ─────────────────────╮\x1b[0m",
   "\x1b[38;5;151m│\x1b[0m \x1b[1;38;5;223mwaiting for input\x1b[0m  \x1b[38;5;244mrun-review\x1b[0m \x1b[38;5;151m│\x1b[0m",
@@ -72,7 +72,7 @@ export const mockTerminalOutput = [
   "\x1b[38;5;151m╰────────────────────────────────────╯\x1b[0m",
   "",
   "\x1b[1;38;5;117m$\x1b[0m git diff --stat",
-  " agent-cli/agent-command.ts | 612 +++++",
+  " muximo-cli/muximo-command.ts | 612 +++++",
   " web/styles.css             | 248 +++++",
   " persistence/schema.ts      |  72 +++",
   " 3 files changed, 932 insertions(+)",
@@ -84,19 +84,19 @@ export const mockTerminalOutput = [
 ].join("\r\n");
 
 export const mockShellTerminalOutput = [
-  "\x1b[1;38;5;120m~/work/mobile-agent\x1b[0m \x1b[38;5;244m(main)\x1b[0m",
+  "\x1b[1;38;5;120m~/work/muximo\x1b[0m \x1b[38;5;244m(main)\x1b[0m",
   "\x1b[1;38;5;82m❯\x1b[0m git status --short",
   "\x1b[38;5;151m M apps/web/src/styles.css\x1b[0m",
   "\x1b[38;5;151m M apps/web/src/mock/mock-data.ts\x1b[0m",
   "",
-  "\x1b[1;38;5;82m❯\x1b[0m bun run --filter @mobile-agent/web test",
+  "\x1b[1;38;5;82m❯\x1b[0m bun run --filter @muximo/web test",
   "\x1b[38;5;120m✓\x1b[0m 1 test file passed  \x1b[38;5;244m0.18s\x1b[0m",
   "",
-  "\x1b[1;38;5;120m~/work/mobile-agent\x1b[0m \x1b[1;38;5;82m❯\x1b[0m \x1b[?25l▌\x1b[?25h",
+  "\x1b[1;38;5;120m~/work/muximo\x1b[0m \x1b[1;38;5;82m❯\x1b[0m \x1b[?25l▌\x1b[?25h",
 ].join("\r\n");
 
 export const mockRunningAgentTerminalOutput = [
-  "\x1b[1;38;5;111m mobile-agent \x1b[0m  \x1b[38;5;244m/ iOS shell\x1b[0m",
+  "\x1b[1;38;5;111m muximo \x1b[0m  \x1b[38;5;244m/ iOS shell\x1b[0m",
   "",
   "\x1b[38;5;151m╭─ agent status ─────────────────────╮\x1b[0m",
   "\x1b[38;5;151m│\x1b[0m \x1b[1;38;5;120mrunning\x1b[0m  \x1b[38;5;244mrun-build\x1b[0m                 \x1b[38;5;151m│\x1b[0m",
@@ -131,6 +131,6 @@ export function mockTerminalOutputForTarget(target: string): string {
 }
 
 export function isMockMode(): boolean {
-  const configured = import.meta.env.VITE_AGENTD_MOCK_MODE as string | undefined;
+  const configured = import.meta.env.VITE_MUXIMOD_MOCK_MODE as string | undefined;
   return configured === "true" || (configured === undefined && import.meta.env.STORYBOOK === "true");
 }

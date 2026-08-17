@@ -2,7 +2,7 @@ import { ConnectionFlowLayout, FlowIntro } from "../../../../../../features/conn
 import type { ConnectingViewModel } from "./-connecting-viewmodel";
 
 export function ConnectingView({ viewModel }: { viewModel: ConnectingViewModel }) {
-  const steps = ["Reach terminal over Tailscale", "Authenticate with agentd", `Attach to ${viewModel.selectedSession?.name ?? "tmux"}`];
+  const steps = ["Reach terminal over Tailscale", "Authenticate with muximod", `Attach to ${viewModel.selectedSession?.name ?? "tmux"}`];
   return (
     <ConnectionFlowLayout>
       <div className="mx-auto flex w-full max-w-[570px] flex-1 flex-col justify-center px-6 py-[34px] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(32px+var(--safe-area-bottom))] max-[620px]:pt-5">

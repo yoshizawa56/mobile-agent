@@ -1,10 +1,10 @@
 /**
- * Owns the OpenCode V1 server sidecars started by Mobile Agent.
+ * Owns the OpenCode V1 server sidecars started by Muximo.
  *
  * One server is started lazily per project root (the resolved workspace or
  * worktree directory the server is launched in) and reused by every OpenCode
  * session in that project. Ownership metadata is persisted so a later
- * `agent run opencode` can reuse or restart the server.
+ * `muximo run opencode` can reuse or restart the server.
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
@@ -54,9 +54,9 @@ export const openCodeServerDefaultTimeoutMs = 15_000;
 export const openCodeServerHealthPollMs = 100;
 
 export function defaultOpenCodeRegistryFile(env: NodeJS.ProcessEnv = process.env): string {
-  const instanceDirectory = env.AGENTD_INSTANCE_DIR?.trim()
-    ? env.AGENTD_INSTANCE_DIR.trim()
-    : join(env.HOME ?? homedir(), ".local", "state", "mobile-agent");
+  const instanceDirectory = env.MUXIMOD_INSTANCE_DIR?.trim()
+    ? env.MUXIMOD_INSTANCE_DIR.trim()
+    : join(env.HOME ?? homedir(), ".local", "state", "muximo");
   return join(instanceDirectory, "opencode-servers.json");
 }
 
@@ -128,7 +128,7 @@ export class OpenCodeServerManager {
 
   /**
    * Restart every owned server on the port it already uses, so configuration
-   * and environment changes made outside Mobile Agent are picked up while the
+   * and environment changes made outside Muximo are picked up while the
    * server URLs stay stable. A root whose server cannot be restarted is dropped
    * from the registry.
    */
@@ -302,7 +302,7 @@ export class OpenCodeServerManager {
       this.signaller.kill(pid, "SIGTERM");
     } catch (error) {
       // EPERM means the process belongs to another user; never force-stop a
-      // server Mobile Agent does not own.
+      // server Muximo does not own.
       this.onLog?.("warn", "opencode.server_not_owned", { pid });
       return;
     }
@@ -340,7 +340,7 @@ export class OpenCodeServerManager {
   }
 
   /**
-   * Serialize registry mutations across `agent run` processes in the same
+   * Serialize registry mutations across `muximo run` processes in the same
    * instance so two panes starting concurrently share one server. Stale locks
    * (dead owner) are broken; a lock that stays contended is abandoned rather
    * than blocking the pane forever.

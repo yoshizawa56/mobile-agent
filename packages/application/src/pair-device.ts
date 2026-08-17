@@ -1,11 +1,11 @@
 export type PairDeviceInput = {
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
 };
 
 export type PairingOffer = {
   pairingId: string;
   pairingCode: string;
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   expiresAt: number;
 };
 

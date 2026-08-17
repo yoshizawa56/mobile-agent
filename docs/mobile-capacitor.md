@@ -10,8 +10,8 @@ From the repository root:
 
 ```sh
 bun install --frozen-lockfile
-bun run --filter @mobile-agent/web cap:sync
-bun run --filter @mobile-agent/web cap:open
+bun run --filter @muximo/web cap:sync
+bun run --filter @muximo/web cap:open
 ```
 
 `cap:sync` builds `apps/web/dist` and copies it into the iOS project. Run the
@@ -21,8 +21,8 @@ once from the committed example:
 
 ```sh
 cp apps/web/ios/local.xcconfig.example apps/web/ios/local.xcconfig
-# Edit local.xcconfig and set MOBILE_AGENT_WEB_SCHEME, MOBILE_AGENT_WEB_HOST,
-# and MOBILE_AGENT_WEB_PORT to this machine's Serve URL.
+# Edit local.xcconfig and set MUXIMO_WEB_SCHEME, MUXIMO_WEB_HOST,
+# and MUXIMO_WEB_PORT to this machine's Serve URL.
 ```
 
 The URL is assembled from those build settings and embedded in the native
@@ -40,31 +40,31 @@ mise run dev-serve
 tailscale serve --bg --https=8449 5228
 ```
 
-`bun run --filter @mobile-agent/web cap:run` remains available after the
+`bun run --filter @muximo/web cap:run` remains available after the
 native project has been prepared. The committed Capacitor config has no
 machine-specific URL, so staging and release builds continue to use bundled
 web assets.
 
-Bundled builds do not receive an agentd endpoint at build time. The first-run
-screen asks the user to scan the `agent pair` QR code, then stores the agentd
+Bundled builds do not receive a muximod endpoint at build time. The first-run
+screen asks the user to scan the `muximo pair` QR code, then stores the muximod
 connection profile in Web Storage and the browser device key in IndexedDB.
 The same flow is used by browser and Capacitor builds, so `cap:sync` needs no
-agentd-related `.env.local` file.
+muximod-related `.env.local` file.
 
 The iOS project has three shared schemes:
 
-- `Local` (`Debug`): embeds the `MOBILE_AGENT_WEB_*` settings from
+- `Local` (`Debug`): embeds the `MUXIMO_WEB_*` settings from
   `local.xcconfig` and loads the fixed Serve endpoint;
 - `Staging` (`Staging`): uses bundled assets and bundle ID
-  `com.mobileagent.app.staging`;
+  `com.muximo.app.staging`;
 - `Release` (`Release`): uses bundled assets and bundle ID
-  `com.mobileagent.app`.
+  `com.muximo.app`.
 
 Switching the worktree behind the fixed Serve endpoint does not require a
-native rebuild. Only changing the `MOBILE_AGENT_WEB_*` settings themselves
+native rebuild. Only changing the `MUXIMO_WEB_*` settings themselves
 requires rebuilding the native binary.
 
-The app connects to agentd through the full endpoint imported from the saved
+The app connects to muximod through the full endpoint imported from the saved
 pairing profile. No Tailscale credentials, SSH private keys, or host-side
 ports are placed in the WebView.
 
@@ -82,7 +82,7 @@ number, upload time, and the recorded commit SHA. To start a new App Store
 version, update the package version in a normal source change.
 
 The `v0.1.0` or `v0.1.0-beta.1` tag starts the final release workflow directly.
-It runs repository checks, builds the standalone agents, uploads the iOS app,
+It runs repository checks, builds the standalone muximo binaries, uploads the iOS app,
 and creates the GitHub Release. It does not submit the build to App Review or
 publish it to the public App Store.
 
@@ -92,7 +92,7 @@ Actions > Repository secrets`. A GitHub Environment is not required for these
 workflows.
 
 On the Apple side, create the App Store Connect app record for bundle ID
-`com.mobileagent.app`, and prepare an Apple Distribution certificate, an App
+`com.muximo.app`, and prepare an Apple Distribution certificate, an App
 Store provisioning profile for that bundle ID, and an App Store Connect API key
 with upload permission.
 
@@ -103,17 +103,17 @@ Secrets:
 - `IOS_ASC_API_PRIVATE_KEY`: the complete contents of the downloaded `AuthKey_<key-id>.p8` file;
 - `IOS_DIST_CERTIFICATE_BASE64`: base64-encoded Apple Distribution `.p12` certificate;
 - `IOS_DIST_CERTIFICATE_PASSWORD`: password for that `.p12` file;
-- `IOS_APP_STORE_PROFILE_BASE64`: base64-encoded App Store provisioning profile for `com.mobileagent.app`.
+- `IOS_APP_STORE_PROFILE_BASE64`: base64-encoded App Store provisioning profile for `com.muximo.app`.
 
 For example, create the two base64 values locally without committing the
 original signing files:
 
 ```sh
 base64 -i ios-distribution.p12
-base64 -i MobileAgentAppStore.mobileprovision
+base64 -i MuximoAppStore.mobileprovision
 ```
 
-The profile's App ID must be exactly `com.mobileagent.app`, and the
+The profile's App ID must be exactly `com.muximo.app`, and the
 distribution certificate and profile must belong to the same Apple Developer
 Team. The workflow derives the marketing version from
 `apps/web/package.json` for manual TestFlight runs and from the `v*` tag for
@@ -144,7 +144,7 @@ does not submit it to App Review or make it available to App Store customers.
 
 ## Bridge boundary
 
-`apps/web/src/platform/mobile-bridge.ts` exposes the small native contract used
+`apps/web/src/platform/muximo-bridge.ts` exposes the small native contract used
 by the Web UI:
 
 - `@capacitor/app` supplies foreground/background transitions on native builds;
@@ -156,11 +156,11 @@ by the Web UI:
 - route provider, Keychain, notifications, and Live Activities are explicit
   disabled capabilities for the current Serve-based MVP.
 
-An eventual SSH route should be added as a native-only `AgentdRouteProvider`
-that returns an `AgentdConnection` with a `close()` callback. It must keep key
+An eventual SSH route should be added as a native-only `MuximodRouteProvider`
+that returns an `MuximodConnection` with a `close()` callback. It must keep key
 material in native Keychain storage and must not add SSH code or secrets to the
 Web bundle. Notifications and ActivityKit should likewise be added behind
-separate native capabilities once agentd emits the required state transitions.
+separate native capabilities once muximod emits the required state transitions.
 
 ## Platform requirements
 

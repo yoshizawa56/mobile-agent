@@ -24,12 +24,12 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>MOBILE_AGENT_WEB_SCHEME</key>
-	<string>$(MOBILE_AGENT_WEB_SCHEME)</string>
-	<key>MOBILE_AGENT_WEB_HOST</key>
-	<string>$(MOBILE_AGENT_WEB_HOST)</string>
-	<key>MOBILE_AGENT_WEB_PORT</key>
-	<string>$(MOBILE_AGENT_WEB_PORT)</string>
+	<key>MUXIMO_WEB_SCHEME</key>
+	<string>$(MUXIMO_WEB_SCHEME)</string>
+	<key>MUXIMO_WEB_HOST</key>
+	<string>$(MUXIMO_WEB_HOST)</string>
+	<key>MUXIMO_WEB_PORT</key>
+	<string>$(MUXIMO_WEB_PORT)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

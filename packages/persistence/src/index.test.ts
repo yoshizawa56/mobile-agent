@@ -11,8 +11,8 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
-import type { AgentSessionRecord, PaneRecord, WorkspaceRecord } from "@mobile-agent/domain";
+} from "@muximo/test-support";
+import type { AgentSessionRecord, PaneRecord, WorkspaceRecord } from "@muximo/domain";
 import {
   defaultAgentMigrationsFolder,
   DrizzleAgentSessionRepository,
@@ -26,7 +26,7 @@ import { auditEvents } from "./schema.js";
 const pane: PaneRecord = {
   id: "pane-1",
   tmuxPaneId: "%1",
-  sessionName: "agentd",
+  sessionName: "muximod",
   windowId: "@0",
   kind: "agent",
   name: "review",
@@ -60,7 +60,7 @@ const session: AgentSessionRecord = {
   workspaceName: "repo",
   worktreeRoot: "/work/repo.worktrees",
   worktreePath: "/work/repo.worktrees/review",
-  branch: "agent/review",
+  branch: "muximo/review",
   baseCommit: "abc123",
   useWorktree: true,
   setupHook: workspace.setupScriptPath,
@@ -141,9 +141,9 @@ const createPreCleanupMigrationsFolder = (root: string): string => {
 };
 
 const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
-  const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-legacy-"));
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-legacy-"));
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
-  const file = join(root, "agentd.sqlite");
+  const file = join(root, "muximod.sqlite");
   const initial = createAgentDatabase(file, { migrationsFolder: createPreCleanupMigrationsFolder(root) });
   try {
     await new DrizzlePaneRepository(initial.db).upsert(pane);
@@ -156,9 +156,9 @@ const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtur
 };
 
 const historicalMigrationFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
-  const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-historical-"));
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-historical-"));
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
-  const file = join(root, "agentd.sqlite");
+  const file = join(root, "muximod.sqlite");
   const migrationsFolder = createPreCleanupMigrationsFolder(root);
 
   const historical = createAgentDatabase(file, { migrationsFolder });
@@ -177,7 +177,7 @@ const historicalMigrationFixture = async (registerCleanup?: CleanupRegistrar): P
 };
 
 const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle<DatabaseFixture> => {
-  const root = mkdtempSync(join(tmpdir(), "mobile-agent-persistence-migrations-"));
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-migrations-"));
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const migrationsFolder = join(root, "drizzle");
   cpSync(defaultAgentMigrationsFolder(), migrationsFolder, { recursive: true });

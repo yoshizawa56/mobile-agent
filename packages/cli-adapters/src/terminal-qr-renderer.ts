@@ -10,7 +10,7 @@ export type TerminalQrRendererOptions = {
   small?: boolean;
 };
 
-/** Terminal presentation adapter for the pairing URL supplied by agentd. */
+/** Terminal presentation adapter for the pairing URL supplied by muximod. */
 export class TerminalQrRenderer implements QrRendererPort {
   public constructor(private readonly options: TerminalQrRendererOptions = {}) {}
 

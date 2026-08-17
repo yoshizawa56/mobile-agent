@@ -1,4 +1,4 @@
-# Contributing to mobile-agent
+# Contributing to muximo
 
 Thank you for helping build a safer, more useful way to operate terminal agents remotely.
 
@@ -23,17 +23,17 @@ bun run test
 bun run build
 ```
 
-`bun run dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `agentd` and web services, checks agentd's unauthenticated `/health` endpoint and the Web port before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `agent dev serve tailscale` (or `mise run dev-serve`) when the Tailscale CLI is already installed and configured. The command starts the local stack, upserts the fixed Serve route, and leaves that route configured when the local processes stop.
+`bun run dev` is the recommended dogfooding entrypoint. It starts or reuses healthy `muximod` and web services, checks muximod's unauthenticated `/health` endpoint and the Web port before reporting ready, stops the child process groups it owns when the session ends, and prints recovery instructions for port conflicts. It does not automatically restart failed services or install system dependencies. Tailscale Serve remains opt-in; use `muximo dev serve tailscale` (or `mise run dev-serve`) when the Tailscale CLI is already installed and configured. The command starts the local stack, upserts the fixed Serve route, and leaves that route configured when the local processes stop.
 
-The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and agentd; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. The browser mock mode can be used without a running `agentd`:
+The runtime dependencies are Bun, the pinned Node LTS runtime, and a local `tmux` installation. Bun runs the workspace scripts and muximod; Node runs Vite, Storybook, Vitest, and TypeScript for the Web package. The browser mock mode can be used without a running `muximod`:
 
 ```sh
-VITE_AGENTD_MOCK_MODE=true bun run --filter @mobile-agent/web dev
+VITE_MUXIMOD_MOCK_MODE=true bun run --filter @muximo/web dev
 ```
 
 ## Table-driven tests
 
-Every behavior test uses `@mobile-agent/test-support` with one table-level `execute` and `observe`. A row contains only a unique `name`, optional `fixture`, declarative `input` or typed `steps`, and a non-empty list of named assertions. Fixtures include DI and environment setup; a selected fixture completely replaces the lazy default for that row.
+Every behavior test uses `@muximo/test-support` with one table-level `execute` and `observe`. A row contains only a unique `name`, optional `fixture`, declarative `input` or typed `steps`, and a non-empty list of named assertions. Fixtures include DI and environment setup; a selected fixture completely replaces the lazy default for that row.
 
 Use `runOperationTable` for one public operation and `runScenarioTable` for typed multi-step protocols. The lifecycle is `fixture -> execute -> observe -> assertAll -> cleanup`. `observe` is post-execution and read-only. Unexpected execute errors fail the row unless `hasError(...)` or a custom outcome-aware assertion explicitly handles them. All assertions run and their diffs and stacks are aggregated. Cleanup callbacks run in LIFO order even when setup or assertions fail.
 

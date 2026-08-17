@@ -7,7 +7,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import type { AgentObservation } from "../index.js";
 import { OpenCodeStreamClosedError, type OpenCodeEvent, type OpenCodeSessionStatus } from "./client.js";
 import { OpenCodeMonitor, openCodeMonitorActions, type OpenCodeMonitorClient } from "./monitor.js";

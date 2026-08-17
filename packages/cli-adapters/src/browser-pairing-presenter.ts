@@ -3,7 +3,7 @@ import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@mobile-agent/application";
+import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
 import { SvgQrRenderer } from "./svg-qr-renderer.js";
 import type { QrRendererPort } from "./terminal-qr-renderer.js";
 
@@ -37,7 +37,7 @@ export class BrowserPairingPresenter implements PairingPresenterPort {
   public async showPairing(offer: PairingOffer): Promise<void> {
     await this.close();
     const qr = await this.qrRenderer.render(offer.pairingCode);
-    const directory = await mkdtemp(join(tmpdir(), "mobile-agent-pair-"));
+    const directory = await mkdtemp(join(tmpdir(), "muximo-pair-"));
     const filePath = join(directory, "index.html");
 
     try {
@@ -51,10 +51,10 @@ export class BrowserPairingPresenter implements PairingPresenterPort {
       throw error;
     }
 
-    this.write("agent pair\n");
-    this.write(`agentd: ${offer.agentdBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n`);
+    this.write("muximo pair\n");
+    this.write(`muximod: ${offer.muximodBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n`);
     this.write(`Opened pairing QR in the default browser: ${filePath}\n`);
-    this.write("Scan this QR code in the Mobile Agent app. Waiting for a connection request.\n");
+    this.write("Scan this QR code in the Muximo app. Waiting for a connection request.\n");
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {
@@ -113,7 +113,7 @@ function renderPairingPage(svg: string, offer: PairingOffer): string {
 <html lang="en">
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Mobile Agent pairing</title>
+    <title>Muximo pairing</title>
     <style>
       body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f4f5; color: #18181b; font: 16px -apple-system, BlinkMacSystemFont, sans-serif; }
       main { padding: 32px; text-align: center; background: white; border-radius: 16px; box-shadow: 0 8px 30px #0002; }
@@ -123,10 +123,10 @@ function renderPairingPage(svg: string, offer: PairingOffer): string {
   </head>
   <body>
     <main>
-      <h1>Mobile Agent pairing</h1>
+      <h1>Muximo pairing</h1>
       ${svg}
-      <p>Scan this QR code in the Mobile Agent app.</p>
-      <p>Endpoint: ${escapeHtml(offer.agentdBaseUrl)}</p>
+      <p>Scan this QR code in the Muximo app.</p>
+      <p>Endpoint: ${escapeHtml(offer.muximodBaseUrl)}</p>
       <p>Expires: ${escapeHtml(new Date(offer.expiresAt).toLocaleString())}</p>
     </main>
   </body>

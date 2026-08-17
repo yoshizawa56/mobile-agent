@@ -92,7 +92,7 @@ export function decodeJsonBase64Url<T>(value: string): T {
 
 export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload): string {
   const fields = [
-    normalizePairingEndpoint(payload.agentdBaseUrl),
+    normalizePairingEndpoint(payload.muximodBaseUrl),
     payload.pairingId,
     payload.pairingSecret,
   ].map((value) => new TextEncoder().encode(value));
@@ -117,12 +117,12 @@ export function decodePairingCode(value: string): PairingCodePayload {
   if (trimmed.startsWith(legacyPairingCodePrefix)) {
     const legacy = pairingQrPayloadSchema.parse(decodeJsonBase64Url<PairingQrPayload>(trimmed.slice(legacyPairingCodePrefix.length)));
     return pairingCodePayloadSchema.parse({
-      agentdBaseUrl: normalizePairingEndpoint(legacy.agentdBaseUrl),
+      muximodBaseUrl: normalizePairingEndpoint(legacy.muximodBaseUrl),
       pairingId: legacy.pairingId,
       pairingSecret: legacy.pairingSecret,
     });
   }
-  if (!trimmed.startsWith(pairingCodePrefix)) throw new Error("QR code is not a mobile-agent pairing code");
+  if (!trimmed.startsWith(pairingCodePrefix)) throw new Error("QR code is not a muximo pairing code");
   const bytes = decodeBase64Url(trimmed.slice(pairingCodePrefix.length));
   let offset = 0;
   const fields: string[] = [];
@@ -137,7 +137,7 @@ export function decodePairingCode(value: string): PairingCodePayload {
   }
   if (offset >= bytes.length) throw new Error("pairing code is missing its secret");
   fields.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset)));
-  return pairingCodePayloadSchema.parse({ agentdBaseUrl: fields[0], pairingId: fields[1], pairingSecret: fields[2] });
+  return pairingCodePayloadSchema.parse({ muximodBaseUrl: fields[0], pairingId: fields[1], pairingSecret: fields[2] });
 }
 
 function normalizePairingEndpoint(value: string): string {

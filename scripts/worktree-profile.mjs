@@ -4,16 +4,16 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-const defaultStateRoot = join(homedir(), ".local", "state", "mobile-agent");
+const defaultStateRoot = join(homedir(), ".local", "state", "muximo");
 
 export function applyDevWorktreeProfile(env = process.env, cwd = process.cwd()) {
   const profile = resolveDevWorktreeProfile(env, cwd);
 
   return {
     ...env,
-    AGENT_WORKTREE_ID: env.AGENT_WORKTREE_ID ?? profile.id,
-    AGENTD_INSTANCE_DIR: env.AGENTD_INSTANCE_DIR ?? profile.instanceDirectory,
-    AGENTD_PORT: env.AGENTD_PORT ?? String(profile.agentdPort),
+    MUXIMO_WORKTREE_ID: env.MUXIMO_WORKTREE_ID ?? profile.id,
+    MUXIMOD_INSTANCE_DIR: env.MUXIMOD_INSTANCE_DIR ?? profile.instanceDirectory,
+    MUXIMOD_PORT: env.MUXIMOD_PORT ?? String(profile.muximodPort),
     VITE_DEV_PORT: env.VITE_DEV_PORT ?? String(profile.webPort),
   };
 }
@@ -21,7 +21,7 @@ export function applyDevWorktreeProfile(env = process.env, cwd = process.cwd()) 
 export function resolveDevWorktreeProfile(env = process.env, cwd = process.cwd()) {
   const worktreeRoot = gitWorktreeRoot(cwd) ?? realpathSafe(cwd);
   const id = createHash("sha256").update(worktreeRoot).digest("hex").slice(0, 16);
-  const stateBase = resolve(env.AGENT_DEV_STATE_ROOT ?? defaultStateRoot);
+  const stateBase = resolve(env.MUXIMO_DEV_STATE_ROOT ?? defaultStateRoot);
   const stateRoot = join(stateBase, "worktrees", id);
   const seed = Number.parseInt(id.slice(0, 8), 16);
 
@@ -29,7 +29,7 @@ export function resolveDevWorktreeProfile(env = process.env, cwd = process.cwd()
     id,
     worktreeRoot,
     instanceDirectory: stateRoot,
-    agentdPort: 4_318 + (seed % 1_000),
+    muximodPort: 4_318 + (seed % 1_000),
     webPort: 5_320 + (seed % 1_000),
   };
 }

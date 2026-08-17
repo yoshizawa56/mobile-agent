@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { PaneSummary } from "@mobile-agent/protocol";
+import type { PaneSummary } from "@muximo/protocol";
 import { AppIcon } from "../../app-icon";
 import { paneStateLabel } from "./pane-board-viewmodel";
 

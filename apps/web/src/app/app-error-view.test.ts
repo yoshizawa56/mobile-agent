@@ -6,14 +6,14 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { errorMessage } from "./app-error-view";
 
 type Input = { error: unknown };
 type Context = {};
 
 const cases = [
-  { name: "formats an Error", input: { error: new Error("agentd is unavailable") }, assert: [returns<Context, string>("agentd is unavailable")] },
+  { name: "formats an Error", input: { error: new Error("muximod is unavailable") }, assert: [returns<Context, string>("muximod is unavailable")] },
   { name: "formats a string", input: { error: "route failed" }, assert: [returns<Context, string>("route failed")] },
   { name: "formats an object", input: { error: { code: "ECONNREFUSED" } }, assert: [returns<Context, string>('{"code":"ECONNREFUSED"}')] },
   { name: "formats null as an unknown error", input: { error: null }, assert: [returns<Context, string>("Unknown error")] },

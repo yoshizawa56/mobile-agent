@@ -79,7 +79,7 @@ export function PaneView({ viewModel, paneBoard, layoutVariant = "ghost", onSess
             <div className="mt-[13px] flex items-center gap-2 text-[0.68rem] font-semibold text-[#b9dfbd]"><span className="text-[0.8rem] text-lime">◉</span><span>Shared tmux viewport</span></div>
             <p className="m-0 mt-[9px] text-[0.65rem] leading-[1.45] text-muted">Mobile owns the viewport while you are here. PC activity hands it back automatically.</p>
           </div>
-          <div className="flex items-center gap-[7px] border-t border-line pt-[15px] font-mono text-[0.62rem] text-[#596059]"><span className="size-[5px] rounded-full bg-lime-deep" /> agentd <span className="ml-auto text-faint">v0.1</span></div>
+          <div className="flex items-center gap-[7px] border-t border-line pt-[15px] font-mono text-[0.62rem] text-[#596059]"><span className="size-[5px] rounded-full bg-lime-deep" /> muximod <span className="ml-auto text-faint">v0.1</span></div>
         </aside>
 
         <section className="flex min-w-0 min-h-0 flex-col gap-5 max-[920px]:flex-1 max-[920px]:gap-0 max-[620px]:gap-[7px]">

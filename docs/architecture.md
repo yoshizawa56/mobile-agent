@@ -1,4 +1,4 @@
-# Mobile Agent / agentd Architecture and Specification
+# Muximo / muximod Architecture and Specification
 
 Last updated: 2026-08-14
 
@@ -6,7 +6,7 @@ Status: implementation baseline and ongoing design
 
 ## 1. Overview
 
-Mobile Agent is a system for managing agent runtimes on tmux panes from a mobile UI. A long-running TypeScript and Bun process named agentd runs on the development host, while an iPhone connects through the web client.
+Muximo is a system for managing agent runtimes on tmux panes from a mobile UI. A long-running TypeScript and Bun process named muximod runs on the development host, while an iPhone connects through the web client.
 
 The primary goal is to let a phone operate an existing desktop tmux environment without replacing the desktop workflow:
 
@@ -20,19 +20,19 @@ The primary goal is to let a phone operate an existing desktop tmux environment 
 
 ### Decisions
 
-- The host daemon is a TypeScript and Bun process named agentd.
-- Bun is the workspace package manager and the runtime for agentd and the unified agent CLI. The Web package uses the pinned Node LTS runtime for Vite, Storybook, Vitest, and TypeScript; this keeps the browser toolchain on its primary ecosystem without changing the shipped browser code.
-- The agentd HTTP API is implemented with Hono. createAgentdApp(deps) returns a dependency-injected Hono app. Process startup, SQLite, tmux, PTY, and WebSocket wiring live outside that function.
-- ReturnType<typeof createAgentdApp> is exported as AgentdApp and shared with the Hono RPC client in the agentd-client package.
+- The host daemon is a TypeScript and Bun process named muximod.
+- Bun is the workspace package manager and the runtime for muximod and the unified muximo CLI. The Web package uses the pinned Node LTS runtime for Vite, Storybook, Vitest, and TypeScript; this keeps the browser toolchain on its primary ecosystem without changing the shipped browser code.
+- The muximod HTTP API is implemented with Hono. createMuximodApp(deps) returns a dependency-injected Hono app. Process startup, SQLite, tmux, PTY, and WebSocket wiring live outside that function.
+- ReturnType<typeof createMuximodApp> is exported as MuximodApp and shared with the Hono RPC client in the muximod-client package.
 - The mobile API client, connection state, WebSocket handling, and xterm.js integration are implemented in TypeScript. An SSH port-forwarding native bridge may create a route and hand its URLs to the TypeScript client.
-- The agent CLI is maintained in this repository. SQLite is the single canonical state source for lifecycle data.
+- The muximo CLI is maintained in this repository. SQLite is the single canonical state source for lifecycle data.
 - The legacy dotfiles state-file format is not a compatibility target.
 - tmux remains the owner of the real panes. Terminal display uses a PTY connected to tmux attach-session, while administration and monitoring use tmux Control Mode.
-- Pane identity uses a Mobile Agent UUID instead of depending on tmux identifiers.
+- Pane identity uses a Muximo UUID instead of depending on tmux identifiers.
 - Plugins normalize agent state. The mobile UI consumes only the common state model.
 - HTTP API plus WebSocket is the primary host/mobile protocol. The browser build uses Tailscale Serve as its standard route.
 - The browser build stores only a Serve connection profile. It does not access SSH private keys, passwords, or the native Keychain.
-- SSH is a future RouteProvider implementation for cases such as a bastion host between the phone and the agentd host.
+- SSH is a future RouteProvider implementation for cases such as a bastion host between the phone and the muximod host.
 - The mobile UI is React and TypeScript with xterm.js and can be packaged as an iOS app with Capacitor when needed.
 - In the MVP, desktop and mobile share the same tmux pane. While a mobile client is connected, a TmuxViewportLease makes the mobile client the viewport owner.
 - The mobile client attaches with active-pane. Pane selection is isolated per client. Because zoom and window size are window-level tmux properties, the desktop view may temporarily become narrow while the phone owns the viewport.
@@ -66,15 +66,15 @@ The primary goal is to let a phone operate an existing desktop tmux environment 
 
 ### Host
 
-The development machine running tmux, agents, and agentd. SQLite also lives on the host.
+The development machine running tmux, agents, and muximod. SQLite also lives on the host.
 
 ### Session
 
-A tmux session. It is the unit a person joins with tmux attach; it is not the primary Mobile Agent management unit.
+A tmux session. It is the unit a person joins with tmux attach; it is not the primary Muximo management unit.
 
 ### Pane
 
-A tmux pane. This is the basic unit that Mobile Agent lists and selects.
+A tmux pane. This is the basic unit that Muximo lists and selects.
 
 ### AgentSession
 
@@ -101,7 +101,7 @@ Configuration that overrides an existing plugin command, environment, detection 
 
 ### Workspace
 
-A host directory explicitly registered with agentd. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths plus relative patterns for copying unmanaged files into generated worktrees; a generated git worktree is an execution directory derived from that workspace.
+A host directory explicitly registered with muximod. It may be a regular checkout or another managed work environment. A registered workspace owns its optional personal setup and cleanup script paths plus relative patterns for copying unmanaged files into generated worktrees; a generated git worktree is an execution directory derived from that workspace.
 
 ### Separating Pane and AgentSession
 
@@ -130,18 +130,18 @@ AgentSession
 
 Regular shells use kind=shell and agentId=null in the same model.
 
-tmux pane identifiers can change after a pane is recreated or moved, so mobilePaneId is the primary key. agentd stores user options on the tmux side to support recovery after a restart:
+tmux pane identifiers can change after a pane is recreated or moved, so mobilePaneId is the primary key. muximod stores user options on the tmux side to support recovery after a restart:
 
 ~~~
-@agentd.pane_id
-@agentd.pane_name
-@agentd.kind
-@agentd.agent_id
-@agentd.workspace_id
-@agentd.managed_session_id
+@muximod.pane_id
+@muximod.pane_name
+@muximod.kind
+@muximod.agent_id
+@muximod.workspace_id
+@muximod.managed_session_id
 
-@agentd.agent_session_id
-@agentd.agent_execution_id
+@muximod.agent_session_id
+@muximod.agent_execution_id
 ~~~
 
 ## 4. System architecture
@@ -160,7 +160,7 @@ tmux pane identifiers can change after a pane is recreated or moved, so mobilePa
 | Development host                                             |
 |                                                              |
 |  +--------------+     +-----------------------------------+  |
-|  | agent CLI/TUI|---->| agentd                            |  |
+|  | muximo CLI/TUI|---->| muximod                            |  |
 |  +--------------+     | Hono HTTP / WebSocket / PTY       |  |
 |                       | Domain / Application / Ports      |  |
 |  desktop terminal    | Plugin manager / recovery          |  |
@@ -173,20 +173,20 @@ tmux pane identifiers can change after a pane is recreated or moved, so mobilePa
 +--------------------------------------------------------------+
 ~~~
 
-agentd is the only process that owns business-logic execution. The CLI, TUI, WebSocket handlers, and future desktop UI all call the same application use cases.
+muximod is the only process that owns business-logic execution. The CLI, TUI, WebSocket handlers, and future desktop UI all call the same application use cases.
 
 ## 5. Repository layout
 
 ~~~
 apps/
-  agent-cli/              # agent command, CLI, and TUI
-  agentd/                 # long-running daemon
+  muximo-cli/              # muximo command, CLI, and TUI
+  muximod/                 # long-running daemon
   web/                    # React + xterm.js UI, also consumed by Capacitor
   desktop-web/            # future desktop web UI
 
 packages/
-  agentd-client/          # Hono RPC, HTTP DTO validation, WebSocket client
-  agentd-http/            # Bun/Hono app factory, validation/error boundary, WebSocket adapter
+  muximod-client/          # Hono RPC, HTTP DTO validation, WebSocket client
+  muximod-http/            # Bun/Hono app factory, validation/error boundary, WebSocket adapter
   cli-adapters/           # CLI infrastructure adapters and composition factories
   domain/                 # entities, value objects, and state machines
   application/            # use cases and ports
@@ -199,14 +199,14 @@ packages/
   tailscale/               # Serve, identity, and bootstrap helpers
   config/                 # configuration loading and validation
 
-apps/agentd/src/
+apps/muximod/src/
   application/             # host-side application implementation and infrastructure composition
-  http/                    # compatibility exports for existing agentd-internal imports
+  http/                    # compatibility exports for existing muximod-internal imports
   server.ts                # Bun composition root and lifecycle only
 
 ios/
-  MobileAgentNative/      # SSH port-forwarding bridge, if needed
-  MobileAgentWidget/      # future OS extension, separate from the client
+  MuximoNative/      # SSH port-forwarding bridge, if needed
+  MuximoWidget/      # future OS extension, separate from the client
 
 docs/
   architecture.md
@@ -215,30 +215,30 @@ docs/
 
 The domain layer does not reference tmux, SQLite, WebSocket, or Capacitor directly. Implementations connect through ports.
 
-### agentd HTTP app and dependency injection
+### muximod HTTP app and dependency injection
 
-`packages/agentd-http` owns `createAgentdApp`. It does not start a process. It receives only the application/auth ports and transport callbacks needed by the HTTP API and constructs the Hono app. Validation is performed by shared Hono validators, and thrown failures are converted by one `onError` boundary. The app exposes a transport-neutral socket contract; only the Bun adapter knows Hono's `WSContext`.
+`packages/muximod-http` owns `createMuximodApp`. It does not start a process. It receives only the application/auth ports and transport callbacks needed by the HTTP API and constructs the Hono app. Validation is performed by shared Hono validators, and thrown failures are converted by one `onError` boundary. The app exposes a transport-neutral socket contract; only the Bun adapter knows Hono's `WSContext`.
 
 ~~~
-createAgentdServer()
+createMuximodServer()
   |-- SQLite / Drizzle
   |-- TmuxAdapter
   |-- TmuxViewportManager
-  |-- createAgentdApplication({ ...resources })
-  |-- createAgentdApp({ auth, application, ...transportDeps })
-       |-- AgentdApp = ReturnType<typeof createAgentdApp>
+  |-- createMuximodApplication({ ...resources })
+  |-- createMuximodApp({ auth, application, ...transportDeps })
+       |-- MuximodApp = ReturnType<typeof createMuximodApp>
 
-agentd-client
-  |-- hc<AgentdApp>(connection.httpBaseUrl)
+muximod-client
+  |-- hc<MuximodApp>(connection.httpBaseUrl)
 ~~~
 
-The runtime is Bun-only at the HTTP boundary: `apps/agentd` calls `Bun.serve({ fetch: app.fetch, websocket: agentdWebsocket })`. No Node HTTP server or `ws` implementation is part of agentd. The terminal and event endpoints authenticate an origin and one-shot WebSocket ticket during the Hono upgrade; after `onOpen`, the application receives only the neutral socket contract.
+The runtime is Bun-only at the HTTP boundary: `apps/muximod` calls `Bun.serve({ fetch: app.fetch, websocket: muximodWebsocket })`. No Node HTTP server or `ws` implementation is part of muximod. The terminal and event endpoints authenticate an origin and one-shot WebSocket ticket during the Hono upgrade; after `onOpen`, the application receives only the neutral socket contract.
 
-Tailscale Serve and SSH port forwarding both reach the same agentd API. The API client and use cases do not know which route is in use. The browser build does not include an SSH adapter; it exposes only the Serve route.
+Tailscale Serve and SSH port forwarding both reach the same muximod API. The API client and use cases do not know which route is in use. The browser build does not include an SSH adapter; it exposes only the Serve route.
 
 ~~~
 Browser / Serve:  https://host.tailnet/... ----+
-Native / Serve:   https://host.tailnet/... ----+-- AgentdClient
+Native / Serve:   https://host.tailnet/... ----+-- MuximodClient
 Native / SSH:     http://127.0.0.1:xxxxx -----+       |-- HTTP API
                                                         |-- terminal WebSocket
 ~~~
@@ -246,7 +246,7 @@ Native / SSH:     http://127.0.0.1:xxxxx -----+       |-- HTTP API
 ### Responsibilities of connection routes
 
 ~~~ts
-type AgentdRoute = {
+type MuximodRoute = {
   kind: "serve" | "same-origin" | "lan" | "ssh"
   httpBaseUrl: string
   websocketUrl: string
@@ -255,13 +255,13 @@ type AgentdRoute = {
 ~~~
 
 - serve: the standard browser and Capacitor route using HTTPS/WSS and Tailscale ACLs;
-- same-origin: a future development route where the client and agentd share an origin;
+- same-origin: a future development route where the client and muximod share an origin;
 - lan: a future explicitly configured LAN route with its own TLS, authentication, CORS, and discovery design;
 - ssh: a future native-only route that creates port forwarding through a bastion.
 
-AgentdClient receives an AgentdRoute. It does not know how the route was established and does not reference secrets, the Tailscale CLI, or SSH. A web or native RouteProvider establishes the route. Starting agentd is also outside the route responsibility and is managed by launchd, systemd, or an explicit bootstrap command.
+MuximodClient receives an MuximodRoute. It does not know how the route was established and does not reference secrets, the Tailscale CLI, or SSH. A web or native RouteProvider establishes the route. Starting muximod is also outside the route responsibility and is managed by launchd, systemd, or an explicit bootstrap command.
 
-agentd is a long-running control-plane daemon, not a one-shot CLI. It manages tmux, agent plugins, and SQLite on the same host. The name agentd follows the Unix convention of using d for a daemon and clearly separates the daemon from the agent CLI.
+muximod is a long-running control-plane daemon, not a one-shot CLI. It manages tmux, agent plugins, and SQLite on the same host. The name muximod follows the Unix convention of using d for a daemon and clearly separates the daemon from the muximo CLI.
 
 ## 6. Clean / hexagonal architecture
 
@@ -329,7 +329,7 @@ The current route map is:
 /terminals/:terminalId/sessions/:sessionName/panes/:paneId
 ~~~
 
-The `:paneId` URL segment is the stable `PaneSummary.id` stored by agentd, not tmux's volatile pane target such as `%0`. The route ViewModel resolves that stable ID to the current `tmuxPaneId` only at the terminal transport boundary. This keeps URLs readable and prevents tmux implementation details from leaking into navigation. A legacy tmux target may still be accepted while old links are migrated.
+The `:paneId` URL segment is the stable `PaneSummary.id` stored by muximod, not tmux's volatile pane target such as `%0`. The route ViewModel resolves that stable ID to the current `tmuxPaneId` only at the terminal transport boundary. This keeps URLs readable and prevents tmux implementation details from leaking into navigation. A legacy tmux target may still be accepted while old links are migrated.
 
 Because these are clean client-side routes, the development and preview servers must return `index.html` for unknown document paths. A production static host needs an equivalent SPA fallback or rewrite rule.
 
@@ -412,7 +412,7 @@ A fixture is the complete test world: the SUT, DI bindings, fakes/stubs/mocks/sp
 
 The runner captures only errors thrown by `execute` as `Outcome<Result>`. Fixture setup and `observe` errors are infrastructure failures. `observe` only reads recordings and state after execution; it must not call the SUT, advance time, emit events, or consume streams. Every assertion is named and all assertions run sequentially. Failures retain their matcher diff and original stack and are reported together. An execute error must be explicitly handled by `hasError(...)` or a custom assertion marked as handling outcome errors; otherwise the row fails even if an observation happens to match.
 
-Use the shared helpers from `@mobile-agent/test-support`: `hasNoError()`, `returns(expected)`, `hasError({ code, message, details })`, `hasObserved(key, expected)`, `hasCalls(key, expected)`, and `hasEvents(key, expected)`. Custom assertions are allowed only when these helpers cannot express the contract and must be read-only.
+Use the shared helpers from `@muximo/test-support`: `hasNoError()`, `returns(expected)`, `hasError({ code, message, details })`, `hasObserved(key, expected)`, `hasCalls(key, expected)`, and `hasEvents(key, expected)`. Custom assertions are allowed only when these helpers cannot express the contract and must be read-only.
 
 Fixture factories may register cleanup callbacks while setup is in progress. The runner executes all registered callbacks and the returned cleanup callback in LIFO order, including when setup, execute, observe, or assertions fail, and aggregates cleanup failures.
 
@@ -441,7 +441,7 @@ profiles:
     command: codex
     args: ["--profile", "mobile"]
     env:
-      AGENTD_AGENT_SESSION_ID: "<agent-session-id>"
+      MUXIMOD_AGENT_SESSION_ID: "<agent-session-id>"
     notifications:
       states: [waiting_input, waiting_approval, failed]
 ~~~
@@ -503,7 +503,7 @@ plugin emits no guess and the lifecycle fallback remains in effect.
 ### 7.3 Plugin execution
 
 - Built-in and trusted plugins run as TypeScript modules in the host-side managed
-  agent process; normalized observations reach agentd through its private local
+  agent process; normalized observations reach muximod through its private local
   control channel.
 - Custom or other-language plugins run as child processes using JSONL over stdin/stdout.
 - Plugins can be installed from npm packages, repository packages, or the user's XDG configuration directory.
@@ -511,26 +511,26 @@ plugin emits no guess and the lifecycle fallback remains in effect.
 - Plugins do not access tmux or SQLite directly; the managed launcher provides an
   execution context and an observation sink.
 
-External plugins isolate crashes from the agentd process. They are not fully sandboxed when they can execute host commands or read files. The installation flow must make this trust boundary explicit.
+External plugins isolate crashes from the muximod process. They are not fully sandboxed when they can execute host commands or read files. The installation flow must make this trust boundary explicit.
 
 ### 7.4 CLI
 
 ~~~sh
-agent plugin list
-agent plugin add npm:@example/agent-plugin
-agent plugin enable example
-agent plugin doctor example
+muximo plugin list
+muximo plugin add npm:@example/agent-plugin
+muximo plugin enable example
+muximo plugin doctor example
 
-agent agent list
-agent profile list
-agent profile create mobile-codex --extends codex
+muximo agent list
+muximo profile list
+muximo profile create mobile-codex --extends codex
 ~~~
 
 ## 8. tmux integration
 
 ### 8.1 Management and monitoring route
 
-agentd uses tmux Control Mode for management and monitoring:
+muximod uses tmux Control Mode for management and monitoring:
 
 - receive pane output events such as percent output;
 - send input, resize, and selection commands for a pane;
@@ -544,21 +544,21 @@ The initial mobile terminal does not project Control Mode events directly onto t
 The managed desktop and mobile launch path is deliberately explicit:
 
 ~~~text
-agent tmux new-session
+muximo tmux new-session
         |
-        +-- tmux default-command -> agent shell
+        +-- tmux default-command -> muximo shell
         |                            |
-        |                            +-- agent run codex|claude
+        |                            +-- muximo run codex|claude
         |
-        +-- agentd tmux monitor: session/window/pane existence and geometry
+        +-- muximod tmux monitor: session/window/pane existence and geometry
         +-- provider plugin: AgentSession output, logs, and state observations
 ~~~
 
-`agent tmux new-session` configures the initial pane and the tmux
-`default-command` to use `agent shell`. The application uses the same wrapper
-when it creates a session or pane. `agent shell` is only a wrapper that starts
+`muximo tmux new-session` configures the initial pane and the tmux
+`default-command` to use `muximo shell`. The application uses the same wrapper
+when it creates a session or pane. `muximo shell` is only a wrapper that starts
 the requested command and restores shell metadata when it exits; it does not
-create a separate shell lifecycle record. `agent run` and `agent resume` adopt an
+create a separate shell lifecycle record. `muximo run` and `muximo resume` adopt an
 AgentSession into the current pane using its `executionId`, then release that
 association when the backend exits. The tmux layer owns only infrastructure
 facts. Provider-specific state and approval detection belong to the
@@ -569,24 +569,24 @@ and geometry.
 
 ### 8.2 Mobile terminal data route
 
-For the one-pane mobile view, agentd creates a PTY and attaches a client to the same tmux session with active-pane.
+For the one-pane mobile view, muximod creates a PTY and attaches a client to the same tmux session with active-pane.
 
 ~~~text
-xterm.js <-> WebSocket <-> agentd <-> Bun.Terminal <-> tmux attach-session -t <target>
+xterm.js <-> WebSocket <-> muximod <-> Bun.Terminal <-> tmux attach-session -t <target>
 ~~~
 
-- agentd forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
+- muximod forwards terminal bytes from the PTY in binary WebSocket frames without interpreting them;
 - xterm.js interprets ANSI/VT sequences, alternate screen, cursor state, and selection; tmux owns pane scrollback and copy mode, with mouse-wheel input forwarded through the PTY;
 - WebSocket text frames are reserved for control messages such as attach, resize, and detach;
 - xterm.js cols/rows are sent back to the PTY so the TUI runs at the phone's actual width;
 - while mobile is connected, the target window's window-size is temporarily set to manual and the phone size is applied through resize-window;
 - active-pane keeps the mobile active pane separate from the desktop client's active pane;
 - zoom and window size are window-level tmux properties, so the desktop may temporarily become narrow while mobile owns the viewport;
-- agentd snapshots the layout, zoom, active pane, window-size setting, and actual dimensions when the viewport is acquired;
+- muximod snapshots the layout, zoom, active pane, window-size setting, and actual dimensions when the viewport is acquired;
 - desktop activity moves ownership back to the desktop and restores its size;
 - when mobile disconnects before a desktop takeover, the snapshot is fully restored; after a takeover, desktop changes win and the old snapshot is not applied over them.
 
-The preferred desktop-activity detection method is for agentd to register a tmux hook that calls an internal localhost HTTP endpoint. If hooks are unavailable, agentd falls back to polling client state. Focus events depend on terminal support, so keyboard input and resize must also trigger restoration.
+The preferred desktop-activity detection method is for muximod to register a tmux hook that calls an internal localhost HTTP endpoint. If hooks are unavailable, muximod falls back to polling client state. Focus events depend on terminal support, so keyboard input and resize must also trigger restoration.
 
 ### 8.3 Desktop integration
 
@@ -602,13 +602,13 @@ When connecting to a remote host over SSH, allocate a TTY:
 ssh -tt host 'tmux attach-session -t project'
 ~~~
 
-Multiple clients can attach to one tmux session, so desktop terminal use and agentd-mediated mobile use can coexist. tmux attach is session-oriented; it does not replace the pane metadata or state detection managed by agentd.
+Multiple clients can attach to one tmux session, so desktop terminal use and muximod-mediated mobile use can coexist. tmux attach is session-oriented; it does not replace the pane metadata or state detection managed by muximod.
 
 ### 8.4 tmux options and recovery
 
-At startup, agentd scans tmux and rebuilds:
+At startup, muximod scans tmux and rebuilds:
 
-- agentd user options;
+- muximod user options;
 - session, window, and pane structure;
 - cwd, command, and process information;
 - saved Pane projections and AgentSession records from SQLite.
@@ -667,7 +667,7 @@ The design uses the type-safe idea behind tRPC. However, long-lived connections,
 
 ### Current HTTP and event API
 
-The current AgentdApp exposes:
+The current MuximodApp exposes:
 
 ~~~text
 GET  /health
@@ -691,9 +691,9 @@ to invalidate their TanStack Query entries and refetch the current state over
 HTTP. The event stream is a hint rather than a durable log: clients refetch on
 connect and reconnect, and the host-side monitor remains the source of truth.
 
-agentd currently discovers changes with a short tmux reconciliation poll. This
+muximod currently discovers changes with a short tmux reconciliation poll. This
 also observes panes created directly from a desktop tmux client, without
-requiring that client to use the Mobile Agent CLI.
+requiring that client to use the Muximo CLI.
 
 The same monitor periodically reconciles the SQLite `panes` table. By default,
 it polls tmux every 1 second, attempts orphan cleanup every 60 seconds, and
@@ -709,19 +709,19 @@ treating a temporary tmux outage as proof that every pane was deleted. A
 healthy snapshot with no panes is authoritative for change detection but still
 does not run cleanup; normal retention cleanup resumes once a healthy snapshot
 with at least one pane is available. The intervals and retention window can be
-overridden with `AGENTD_TMUX_POLL_INTERVAL_MS`,
-`AGENTD_PANE_CLEANUP_INTERVAL_MS`, and `AGENTD_PANE_RETENTION_MS`.
+overridden with `MUXIMOD_TMUX_POLL_INTERVAL_MS`,
+`MUXIMOD_PANE_CLEANUP_INTERVAL_MS`, and `MUXIMOD_PANE_RETENTION_MS`.
 
 ### 9.1 Starting and resuming from an unmanaged shell
 
-`agent run` and `agent resume` can be invoked from an arbitrary shell inside a
-tmux pane; the pane does not need to have been created by agentd. The CLI
+`muximo run` and `muximo resume` can be invoked from an arbitrary shell inside a
+tmux pane; the pane does not need to have been created by muximod. The CLI
 persists the logical `agent_sessions` record first, then uses the private
-agentd Unix control socket to adopt the current `TMUX_PANE`. agentd validates
+muximod Unix control socket to adopt the current `TMUX_PANE`. muximod validates
 the session's current `executionId`, confirms that the pane exists in its tmux
 server, writes stable tmux pane options, and immediately reconciles the pane
 into SQLite. The CLI falls back to writing those options through the current
-tmux socket only when the control socket is unavailable; agentd still validates
+tmux socket only when the control socket is unavailable; muximod still validates
 the association when it next polls. Outside tmux, the agent session remains
 managed in SQLite but has no pane association.
 
@@ -732,8 +732,8 @@ different lifetimes:
   metadata and leaves the pane as a shell, while the session record remains
   available for `resume` according to its normal lifecycle rules;
 - a crash can leave tmux metadata behind, but reconciliation requires the
-  metadata execution ID to match the current SQLite execution and requires an
-  agent command; stale metadata on a returned shell is cleared;
+  metadata execution ID to match the current SQLite execution and requires a
+  muximo command; stale metadata on a returned shell is cleared;
 - `resume` claims the execution with an atomic SQLite update, so concurrent
   resumes allow only one owner to proceed. Only an execution with a confirmed
   backend session ID is resumable; a crash before backend startup remains a
@@ -744,11 +744,11 @@ different lifetimes:
   deletes `agent_sessions`, so losing a tmux pane does not by itself destroy
   resumability.
 
-POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check and only for a new-window initial directory. A tmux split never accepts a directory override: the adapter asks tmux for the target pane's `#{pane_current_path}`. Worktree agents open in a new window after workspace selection; a worktree agent split is rejected because the worktree does not exist until `agent run` prepares it. Starting an agent pane delegates to the host-side agent command; the browser never executes arbitrary host commands directly.
+POST /api/sessions and POST /api/panes resolve registered workspace IDs on the host and validate the selected directory against the configured roots. A legacy cwd is accepted only through the same policy check and only for a new-window initial directory. A tmux split never accepts a directory override: the adapter asks tmux for the target pane's `#{pane_current_path}`. Worktree agents open in a new window after workspace selection; a worktree agent split is rejected because the worktree does not exist until `muximo run` prepares it. Starting an agent pane delegates to the host-side `muximo` command; the browser never executes arbitrary host commands directly.
 
 ### Workspace directory picker
 
-Rather than auto-selecting every directory below a host root, the UI first browses directories allowed by agentd and explicitly registers the selected directory. `GET /api/workspaces` returns only registered workspaces; `GET /api/workspace-directories` exposes browse candidates. Registration also stores optional executable setup and cleanup script paths plus one relative worktree copy pattern per line. Patterns support `*` for one path segment and `**` for nested segments; matching unmanaged files, including ignored files, are copied to the same relative path in a new worktree. Copying happens after `git worktree add` and before the setup hook. Hook paths are resolved on the host and may live outside the repository, while the hook process runs with the generated worktree as cwd. The API returns stable workspace IDs; agentd resolves the path with realpath and verifies that it remains below an allowed root. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
+Rather than auto-selecting every directory below a host root, the UI first browses directories allowed by muximod and explicitly registers the selected directory. `GET /api/workspaces` returns only registered workspaces; `GET /api/workspace-directories` exposes browse candidates. Registration also stores optional executable setup and cleanup script paths plus one relative worktree copy pattern per line. Patterns support `*` for one path segment and `**` for nested segments; matching unmanaged files, including ignored files, are copied to the same relative path in a new worktree. Copying happens after `git worktree add` and before the setup hook. Hook paths are resolved on the host and may live outside the repository, while the hook process runs with the generated worktree as cwd. The API returns stable workspace IDs; muximod resolves the path with realpath and verifies that it remains below an allowed root. The iOS Files picker selects files on the phone and must not be used to select a remote Mac workspace.
 
 ## 10. Persistence
 
@@ -785,13 +785,13 @@ Implement the web UI with React, TypeScript, and xterm.js, then wrap it with Cap
 Reasons:
 
 - retain the fast Vite and HMR web development loop;
-- share agentd protocol types in TypeScript;
+- share muximod protocol types in TypeScript;
 - use the WebSocket Web API;
 - let xterm.js handle ANSI/VT, selection, and mouse input as the terminal emulator while tmux owns pane scrollback;
 - keep the UI focused on one pane, where a web implementation is a good fit;
 - limit native work to Swift plugins and Widget Extensions.
 
-React Native remains an option if terminal rendering or iOS-specific UI must be embedded as a native View. By keeping the UI and agentd protocol separate, xterm.js can later be replaced with a SwiftUI or native terminal implementation.
+React Native remains an option if terminal rendering or iOS-specific UI must be embedded as a native View. By keeping the UI and muximod protocol separate, xterm.js can later be replaced with a SwiftUI or native terminal implementation.
 
 ### 11.2 Screens
 
@@ -856,28 +856,28 @@ The WebSocket is for real-time foreground display, not for keeping an iOS backgr
 ### Basic MVP topology
 
 ~~~text
-Web UI Serve                  agentd Serve
+Web UI Serve                  muximod Serve
       |                             |
       v HTTPS                      v HTTPS / WSS
-  Web client  ----------------> agentd: 127.0.0.1:4317
-               agentdBaseUrl
+  Web client  ----------------> muximod: 127.0.0.1:4317
+               muximodBaseUrl
 ~~~
 
 ### Policy
 
 - Use Tailscale ACLs as the first network boundary.
-- The Web build contains no agentd endpoint; the client receives `agentdBaseUrl` from pairing at runtime.
-- Store only non-sensitive settings such as `agentdBaseUrl`, display name, and last-connected time in Web Storage.
+- The Web build contains no muximod endpoint; the client receives `muximodBaseUrl` from pairing at runtime.
+- Store only non-sensitive settings such as `muximodBaseUrl`, display name, and last-connected time in Web Storage.
 - Do not bring private keys, SSH passwords, or pairing secrets into the browser build; keep them in the native Keychain when SSH is implemented.
 - Never put a Tailscale administration API token on the iPhone.
 - Treat SSH as a future adapter for bootstrap, starting Serve, recovery, or bastion routing. It is not part of the MVP.
 - Even in a native SSH implementation, keep private keys in Keychain and out of the API client and web bundle.
 - Verify in an early spike that Tailscale Serve supports HTTP upgrades and long-lived WebSocket connections in the target environment.
-- `agent serve tailscale` configures a persistent agentd-only Serve route; `agent dev serve tailscale` starts the source Web and agentd services independently. Serve setup remains an external transport concern rather than agentd business logic.
-- Verify Serve identity headers such as Tailscale-User-Login at the localhost agentd boundary and combine them with pairing and authorization.
-- If Serve has an operational limitation, first consider SSH port forwarding to the same agentd API.
+- `muximo serve tailscale` configures a persistent muximod-only Serve route; `muximo dev serve tailscale` starts the source Web and muximod services independently. Serve setup remains an external transport concern rather than muximod business logic.
+- Verify Serve identity headers such as Tailscale-User-Login at the localhost muximod boundary and combine them with pairing and authorization.
+- If Serve has an operational limitation, first consider SSH port forwarding to the same muximod API.
 
-SSH does not start agentd. When agentd is already running and the phone can reach the host on the same tailnet, Serve is simpler. SSH becomes useful when, for example, the bastion visible to the phone and the workstation running agentd are different hosts and the bastion must open an SSH connection to the workstation.
+SSH does not start muximod. When muximod is already running and the phone can reach the host on the same tailnet, Serve is simpler. SSH becomes useful when, for example, the bastion visible to the phone and the workstation running muximod are different hosts and the bastion must open an SSH connection to the workstation.
 
 Do not embed Tailscale itself in the mobile app initially. Prefer the official Tailscale iOS app and connect to a host already present in the tailnet.
 
@@ -889,14 +889,14 @@ The browser connection profile stores only:
 type BrowserConnectionProfile = {
   id: string
   name: string
-  agentdBaseUrl: string
+  muximodBaseUrl: string
   updatedAt: string
 }
 ~~~
 
-`agentdBaseUrl` is a complete base URL, including an external port or path when one is configured. The client must not store or discover the host's internal `AGENTD_PORT` unless `agent pair --without-serve` intentionally produced a local endpoint. If a native SSH route is added later, its RouteProvider creates a local forwarded URL (which may contain an ephemeral port) and hands that URL to `AgentdClient`.
+`muximodBaseUrl` is a complete base URL, including an external port or path when one is configured. The client must not store or discover the host's internal `MUXIMOD_PORT` unless `muximo pair --without-serve` intentionally produced a local endpoint. If a native SSH route is added later, its RouteProvider creates a local forwarded URL (which may contain an ephemeral port) and hands that URL to `MuximodClient`.
 
-localStorage or another Web Storage implementation is sufficient because no secret is stored. Tailscale authentication and ACLs remain in the Tailscale app and tailnet. agentd continues to bind to localhost. If Serve identity headers or pairing tokens are added later, keep them short-lived and do not turn them into long-lived browser secrets.
+localStorage or another Web Storage implementation is sufficient because no secret is stored. Tailscale authentication and ACLs remain in the Tailscale app and tailnet. muximod continues to bind to localhost. If Serve identity headers or pairing tokens are added later, keep them short-lived and do not turn them into long-lived browser secrets.
 
 ### Additional native responsibilities
 
@@ -905,20 +905,20 @@ The native app can use the browser build's Serve route without change. Only an S
 ~~~text
 SSH RouteProvider
   |-- obtain a key reference from Keychain
-  |-- start local forwarding from bastion to the agentd host
+  |-- start local forwarding from bastion to the muximod host
   |-- generate localhost httpBaseUrl / websocketUrl
   |-- close the forward and end secret use
 ~~~
 
-This adapter returns connection URLs and does not depend on the agentd-client package. SSH dependencies do not enter the web bundle, Hono RPC, domain, or application packages.
+This adapter returns connection URLs and does not depend on the muximod-client package. SSH dependencies do not enter the web bundle, Hono RPC, domain, or application packages.
 
 ## 13. Notifications
 
 ~~~text
-agent plugin observation
+muximo plugin observation
         |
         v
-agentd state transition
+muximod state transition
         |
         v
 NotificationPolicy
@@ -934,7 +934,7 @@ Example notification states:
 - waiting_approval;
 - failed;
 - completed, when enabled by the user;
-- host or agentd disconnected.
+- host or muximod disconnected.
 
 Deduplicate notifications by agentSessionId and state transition. Do not include secrets or complete agent output in notifications or Live Activities. Show only a short summary containing the agent name, workspace name, and reason.
 
@@ -945,25 +945,25 @@ Deduplicate notifications by agentSessionId and state transition. Do not include
 Do not build a desktop native app initially. Combine:
 
 - tmux attach from an existing terminal;
-- the agent CLI;
-- agent tui;
+- the muximo CLI;
+- muximo tui;
 - tmux status-line integration;
-- diagnostic commands such as agent doctor.
+- diagnostic commands such as muximo doctor.
 
 ### TUI role
 
 ~~~sh
-agent tui
-agent pane list
-agent pane focus --waiting
-agent pane open --agent codex --worktree auto
-agent config edit
-agent plugin list
-agent workspace list
-agent doctor
+muximo tui
+muximo pane list
+muximo pane focus --waiting
+muximo pane open --agent codex --worktree auto
+muximo config edit
+muximo plugin list
+muximo workspace list
+muximo doctor
 ~~~
 
-The TUI connects to agentd through a Unix socket and uses the same use cases as mobile. It must not directly manipulate tmux or SQLite.
+The TUI connects to muximod through a Unix socket and uses the same use cases as mobile. It must not directly manipulate tmux or SQLite.
 
 ### Future desktop UI
 
@@ -982,18 +982,18 @@ Build it as a web UI first. Wrap it with Tauri only when system-tray or OS integ
 The currently implemented agent lifecycle commands read and write agent_sessions rather than a state file:
 
 ~~~sh
-agent run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
-agent resume [--global] NAME [-- BACKEND_ARGS...]
-agent list [--global] [--names|--json]
-agent cleanup [--global] [--force] NAME
-agent session list [--global] [--names|--json]
-agent session resume [--global] NAME [-- BACKEND_ARGS...]
-agent session cleanup [--global] [--force] NAME
-agent workspace list [--json]
-agent workspace add DIRECTORY [OPTIONS]
-agent workspace update WORKSPACE [OPTIONS]
-agent workspace delete WORKSPACE [--force]
-agent doctor [--verbose]
+muximo run <codex|claude> [OPTIONS] [-- BACKEND_ARGS...]
+muximo resume [--global] NAME [-- BACKEND_ARGS...]
+muximo list [--global] [--names|--json]
+muximo cleanup [--global] [--force] NAME
+muximo session list [--global] [--names|--json]
+muximo session resume [--global] NAME [-- BACKEND_ARGS...]
+muximo session cleanup [--global] [--force] NAME
+muximo workspace list [--json]
+muximo workspace add DIRECTORY [OPTIONS]
+muximo workspace update WORKSPACE [OPTIONS]
+muximo workspace delete WORKSPACE [--force]
+muximo doctor [--verbose]
 ~~~
 
 The `run` subcommand is a launch operation, not a separate persisted entity. It
@@ -1006,43 +1006,43 @@ the setup hook runs; cleanup hooks run before the worktree is removed. With
 
 The CLI workspace commands persist registered directories, hook paths, and copy patterns in `workspaces`. Git directories are canonicalized to their repository root, and the directory is the workspace identity; updating a registration changes metadata only. Moving a registration therefore requires deleting the old entry and adding the new directory. Deleting a workspace unregisters metadata and does not remove files from the host.
 
-Workspace CRUD is implemented in `packages/application` as the shared `WorkspaceCrud` use cases (`ListWorkspaces`, `RegisterWorkspace`, `UpdateWorkspace`, and `DeleteWorkspace`). The HTTP adapter parses and validates request bodies, while the CLI parses command-line options; both invoke the same application rules and audit port. Host-specific directory, Git, and executable-hook checks are injected through `WorkspaceDirectoryPort`. agentd exposes the same operations through `GET`/`POST` `/api/workspaces` and `PATCH`/`DELETE` `/api/workspaces/:workspaceId`.
+Workspace CRUD is implemented in `packages/application` as the shared `WorkspaceCrud` use cases (`ListWorkspaces`, `RegisterWorkspace`, `UpdateWorkspace`, and `DeleteWorkspace`). The HTTP adapter parses and validates request bodies, while the CLI parses command-line options; both invoke the same application rules and audit port. Host-specific directory, Git, and executable-hook checks are injected through `WorkspaceDirectoryPort`. muximod exposes the same operations through `GET`/`POST` `/api/workspaces` and `PATCH`/`DELETE` `/api/workspaces/:workspaceId`.
 
-The following commands are planned as agentd and TUI extensions:
+The following commands are planned as muximod and TUI extensions:
 
 ~~~sh
-agent daemon start
-agent daemon status
-agent daemon stop
+muximo daemon start
+muximo daemon status
+muximo daemon stop
 
-agent mobile serve --stdio
-agent mobile status
+muximo mobile serve --stdio
+muximo mobile status
 
-agent pane list
-agent pane open --agent codex --name review --worktree auto
-agent pane open --shell
-agent pane focus <pane-id>
-agent pane send <pane-id> --text 'continue'
-agent pane resize <pane-id> --cols 120 --rows 40
-agent pane close <pane-id>
+muximo pane list
+muximo pane open --agent codex --name review --worktree auto
+muximo pane open --shell
+muximo pane focus <pane-id>
+muximo pane send <pane-id> --text 'continue'
+muximo pane resize <pane-id> --cols 120 --rows 40
+muximo pane close <pane-id>
 
-agent profile list
-agent plugin list
-agent plugin add <package-or-path>
+muximo profile list
+muximo plugin list
+muximo plugin add <package-or-path>
 
-agent tui
-agent config get
-agent config edit
-agent doctor
+muximo tui
+muximo config get
+muximo config edit
+muximo doctor
 ~~~
 
-Unimplemented commands such as agent mobile serve --stdio remain thin transport adapters. Business logic is delegated to the long-running agentd process.
+Unimplemented commands such as muximo mobile serve --stdio remain thin transport adapters. Business logic is delegated to the long-running muximod process.
 
 ## 16. Security
 
 - Bind the WebSocket endpoint to localhost and use Tailscale Serve as the default route.
 - Use Tailscale ACLs to control access by host and user.
-- Store only non-sensitive settings such as the agentd URL in browser storage.
+- Store only non-sensitive settings such as the muximod URL in browser storage.
 - If pairing tokens are added, issue and revoke them per device.
 - Store device tokens, private keys, and refresh tokens in native Keychain or on the host; never include them in the web bundle.
 - Never put complete agent output in Live Activities or notifications.
@@ -1059,7 +1059,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 - The browser build connects through Tailscale Serve over HTTPS/WSS.
 - WebSocket reconnects automatically with exponential backoff.
 - State can be restored from a snapshot and event sequence.
-- tmux panes can be rediscovered after agentd restarts.
+- tmux panes can be rediscovered after muximod restarts.
 - Unsent input is not queued without a bound while offline.
 
 ### Performance
@@ -1090,19 +1090,19 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 
 ### Phase 1: host MVP
 
-- agentd start, stop, and status;
+- muximod start, stop, and status;
 - browser connection settings through Tailscale Serve;
 - viewport monitoring through tmux hooks and client polling, with Control Mode management as the next step;
 - shell-pane display, input, and resize through Bun.Terminal and tmux attach-session -f active-pane;
 - viewport lease with mobile zoom, desktop takeover, and size/layout restoration;
 - xterm.js mobile viewport;
 - SQLite and Drizzle;
-- agent pane list CLI and Pane Board;
+- muximo pane list CLI and Pane Board;
 - tmux restart recovery.
 
 ### Phase 2: desktop TUI
 
-- agent tui;
+- muximo tui;
 - waiting-pane list;
 - attach or switch-client after pane selection;
 - plugin, profile, and workspace management;
@@ -1111,7 +1111,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 ### Phase 3: mobile proof of concept
 
 - Web and xterm.js, optionally packaged as iOS with Capacitor;
-- browser connection settings for saving and switching agentd URLs;
+- browser connection settings for saving and switching muximod URLs;
 - WSS connection;
 - one-pane display;
 - keyboard, selection, copy, and scroll;
@@ -1143,7 +1143,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 ### Phase 7: future bastion SSH route
 
 - native SshRouteProvider;
-- local port forwarding from bastion to the agentd host;
+- local port forwarding from bastion to the muximod host;
 - Keychain references, connection diagnostics, and reliable cleanup;
 - integration tests using the same HTTP/WebSocket contract as Serve.
 
@@ -1156,7 +1156,7 @@ Unimplemented commands such as agent mobile serve --stdio remain thin transport 
 | Agent waiting-state detection is unreliable | Investigate structured event support | Provider-specific structured monitor plus explicit lifecycle fallback |
 | Live Activity APIs are insufficient | Build an aggregate Activity proof of concept | Implement a Swift extension |
 | External plugins require too many privileges | Show permissions in install and doctor flows | Child process, dedicated user, or sandbox |
-| tmux and agentd state diverge | Test restart, manual changes, and pane movement | tmux options plus recovery scan |
+| tmux and muximod state diverge | Test restart, manual changes, and pane movement | tmux options plus recovery scan |
 | High output volume makes mobile slow | Measure large logs and long connections | Batching, rate limits, and capture separation |
 
 ## 20. References

@@ -7,7 +7,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { classifyPinchDirection, isBrowserZoomKey, isZoomInKey } from "./window-map-gesture";
 
 type Context = {};

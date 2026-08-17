@@ -6,7 +6,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { hasPaneGeometry, isOverlayBackdropTarget, paneLayoutNeedsCompactTargets } from "./pane-layout-overlay-view";
 
 type Geometry = {

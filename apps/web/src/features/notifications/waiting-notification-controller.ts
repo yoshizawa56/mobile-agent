@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PaneSummary } from "@mobile-agent/protocol";
+import type { PaneSummary } from "@muximo/protocol";
 import type { WaitingAgent } from "./waiting-notification-patterns";
 
 export type WaitingNoticeState = "waiting_input" | "waiting_approval";

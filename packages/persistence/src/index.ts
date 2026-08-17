@@ -8,18 +8,18 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveAgentdPaths } from "./paths.js";
+import { resolveMuximodPaths } from "./paths.js";
 import type {
   AgentSessionRepository,
   PaneFilter,
   PaneRepository,
   WorkspaceRepository,
-} from "@mobile-agent/application";
+} from "@muximo/application";
 import type {
   AgentSessionRecord,
   PaneRecord,
   WorkspaceRecord,
-} from "@mobile-agent/domain";
+} from "@muximo/domain";
 import {
   agentSessions,
   auditEvents,
@@ -32,8 +32,8 @@ import {
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
-export { agentdControlSocketMaxBytes, defaultAgentdInstanceDirectory, resolveAgentdPaths, validateAgentdControlSocketPath } from "./paths.js";
-export type { AgentdInstancePaths, AgentdPathOverrides } from "./paths.js";
+export { muximodControlSocketMaxBytes, defaultMuximodInstanceDirectory, resolveMuximodPaths, validateMuximodControlSocketPath } from "./paths.js";
+export type { MuximodInstancePaths, MuximodPathOverrides } from "./paths.js";
 export { AuthStore, AuthStoreError } from "./auth.js";
 export type {
   AuthDeviceRecord,
@@ -60,14 +60,14 @@ export type AgentDatabaseOptions = {
 };
 
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
-  return resolveAgentdPaths(env).databaseFile;
+  return resolveMuximodPaths(env).databaseFile;
 }
 
 export function createAgentDatabase(file: string | undefined = undefined, options: AgentDatabaseOptions = {}): AgentDatabase {
   const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
-  const configuredInstanceDirectory = file === undefined && process.env.AGENTD_INSTANCE_DIR?.trim()
-    ? resolveAgentdPaths(process.env).instanceDirectory
+  const configuredInstanceDirectory = file === undefined && process.env.MUXIMOD_INSTANCE_DIR?.trim()
+    ? resolveMuximodPaths(process.env).instanceDirectory
     : undefined;
   const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
   if (databasePath !== ":memory:") {
@@ -108,9 +108,9 @@ function secureDatabaseFiles(databasePath: string): void {
 }
 
 function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
-  const configured = [env.AGENTD_INSTANCE_DIR, env.AGENTD_DB_FILE, env.AGENT_DATABASE_FILE].some((value) => Boolean(value?.trim()));
+  const configured = [env.MUXIMOD_INSTANCE_DIR, env.MUXIMOD_DB_FILE, env.MUXIMO_DATABASE_FILE].some((value) => Boolean(value?.trim()));
   if (!configured) return ":memory:";
-  return resolveAgentdPaths(env).databaseFile;
+  return resolveMuximodPaths(env).databaseFile;
 }
 
 export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
@@ -118,9 +118,9 @@ export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.en
   if (!folder) {
     const moduleDirectory = dirname(fileURLToPath(import.meta.url));
     const executableDirectory = dirname(process.execPath);
-    throw new Error(`database migration files not found; set AGENTD_MIGRATIONS_DIR (searched: ${[
-      env.AGENTD_MIGRATIONS_DIR ? resolve(process.cwd(), env.AGENTD_MIGRATIONS_DIR) : undefined,
-      env.AGENT_MIGRATIONS_DIR ? resolve(process.cwd(), env.AGENT_MIGRATIONS_DIR) : undefined,
+    throw new Error(`database migration files not found; set MUXIMOD_MIGRATIONS_DIR (searched: ${[
+      env.MUXIMOD_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMOD_MIGRATIONS_DIR) : undefined,
+      env.MUXIMO_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMO_MIGRATIONS_DIR) : undefined,
       join(moduleDirectory, "../drizzle"),
       join(executableDirectory, "migrations"),
       join(process.cwd(), "packages/persistence/drizzle"),
@@ -131,7 +131,7 @@ export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.en
 }
 
 function findAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const configured = env.AGENTD_MIGRATIONS_DIR ?? env.AGENT_MIGRATIONS_DIR;
+  const configured = env.MUXIMOD_MIGRATIONS_DIR ?? env.MUXIMO_MIGRATIONS_DIR;
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const executableDirectory = dirname(process.execPath);
   const candidates = [
@@ -149,7 +149,7 @@ function materializeEmbeddedMigrations(): string {
     .update(embeddedMigrationFiles.map((file) => `${file.path}\0${file.contents}`).join("\0"))
     .digest("hex")
     .slice(0, 16);
-  const migrationsFolder = join(tmpdir(), "mobile-agent", "migrations", digest);
+  const migrationsFolder = join(tmpdir(), "muximo", "migrations", digest);
   for (const file of embeddedMigrationFiles) {
     const target = join(migrationsFolder, file.path);
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
@@ -459,7 +459,7 @@ function ensureAuthSchema(sqlite: Database): void {
       pairing_id TEXT PRIMARY KEY NOT NULL,
       server_id TEXT NOT NULL,
       web_origin TEXT NOT NULL DEFAULT '',
-      agentd_base_url TEXT NOT NULL,
+      muximod_base_url TEXT NOT NULL,
       secret_hash TEXT NOT NULL UNIQUE,
       claim_token_hash TEXT UNIQUE,
       status TEXT NOT NULL,

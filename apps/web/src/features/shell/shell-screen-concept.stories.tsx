@@ -121,7 +121,7 @@ function ShellScreenFinal({ notifications = waitingAgents }: { notifications?: W
   const [hint, setHint] = useState<string | null>(null);
   const hintTimerRef = useRef<number | null>(null);
   const current = paneFor(currentTarget) ?? mockPanes[0] ?? null;
-  const session = current?.sessionName ?? "mobile-agent";
+  const session = current?.sessionName ?? "muximo";
   const sessionPanes = mockPanes.filter((pane) => pane.sessionName === session);
   const waiting = sessionPanes.filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval").length;
   const running = sessionPanes.filter((pane) => pane.state === "running").length;
@@ -186,7 +186,7 @@ function LegacyShellScreen() {
       <header className="flex h-[50px] shrink-0 items-center justify-between gap-3 border-b border-[#17391f] bg-[rgb(6_13_8_/_88%)] px-[14px] backdrop-blur-[18px]">
         <div className="flex items-center gap-2.5">
           <span className="grid size-7 rotate-[-8deg] place-items-center rounded-[9px] border border-[#2c6b38] bg-[#071309] font-mono text-lg leading-none text-lime shadow-[inset_0_0_0_1px_rgb(139_255_154_/_8%),0_0_24px_rgb(57_214_91_/_12%)]">⌁</span>
-          <span className="text-[0.95rem] font-bold tracking-[-0.035em]">agent<span className="text-lime-deep">.</span></span>
+          <span className="text-[0.95rem] font-bold tracking-[-0.035em]">muximo<span className="text-lime-deep">.</span></span>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-[7px] rounded-full border border-line-strong bg-[rgb(10_22_13_/_86%)] px-[9px] py-[6px]">
@@ -200,7 +200,7 @@ function LegacyShellScreen() {
         <span className="shrink-0 text-lime"><AppIcon name="terminal" size={14} /></span>
         <strong className="shrink-0">zsh</strong>
         <span className="text-[#3e6547]">·</span>
-        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">mobile-agent</span>
+        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">muximo</span>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <button className="grid size-6 min-w-6 place-items-center rounded-[7px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986]" type="button" aria-label="Open a new pane"><AppIcon name="new-pane" size={14} /></button>
           <button className="grid size-6 min-w-6 place-items-center rounded-[7px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986]" type="button" aria-label="Open window map"><AppIcon name="layout" size={14} /></button>

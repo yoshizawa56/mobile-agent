@@ -55,7 +55,7 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
             <input className={inputClass}
               value={viewModel.registrationDirectory}
               onChange={(event) => viewModel.onRegistrationDirectoryChange(event.target.value)}
-              placeholder="/Users/me/work/mobile-agent"
+              placeholder="/Users/me/work/muximo"
               autoComplete="off"
             />
           </label>
@@ -84,11 +84,11 @@ export function WorkspacePickerView({ viewModel, showMode = true }: { viewModel:
 
           <label className={fieldClass}>
             <span className={fieldLabelClass}>SETUP SCRIPT PATH <small className="tracking-normal">(OPTIONAL)</small></span>
-            <input className={inputClass} value={viewModel.setupScriptPath} onChange={(event) => viewModel.onSetupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/agent/setup" autoComplete="off" />
+            <input className={inputClass} value={viewModel.setupScriptPath} onChange={(event) => viewModel.onSetupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/muximo/setup" autoComplete="off" />
           </label>
           <label className={fieldClass}>
             <span className={fieldLabelClass}>CLEANUP SCRIPT PATH <small className="tracking-normal">(OPTIONAL)</small></span>
-            <input className={inputClass} value={viewModel.cleanupScriptPath} onChange={(event) => viewModel.onCleanupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/agent/cleanup" autoComplete="off" />
+            <input className={inputClass} value={viewModel.cleanupScriptPath} onChange={(event) => viewModel.onCleanupScriptPathChange(event.target.value)} placeholder="/Users/me/.config/muximo/cleanup" autoComplete="off" />
           </label>
           <small className={fieldHelpClass}>Hook paths are host-side executable files and are not expected inside the worktree. They run with the created worktree as the current directory.</small>
 

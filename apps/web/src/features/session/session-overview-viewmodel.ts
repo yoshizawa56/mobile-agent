@@ -1,4 +1,4 @@
-import type { PaneSummary } from "@mobile-agent/protocol";
+import type { PaneSummary } from "@muximo/protocol";
 import type { TerminalEndpoint, TmuxSession } from "../connection/connection-flow-viewmodel";
 
 export type SessionOverviewViewModel = {

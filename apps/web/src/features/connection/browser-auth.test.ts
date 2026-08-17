@@ -7,20 +7,20 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
-import { encodePairingCode } from "@mobile-agent/protocol";
+} from "@muximo/test-support";
+import { encodePairingCode } from "@muximo/protocol";
 import { parsePairingQrPayload } from "./browser-auth";
-import type { PairingCodePayload } from "@mobile-agent/protocol";
+import type { PairingCodePayload } from "@muximo/protocol";
 
 type EmptyContext = {};
 type PairingPayloadInput = { code: string };
 
 const payload: PairingCodePayload = {
-  agentdBaseUrl: "https://agent-host.tailnet.ts.net:8444/",
+  muximodBaseUrl: "https://muximo-host.tailnet.ts.net:8444/",
   pairingId: "pairing-1234567890123456",
   pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-",
 };
-const normalizedPayload: PairingCodePayload = { ...payload, agentdBaseUrl: "https://agent-host.tailnet.ts.net:8444" };
+const normalizedPayload: PairingCodePayload = { ...payload, muximodBaseUrl: "https://muximo-host.tailnet.ts.net:8444" };
 
 const cases = [
   {
@@ -30,12 +30,12 @@ const cases = [
   },
   {
     name: "rejects a navigation URL instead of decoding it",
-    input: { code: "https://agent-host.example/settings#ma1=payload" },
-    assert: [hasError<EmptyContext, PairingCodePayload>({ message: "QR code does not contain a valid mobile-agent pairing code" })],
+    input: { code: "https://muximo-host.example/settings#ma1=payload" },
+    assert: [hasError<EmptyContext, PairingCodePayload>({ message: "QR code does not contain a valid muximo pairing code" })],
   },
   {
     name: "rejects an endpoint with an unsupported protocol",
-    input: { code: encodePairingCode({ ...payload, agentdBaseUrl: "ftp://agent-host.example" }) },
+    input: { code: encodePairingCode({ ...payload, muximodBaseUrl: "ftp://muximo-host.example" }) },
     assert: [hasError<EmptyContext, PairingCodePayload>({ message: "Pairing endpoint must use http or https" })],
   },
 ] satisfies readonly OperationCase<"default", PairingPayloadInput, PairingCodePayload, EmptyContext>[];

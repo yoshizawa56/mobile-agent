@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { AgentdConnection } from "@mobile-agent/agentd-client";
-import type { PaneSummary as ProtocolPaneSummary } from "@mobile-agent/protocol";
-import { fetchPanes } from "../api/agentd-api";
+import type { MuximodConnection } from "@muximo/muximod-client";
+import type { PaneSummary as ProtocolPaneSummary } from "@muximo/protocol";
+import { fetchPanes } from "../api/muximod-api";
 import { isMockMode } from "../../mock/mock-data";
 
 export type PaneSummary = ProtocolPaneSummary;
@@ -20,11 +20,11 @@ export type PaneBoardViewModel = {
   refresh: () => void;
 };
 
-export function paneQueryKey(connection?: AgentdConnection, sessionName?: string): readonly [string, string, string] {
+export function paneQueryKey(connection?: MuximodConnection, sessionName?: string): readonly [string, string, string] {
   return ["panes", connection?.httpBaseUrl ?? "unconfigured", sessionName ?? "all"];
 }
 
-export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, connection, alwaysOpen = false }: { onSelect: (target: string) => void; selectedTarget: string; sessionName?: string; connection?: AgentdConnection; alwaysOpen?: boolean }): PaneBoardViewModel {
+export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, connection, alwaysOpen = false }: { onSelect: (target: string) => void; selectedTarget: string; sessionName?: string; connection?: MuximodConnection; alwaysOpen?: boolean }): PaneBoardViewModel {
   const [isOpen, setIsOpen] = useState(false);
   const query = useQuery({
     queryKey: paneQueryKey(connection, sessionName),
@@ -35,7 +35,7 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     enabled: Boolean(connection) && (alwaysOpen || isOpen),
     staleTime: 1_000,
     // While the window map is open poll for live layout updates. In the control
-    // room agentd pushes session_updated events over WebSocket, so the idle
+    // room muximod pushes session_updated events over WebSocket, so the idle
     // fallback can be a long safety net; mock mode has no event socket and
     // keeps polling so state changes are still detected.
     refetchInterval: isOpen ? 3_000 : alwaysOpen ? (isMockMode() ? 3_000 : 10_000) : false,

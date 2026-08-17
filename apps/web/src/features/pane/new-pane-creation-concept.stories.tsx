@@ -20,8 +20,8 @@ type NewPaneCreationConceptProps = {
 };
 
 const demoPanes: ConceptPane[] = [
-  { id: "review", name: "review", windowName: "mobile-agent" },
-  { id: "build", name: "build", windowName: "mobile-agent" },
+  { id: "review", name: "review", windowName: "muximo" },
+  { id: "build", name: "build", windowName: "muximo" },
 ];
 
 const modalFieldLabelClass = "font-mono text-[0.55rem] tracking-[0.13em] text-[#79aa80]";
@@ -48,10 +48,10 @@ function NewPaneCreationConcept({
   const [worktree, setWorktree] = useState(true);
   const [destination, setDestination] = useState<Destination>(canAddPane ? initialDestination : "window");
   const [direction, setDirection] = useState<Direction>(initialDirection);
-  const [workspace, setWorkspace] = useState("mobile-agent");
+  const [workspace, setWorkspace] = useState("muximo");
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
 
-  const isGitWorkspace = workspace === "mobile-agent";
+  const isGitWorkspace = workspace === "muximo";
   const normalizedName = normalizePreviewName(name);
   const creatableName = kind === "agent" ? normalizedName : name.trim();
 
@@ -64,7 +64,7 @@ function NewPaneCreationConcept({
 
   const selectWorkspace = (nextWorkspace: string) => {
     setWorkspace(nextWorkspace);
-    setWorktree(nextWorkspace === "mobile-agent");
+    setWorktree(nextWorkspace === "muximo");
     setCreatedMessage(null);
   };
 
@@ -89,7 +89,7 @@ function NewPaneCreationConcept({
             <label className="flex flex-col gap-[7px]">
               <span className={modalFieldLabelClass}>Workspace <em className="ml-[5px] font-mono text-[0.53rem] font-normal not-italic uppercase tracking-[0.07em] text-lime-deep">required</em></span>
               <select className={`${modalInputClass} min-h-[43px] text-[0.66rem]`} value={workspace} onChange={(event) => selectWorkspace(event.target.value)}>
-                <option value="mobile-agent">mobile-agent · ~/work/mobile-agent</option>
+                <option value="muximo">muximo · ~/work/muximo</option>
                 <option value="scratch">scratch · ~/tmp/scratch</option>
               </select>
             </label>

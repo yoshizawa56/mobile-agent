@@ -58,7 +58,7 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
             <div className="grid grid-cols-2 gap-[7px] max-[620px]:grid-cols-1">
               <label className={`flex min-w-0 items-start gap-2 rounded-lg border border-[#1e4828] bg-[rgb(7_24_11_/_70%)] p-2.5 text-[#82b488] transition-colors max-[920px]:min-h-14 max-[920px]:p-3 ${viewModel.kind === "agent" ? "border-[#3d8b4c] bg-[rgb(13_40_19_/_82%)] shadow-[inset_3px_0_0_var(--color-lime-deep)]" : ""}`}>
                 <input type="radio" name="pane-kind" checked={viewModel.kind === "agent"} onChange={() => viewModel.onKindChange("agent")} />
-                <span className="flex min-w-0 flex-col gap-1"><strong className="text-[0.65rem] text-[#c3f4c9]">Agent</strong><small className="text-[0.57rem] leading-[1.4] text-[#638f6b] max-[620px]:text-[0.72rem]">Launch Codex or Claude through agent</small></span>
+                <span className="flex min-w-0 flex-col gap-1"><strong className="text-[0.65rem] text-[#c3f4c9]">Agent</strong><small className="text-[0.57rem] leading-[1.4] text-[#638f6b] max-[620px]:text-[0.72rem]">Launch Codex or Claude through muximo</small></span>
               </label>
               <label className={`flex min-w-0 items-start gap-2 rounded-lg border border-[#1e4828] bg-[rgb(7_24_11_/_70%)] p-2.5 text-[#82b488] transition-colors max-[920px]:min-h-14 max-[920px]:p-3 ${viewModel.kind === "shell" ? "border-[#3d8b4c] bg-[rgb(13_40_19_/_82%)] shadow-[inset_3px_0_0_var(--color-lime-deep)]" : ""}`}>
                 <input type="radio" name="pane-kind" checked={viewModel.kind === "shell"} onChange={() => viewModel.onKindChange("shell")} />

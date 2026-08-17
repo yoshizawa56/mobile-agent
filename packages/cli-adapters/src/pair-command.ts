@@ -1,7 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { resolve } from "node:path";
-import type { PairDevice } from "@mobile-agent/application";
-import { resolveAgentdPaths, validateAgentdControlSocketPath } from "@mobile-agent/persistence/paths";
+import type { PairDevice } from "@muximo/application";
+import { resolveMuximodPaths, validateMuximodControlSocketPath } from "@muximo/persistence/paths";
 
 export type PairCommandIo = {
   out: Writable;
@@ -12,14 +12,14 @@ export type PairDisplay = "browser" | "terminal";
 
 export type ParsedPairCommandOptions = {
   controlSocket: string;
-  agentdBaseUrl?: string;
+  muximodBaseUrl?: string;
   withoutServe: boolean;
   display: PairDisplay;
 };
 
 export type ResolvedPairCommandOptions = {
   controlSocket: string;
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   display: PairDisplay;
 };
 
@@ -33,13 +33,13 @@ export type PairDeviceRuntimeFactory = (
   io: PairCommandIo,
 ) => Promise<PairDeviceRuntime>;
 
-export type PairAgentdUrlResolver = (input: { withoutServe: boolean; environment: NodeJS.ProcessEnv }) => Promise<string>;
+export type PairMuximodUrlResolver = (input: { withoutServe: boolean; environment: NodeJS.ProcessEnv }) => Promise<string>;
 
 export type PairCommandOptions = {
   env?: NodeJS.ProcessEnv;
   io: PairCommandIo;
   createRuntime: PairDeviceRuntimeFactory;
-  resolveAgentdBaseUrl: PairAgentdUrlResolver;
+  resolveMuximodBaseUrl: PairMuximodUrlResolver;
 };
 
 export class PairCommandError extends Error {}
@@ -54,19 +54,19 @@ export class PairCommand {
 
   public async execute(args: string[]): Promise<number> {
     if (args.includes("-h") || args.includes("--help")) {
-      this.write("Usage: agent pair [--open|--terminal] [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n");
+      this.write("Usage: muximo pair [--open|--terminal] [--without-serve] [--muximod-base-url URL] [--control-socket PATH]\n");
       return 0;
     }
 
     const parsed = parsePairCommandOptions(args, this.env);
-    const agentdBaseUrl = parsed.agentdBaseUrl ?? await this.options.resolveAgentdBaseUrl({
+    const muximodBaseUrl = parsed.muximodBaseUrl ?? await this.options.resolveMuximodBaseUrl({
       withoutServe: parsed.withoutServe,
       environment: this.env,
     });
-    const runtime = await this.options.createRuntime({ controlSocket: parsed.controlSocket, agentdBaseUrl, display: parsed.display }, this.options.io);
+    const runtime = await this.options.createRuntime({ controlSocket: parsed.controlSocket, muximodBaseUrl, display: parsed.display }, this.options.io);
     try {
       const result = await runtime.useCase.execute({
-        agentdBaseUrl,
+        muximodBaseUrl,
       });
       if (result.status === "approved") {
         this.write(`Approved. deviceId: ${result.deviceId}\n`);
@@ -85,8 +85,8 @@ export class PairCommand {
 }
 
 export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv = process.env): ParsedPairCommandOptions {
-  let controlSocket = env.AGENTD_CONTROL_SOCKET ?? defaultControlSocket(env);
-  let agentdBaseUrl = env.AGENTD_PAIRING_BASE_URL;
+  let controlSocket = env.MUXIMOD_CONTROL_SOCKET ?? defaultControlSocket(env);
+  let muximodBaseUrl = env.MUXIMOD_PAIRING_BASE_URL;
   let withoutServe = false;
   let display: PairDisplay = "browser";
   let explicitDisplay: PairDisplay | undefined;
@@ -96,26 +96,26 @@ export function parsePairCommandOptions(args: string[], env: NodeJS.ProcessEnv =
     if (argument === "--control-socket") controlSocket = resolve(requireValue(argument, args[++index]));
     else if (argument.startsWith("--control-socket=")) controlSocket = resolve(argument.slice("--control-socket=".length));
     else if (argument === "--without-serve") withoutServe = true;
-    else if (argument === "--agentd-base-url") agentdBaseUrl = requireValue(argument, args[++index]);
-    else if (argument.startsWith("--agentd-base-url=")) agentdBaseUrl = argument.slice("--agentd-base-url=".length);
+    else if (argument === "--muximod-base-url") muximodBaseUrl = requireValue(argument, args[++index]);
+    else if (argument.startsWith("--muximod-base-url=")) muximodBaseUrl = argument.slice("--muximod-base-url=".length);
     else if (argument === "--open") {
-      if (explicitDisplay === "terminal") throw new PairCommandError("agent pair options --open and --terminal are mutually exclusive");
+      if (explicitDisplay === "terminal") throw new PairCommandError("muximo pair options --open and --terminal are mutually exclusive");
       explicitDisplay = "browser";
       display = "browser";
     } else if (argument === "--terminal") {
-      if (explicitDisplay === "browser") throw new PairCommandError("agent pair options --open and --terminal are mutually exclusive");
+      if (explicitDisplay === "browser") throw new PairCommandError("muximo pair options --open and --terminal are mutually exclusive");
       explicitDisplay = "terminal";
       display = "terminal";
     }
-    else throw new PairCommandError(`unknown agent pair option: ${argument}`);
+    else throw new PairCommandError(`unknown muximo pair option: ${argument}`);
   }
 
-  validateAgentdControlSocketPath(controlSocket);
-  return { controlSocket, agentdBaseUrl, withoutServe, display };
+  validateMuximodControlSocketPath(controlSocket);
+  return { controlSocket, muximodBaseUrl, withoutServe, display };
 }
 
 function defaultControlSocket(env: NodeJS.ProcessEnv): string {
-  return resolveAgentdPaths(env).controlSocket;
+  return resolveMuximodPaths(env).controlSocket;
 }
 
 function requireValue(option: string, value: string | undefined): string {

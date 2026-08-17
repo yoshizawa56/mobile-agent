@@ -6,11 +6,11 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
-  agentdControlRequestSchema,
-  agentdControlResponseSchema,
-  agentdEventSchema,
+  muximodControlRequestSchema,
+  muximodControlResponseSchema,
+  muximodEventSchema,
   clientControlMessageSchema,
   createPaneRequestSchema,
   createSessionRequestSchema,
@@ -66,7 +66,7 @@ function parseSchema(schema: ValidationSchema, input: unknown): ValidationResult
 }
 
 const clientCases = [
-  { name: "accepts an attach request", input: { type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "agentd", cols: 80, rows: 24 })] },
+  { name: "accepts an attach request", input: { type: "attach", version: terminalProtocolVersion, target: "muximod", cols: 80, rows: 24 }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "muximod", cols: 80, rows: 24 })] },
   { name: "accepts a mobile claim request", input: { type: "claim", version: terminalProtocolVersion }, assert: [isValid({ type: "claim", version: terminalProtocolVersion })] },
   { name: "rejects an invalid terminal size", input: { type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 }, assert: [isInvalid(["cols"])] },
   { name: "accepts a resumed attach with paired credentials", input: { type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" }, assert: [isValid({ type: "attach", version: terminalProtocolVersion, target: "%3", cols: 80, rows: 24, sessionId: "terminal-1", resumeToken: "resume-token" })] },
@@ -87,14 +87,14 @@ const serverCases = [
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 const eventCases = [
-  { name: "accepts a pane creation invalidation", input: { type: "session_updated", sessionName: "agentd", reason: "pane_created", revision: 1 }, assert: [isValid()] },
+  { name: "accepts a pane creation invalidation", input: { type: "session_updated", sessionName: "muximod", reason: "pane_created", revision: 1 }, assert: [isValid()] },
   { name: "rejects an event without a session scope", input: { type: "session_updated", reason: "pane_deleted", revision: 2 }, assert: [isInvalid()] },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 type PairingInput = { kind: "request" | "response"; value: unknown };
 const pairingCases = [
-  { name: "accepts a pairing request with an agentd endpoint", input: { kind: "request", value: { type: "create_pairing", agentdBaseUrl: "https://agentd.example" } }, assert: [isValid()] },
-  { name: "accepts a pairing response with a raw pairing code", input: { kind: "response", value: { type: "pairing_created", pairingId: "pairing-1234567890123456", pairingCode: encodePairingCode({ v: 2, agentdBaseUrl: "https://agentd.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 }), payload: { v: 2, agentdBaseUrl: "https://agentd.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 } } }, assert: [isValid()] },
+  { name: "accepts a pairing request with a muximod endpoint", input: { kind: "request", value: { type: "create_pairing", muximodBaseUrl: "https://muximod.example" } }, assert: [isValid()] },
+  { name: "accepts a pairing response with a raw pairing code", input: { kind: "response", value: { type: "pairing_created", pairingId: "pairing-1234567890123456", pairingCode: encodePairingCode({ v: 2, muximodBaseUrl: "https://muximod.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 }), payload: { v: 2, muximodBaseUrl: "https://muximod.example", serverId: "server-1234567890123456", pairingId: "pairing-1234567890123456", pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-", expiresAt: 4_102_444_800_000 } } }, assert: [isValid()] },
   { name: "accepts a pairing response", input: { kind: "response", value: { type: "pairing_result", pairingId: "pairing-1234567890123456", status: "approved", deviceId: "device-1" } }, assert: [isValid()] },
   { name: "rejects a pairing request without endpoint settings", input: { kind: "request", value: { type: "create_pairing" } }, assert: [isInvalid()] },
   { name: "rejects an unrecognized control response", input: { kind: "response", value: { type: "unexpected" } }, assert: [isInvalid()] },
@@ -109,11 +109,11 @@ const pairingCases = [
 const pairingTable: OperationTable<undefined, "default", PairingInput, ValidationResult, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: pairingCases,
-  execute: (_fixture, input) => parseSchema(input.kind === "request" ? agentdControlRequestSchema : agentdControlResponseSchema, input.value),
+  execute: (_fixture, input) => parseSchema(input.kind === "request" ? muximodControlRequestSchema : muximodControlResponseSchema, input.value),
   observe: () => ({}),
 };
 
-const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "agentd", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, state: "running", title: null, recentOutput: "recent pane output", lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+const paneListCases = [{ name: "accepts the host pane list DTO", input: { panes: [{ id: "pane-1", tmuxPaneId: "%1", sessionName: "muximod", windowId: "@0", kind: "shell", name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, state: "running", title: null, recentOutput: "recent pane output", lastSeenAt: "2026-08-09T00:00:00.000Z" }] }, assert: [isValid()] }] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 type PaneCreateInput = { placement: "window" | "right" | "bottom"; targetPaneId: string | null; cwd?: string; workspaceId?: string; useWorktree?: boolean };
 const paneCreateCases = [
@@ -127,14 +127,14 @@ const paneCreateCases = [
 const paneCreateTable: OperationTable<undefined, "default", PaneCreateInput, ValidationResult, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: paneCreateCases,
-  execute: (_fixture, input) => parseSchema(createPaneRequestSchema, { sessionName: "agentd", kind: "shell", name: "shell", agentId: null, useWorktree: false, ...input }),
+  execute: (_fixture, input) => parseSchema(createPaneRequestSchema, { sessionName: "muximod", kind: "shell", name: "shell", agentId: null, useWorktree: false, ...input }),
   observe: () => ({}),
 };
 
 type SessionCreateInput = { name: string; workspaceId?: string; cwd?: string };
 const sessionCases = [
   { name: "accepts the selected workspace for a new session", input: { name: "review", workspaceId: "workspace-1" }, assert: [isValid()] },
-  { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/mobile-agent" }, assert: [isValid()] },
+  { name: "accepts a legacy cwd while clients migrate", input: { name: "review", cwd: "/work/muximo" }, assert: [isValid()] },
   { name: "rejects a session without a workspace selection", input: { name: "review" }, assert: [isInvalid()] },
 ] satisfies readonly OperationCase<"default", SessionCreateInput, ValidationResult, EmptyContext>[];
 const sessionTable: OperationTable<undefined, "default", SessionCreateInput, ValidationResult, EmptyContext> = {
@@ -157,10 +157,10 @@ const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, Valid
 };
 
 const paneWorkspaceCases = [
-  { name: "accepts a pane request that selects a workspace by id", input: { sessionName: "agentd", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] },
-  { name: "accepts a worktree agent split", input: { sessionName: "agentd", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "right", targetPaneId: "%0" }, assert: [isValid()] },
-  { name: "accepts a worktree shell in a new window", input: { sessionName: "agentd", kind: "shell", name: "shell", workspaceId: "workspace-1", agentId: null, useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] },
-  { name: "accepts a worktree shell split", input: { sessionName: "agentd", kind: "shell", name: "shell", workspaceId: "workspace-1", agentId: null, useWorktree: true, placement: "bottom", targetPaneId: "%0" }, assert: [isValid()] },
+  { name: "accepts a pane request that selects a workspace by id", input: { sessionName: "muximod", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] },
+  { name: "accepts a worktree agent split", input: { sessionName: "muximod", kind: "agent", name: "review", workspaceId: "workspace-1", agentId: "codex", useWorktree: true, placement: "right", targetPaneId: "%0" }, assert: [isValid()] },
+  { name: "accepts a worktree shell in a new window", input: { sessionName: "muximod", kind: "shell", name: "shell", workspaceId: "workspace-1", agentId: null, useWorktree: true, placement: "window", targetPaneId: null }, assert: [isValid()] },
+  { name: "accepts a worktree shell split", input: { sessionName: "muximod", kind: "shell", name: "shell", workspaceId: "workspace-1", agentId: null, useWorktree: true, placement: "bottom", targetPaneId: "%0" }, assert: [isValid()] },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 const paneWorkspaceTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> = createValidationTable(paneWorkspaceCases, createPaneRequestSchema);
 
@@ -168,7 +168,7 @@ describe("protocol schemas", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, createValidationTable(clientCases, clientControlMessageSchema));
   runOperationTable(register, createValidationTable(serverCases, serverControlMessageSchema));
-  runOperationTable(register, createValidationTable(eventCases, agentdEventSchema));
+  runOperationTable(register, createValidationTable(eventCases, muximodEventSchema));
   runOperationTable(register, pairingTable);
   runOperationTable(register, createValidationTable(paneListCases, paneListResponseSchema));
   runOperationTable(register, paneCreateTable);

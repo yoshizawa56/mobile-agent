@@ -6,11 +6,11 @@ import {
   terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
-} from "@mobile-agent/protocol";
-import type { AgentdConnection } from "@mobile-agent/agentd-client";
-import { getAgentdWebSocketEndpoint, openAgentdTerminal } from "../api/agentd-api";
+} from "@muximo/protocol";
+import type { MuximodConnection } from "@muximo/muximod-client";
+import { getMuximodWebSocketEndpoint, openMuximodTerminal } from "../api/muximod-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
-import { mobileAgentBridge } from "../../platform/mobile-bridge";
+import { muximoBridge } from "../../platform/muximo-bridge";
 import { installTerminalFlickInput, terminalMouseWheelInput } from "./terminal-flick";
 import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./terminal-font";
 import { createTerminalInputBatcher, createTerminalOutputScheduler } from "./terminal-scheduler";
@@ -39,7 +39,7 @@ export type PaneViewModel = {
   pasteImage: (file: File) => void;
 };
 
-export function usePaneViewModel({ target, connection }: { target: string; connection?: AgentdConnection }): PaneViewModel {
+export function usePaneViewModel({ target, connection }: { target: string; connection?: MuximodConnection }): PaneViewModel {
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
     setTerminalContainer(node);
@@ -129,7 +129,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     })();
   }, [schedulePasteReset]);
 
-  useEffect(() => mobileAgentBridge.onAppStateChange((state) => {
+  useEffect(() => muximoBridge.onAppStateChange((state) => {
     if (state === "active" && !terminalClosedRef.current) reconnect();
   }), [reconnect]);
 
@@ -162,7 +162,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       write: (data) => terminal.write(data),
     });
 
-    const endpoint = connection ? getAgentdWebSocketEndpoint(connection) : "mock";
+    const endpoint = connection ? getMuximodWebSocketEndpoint(connection) : "mock";
     const storageKey = terminalResumeStorageKey(endpoint, target);
     resumeRef.current = readTerminalResumeState(storageKey, target);
     terminalClosedRef.current = false;
@@ -239,11 +239,11 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
 
       let socket: WebSocket;
       try {
-        socket = await openAgentdTerminal(connection);
+        socket = await openMuximodTerminal(connection);
       } catch {
         if (!disposed && !terminalClosedRef.current) {
           setStatus("error");
-          setErrorMessage("agentd authentication failed");
+          setErrorMessage("muximod authentication failed");
           scheduleReconnect();
         }
         return;
@@ -391,7 +391,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       window.addEventListener("resize", sendResize);
       sendResize();
       const flickCleanup = installTerminalFlickInput(container, () => {
-        // The mock is intentionally read-only. Real input is wired to agentd below.
+        // The mock is intentionally read-only. Real input is wired to muximod below.
       }, flickOptions);
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
@@ -579,7 +579,7 @@ export function handleControlMessage(
   try {
     const parsed = serverControlMessageSchema.safeParse(JSON.parse(rawMessage));
     if (!parsed.success) {
-      handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from agentd", retryable: false });
+      handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from muximod", retryable: false });
       return;
     }
 
@@ -589,7 +589,7 @@ export function handleControlMessage(
     if (message.type === "error") handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
     if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
   } catch {
-    handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from agentd", retryable: false });
+    handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from muximod", retryable: false });
   }
 }
 
@@ -660,7 +660,7 @@ function closeNetworkSocket(socket: WebSocket, reason?: string): void {
 }
 
 function terminalResumeStorageKey(endpoint: string, target: string): string {
-  return `mobile-agent:terminal-resume:${endpoint}:${target}`;
+  return `muximo:terminal-resume:${endpoint}:${target}`;
 }
 
 function readTerminalResumeState(storageKey: string, target: string): PaneResumeState | null {

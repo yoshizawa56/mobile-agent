@@ -7,8 +7,8 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
-import type { PairingOffer } from "@mobile-agent/application";
+} from "@muximo/test-support";
+import type { PairingOffer } from "@muximo/application";
 import { TerminalPairingPresenter } from "./terminal-pairing-presenter.js";
 
 class CaptureOutput extends Writable {
@@ -19,7 +19,7 @@ class CaptureOutput extends Writable {
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
   pairingCode: "ma3:pairing-code",
-  agentdBaseUrl: "https://agentd.example",
+  muximodBaseUrl: "https://muximod.example",
   expiresAt: Date.now() + 300_000,
 };
 
@@ -52,7 +52,7 @@ const table: OperationTable<PresenterFixture, "default", PairingOffer, undefined
     });
     await presenter.showPairing(input);
   },
-  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Mobile Agent app") }),
+  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Muximo app") }),
 };
 
 describe("TerminalPairingPresenter", () => {

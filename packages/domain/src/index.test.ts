@@ -7,7 +7,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   canTransitionPaneState,
   isAttentionState,
@@ -79,11 +79,11 @@ const commandTable: OperationTable<undefined, "default", CommandInput, string, E
 
 const workspace: WorkspaceDirectoryOption = {
   id: "workspace-1",
-  name: "mobile-agent",
-  rootPath: "/work/mobile-agent",
+  name: "muximo",
+  rootPath: "/work/muximo",
   isGit: true,
-  setupScriptPath: "/Users/me/.config/agent/setup",
-  cleanupScriptPath: "/Users/me/.config/agent/cleanup",
+  setupScriptPath: "/Users/me/.config/muximo/setup",
+  cleanupScriptPath: "/Users/me/.config/muximo/cleanup",
   worktreeCopyPatterns: [".env", "config/**/*.local.json"],
 };
 

@@ -19,7 +19,7 @@
 
 - [ ] No credentials, private terminal output, personal data, local databases, logs, or machine-specific paths are included.
 - [ ] Any changed trust boundary or credential handling is documented in `SECURITY.md`.
-- [ ] This change does not expose agentd directly to the public internet.
+- [ ] This change does not expose muximod directly to the public internet.
 
 ## Notes for reviewers
 

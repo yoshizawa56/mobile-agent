@@ -21,7 +21,7 @@ export function NewSessionView({ viewModel }: { viewModel: NewSessionViewModel }
         <form className="flex flex-col gap-[17px]" onSubmit={(event) => { event.preventDefault(); if (canCreate) viewModel.onCreate(); }}>
           <label className="flex flex-col gap-[7px]">
             <span className="font-mono text-[0.56rem] font-bold tracking-[0.12em] text-[#6a9b72]">SESSION NAME</span>
-            <input className="min-h-[45px] w-full rounded-[9px] border border-[#24552e] bg-[rgb(6_20_9_/_82%)] px-[13px] font-mono text-base text-[#d8ffdc] outline-none transition-[border-color,box-shadow] placeholder:text-[#416a49] focus:border-lime-deep focus:shadow-[0_0_0_3px_rgb(57_214_91_/_12%)] max-[920px]:min-h-12" value={viewModel.name} onChange={(event) => viewModel.onNameChange(event.target.value)} placeholder="mobile-agent" autoComplete="off" />
+            <input className="min-h-[45px] w-full rounded-[9px] border border-[#24552e] bg-[rgb(6_20_9_/_82%)] px-[13px] font-mono text-base text-[#d8ffdc] outline-none transition-[border-color,box-shadow] placeholder:text-[#416a49] focus:border-lime-deep focus:shadow-[0_0_0_3px_rgb(57_214_91_/_12%)] max-[920px]:min-h-12" value={viewModel.name} onChange={(event) => viewModel.onNameChange(event.target.value)} placeholder="muximo" autoComplete="off" />
             <small className="font-mono text-[0.52rem] text-[#5d9168] max-[620px]:text-[0.72rem]">Use a short name you can recognize on every device.</small>
           </label>
           <WorkspacePickerView viewModel={viewModel.workspacePicker} showMode={false} />

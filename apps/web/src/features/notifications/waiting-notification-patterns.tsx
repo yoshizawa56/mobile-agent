@@ -23,7 +23,7 @@ export const waitingAgents: WaitingAgent[] = [
     badgeClass: "border-[#2b6f8a] bg-[rgb(21_94_117_/_24%)] text-[#7dd3fc]",
     state: "waiting_input",
     stateLabel: "Waiting for input",
-    cwd: "~/work/mobile-agent",
+    cwd: "~/work/muximo",
     recentOutput: "Continue with the next task?",
     target: "%0",
     time: "just now",

@@ -8,14 +8,14 @@ export const maxPasteImageBytes = 10 * 1024 * 1024;
 /** Base64 encoding of `maxPasteImageBytes`, used to bound the wire message. */
 export const maxPasteImageBase64Length = Math.ceil(maxPasteImageBytes / 3) * 4;
 
-export const agentdHealthSchema = z.object({
+export const muximodHealthSchema = z.object({
   ok: z.literal(true),
-  service: z.literal("agentd"),
+  service: z.literal("muximod"),
   protocolVersion: z.number().int().positive(),
 });
-export type AgentdHealth = z.infer<typeof agentdHealthSchema>;
+export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
 
-export const agentdCapabilitiesSchema = z.object({
+export const muximodCapabilitiesSchema = z.object({
   protocolVersion: z.number().int().positive(),
   features: z.object({
     tmuxSessions: z.boolean(),
@@ -24,7 +24,7 @@ export const agentdCapabilitiesSchema = z.object({
     resourceInvalidationEvents: z.boolean(),
   }),
 });
-export type AgentdCapabilities = z.infer<typeof agentdCapabilitiesSchema>;
+export type MuximodCapabilities = z.infer<typeof muximodCapabilitiesSchema>;
 
 export const authDeviceTypeSchema = z.enum(["browser", "native", "cli"]);
 export type AuthDeviceType = z.infer<typeof authDeviceTypeSchema>;
@@ -42,7 +42,7 @@ export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
 
 export const pairingQrPayloadSchema = z.object({
   v: z.literal(2),
-  agentdBaseUrl: z.string().url(),
+  muximodBaseUrl: z.string().url(),
   serverId: z.string().min(16).max(256),
   pairingId: z.string().min(16).max(256),
   pairingSecret: base64UrlValueSchema.min(32).max(512),
@@ -51,7 +51,7 @@ export const pairingQrPayloadSchema = z.object({
 export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
 
 export const pairingCodePayloadSchema = z.object({
-  agentdBaseUrl: z.string().url(),
+  muximodBaseUrl: z.string().url(),
   pairingId: z.string().min(16).max(256),
   pairingSecret: base64UrlValueSchema.min(32).max(512),
 }).strict();
@@ -69,10 +69,10 @@ const pairingClaimNotificationSchema = z.object({
 }).strict();
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
 
-export const agentdControlRequestSchema = z.discriminatedUnion("type", [
+export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("create_pairing"),
-    agentdBaseUrl: z.string().url(),
+    muximodBaseUrl: z.string().url(),
   }).strict(),
   z.object({
     type: z.literal("approve_pairing"),
@@ -103,9 +103,9 @@ export const agentdControlRequestSchema = z.discriminatedUnion("type", [
     recentOutput: z.string().max(2_000).optional(),
   }).strict(),
 ]);
-export type AgentdControlRequest = z.infer<typeof agentdControlRequestSchema>;
+export type MuximodControlRequest = z.infer<typeof muximodControlRequestSchema>;
 
-export const agentdControlResponseSchema = z.discriminatedUnion("type", [
+export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("pairing_created"),
     pairingId: z.string().min(16).max(256),
@@ -147,7 +147,7 @@ export const agentdControlResponseSchema = z.discriminatedUnion("type", [
     message: z.string().min(1).max(4_096),
   }).strict(),
 ]);
-export type AgentdControlResponse = z.infer<typeof agentdControlResponseSchema>;
+export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
 
 export const authInfoSchema = z.object({
   protocolVersion: z.literal(protocolVersion),
@@ -240,13 +240,13 @@ export const authDeviceSchema = z.object({
 }).strict();
 export type AuthDevice = z.infer<typeof authDeviceSchema>;
 
-export const agentdEventSchema = z.object({
+export const muximodEventSchema = z.object({
   type: z.literal("session_updated"),
   sessionName: z.string().min(1),
   reason: z.enum(["pane_created", "pane_deleted", "pane_changed"]),
   revision: z.number().int().nonnegative(),
 });
-export type AgentdEvent = z.infer<typeof agentdEventSchema>;
+export type MuximodEvent = z.infer<typeof muximodEventSchema>;
 
 export const workspaceSelectionModeSchema = z.enum(["workspace", "worktree"]);
 export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema>;
@@ -345,7 +345,7 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
     // pasted file. Kept on the client because the OS picker knows it.
     name: z.string().trim().min(1).max(255).regex(/^[^\u0000-\u001f\u007f:;]+$/, "name contains a control character, ':' or ';'"),
     mimeType: z.string().trim().min(1).max(255).regex(/^[^\u0000-\u001f\u007f]+$/).optional(),
-    // Standard base64 (with padding) so agentd can decode without URL handling.
+    // Standard base64 (with padding) so muximod can decode without URL handling.
     data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).min(1).max(maxPasteImageBase64Length),
   }),
 ]);

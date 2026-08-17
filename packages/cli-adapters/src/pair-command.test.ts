@@ -10,8 +10,8 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
-import type { PairDevice } from "@mobile-agent/application";
+} from "@muximo/test-support";
+import type { PairDevice } from "@muximo/application";
 import { PairCommand, parsePairCommandOptions, type PairDeviceRuntime, type ParsedPairCommandOptions } from "./pair-command.js";
 
 class CaptureOutput extends Writable {
@@ -45,9 +45,9 @@ const createPairCommandFixture = (kind: PairCommandKey): (() => FixtureHandle<Co
     close: () => { fixture.closed = true; },
   };
   const command = new PairCommand({
-    ...(kind === "approved" ? { env: { AGENTD_CONTROL_SOCKET: "/tmp/agentd.control.sock" } } : {}),
+    ...(kind === "approved" ? { env: { MUXIMOD_CONTROL_SOCKET: "/tmp/muximod.control.sock" } } : {}),
     io: { out, input: Readable.from([]) },
-    resolveAgentdBaseUrl: async () => "https://agentd.example",
+    resolveMuximodBaseUrl: async () => "https://muximod.example",
     createRuntime: async (options) => {
       fixture.constructed = true;
       fixture.controlSocket = options.controlSocket ?? null;
@@ -63,13 +63,13 @@ const commandCases = [
   {
     name: "maps command options into the injected use case",
     fixture: "approved",
-    input: { args: ["--agentd-base-url", "https://agentd.example"] },
+    input: { args: ["--muximod-base-url", "https://muximod.example"] },
     assert: [
       returns<PairCommandContext, number>(0),
-      hasObserved<PairCommandContext, number>("received", { agentdBaseUrl: "https://agentd.example" }),
+      hasObserved<PairCommandContext, number>("received", { muximodBaseUrl: "https://muximod.example" }),
       hasObserved<PairCommandContext, number>("output", "Approved. deviceId: device-1\n"),
       hasObserved<PairCommandContext, number>("closed", true),
-      hasObserved<PairCommandContext, number>("controlSocket", "/tmp/agentd.control.sock"),
+      hasObserved<PairCommandContext, number>("controlSocket", "/tmp/muximod.control.sock"),
       hasObserved<PairCommandContext, number>("display", "browser"),
     ],
   },
@@ -80,7 +80,7 @@ const commandCases = [
     assert: [
       returns<PairCommandContext, number>(0),
       hasObserved<PairCommandContext, number>("constructed", false),
-      hasObserved<PairCommandContext, number>("output", "Usage: agent pair [--open|--terminal] [--without-serve] [--agentd-base-url URL] [--control-socket PATH]\n"),
+      hasObserved<PairCommandContext, number>("output", "Usage: muximo pair [--open|--terminal] [--without-serve] [--muximod-base-url URL] [--control-socket PATH]\n"),
     ],
   },
 ] satisfies readonly OperationCase<PairCommandKey, PairCommandInput, number, PairCommandContext>[];
@@ -100,33 +100,33 @@ type ParseInput = { args: string[]; env: NodeJS.ProcessEnv };
 const parseCases = [
   {
     name: "derives the control socket from the instance directory",
-    input: { args: ["--agentd-base-url", "https://agentd.example"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: "https://agentd.example", withoutServe: false, display: "browser" })],
+    input: { args: ["--muximod-base-url", "https://muximod.example"], env: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/muximo/main/muximod.sock", muximodBaseUrl: "https://muximod.example", withoutServe: false, display: "browser" })],
   },
   {
     name: "allows the default Serve resolver to provide the endpoint",
-    input: { args: [], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "browser" })],
+    input: { args: [], env: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/muximo/main/muximod.sock", muximodBaseUrl: undefined, withoutServe: false, display: "browser" })],
   },
   {
     name: "selects the local endpoint mode explicitly",
-    input: { args: ["--without-serve"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: true, display: "browser" })],
+    input: { args: ["--without-serve"], env: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/muximo/main/muximod.sock", muximodBaseUrl: undefined, withoutServe: true, display: "browser" })],
   },
   {
     name: "normalizes a relative control socket override",
-    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/mobile-agent-agentd.sock"), "--agentd-base-url", "https://agentd.example"], env: {} },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: resolve("/tmp/mobile-agent-agentd.sock"), agentdBaseUrl: "https://agentd.example", withoutServe: false, display: "browser" })],
+    input: { args: ["--control-socket", relative(process.cwd(), "/tmp/muximo-muximod.sock"), "--muximod-base-url", "https://muximod.example"], env: {} },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: resolve("/tmp/muximo-muximod.sock"), muximodBaseUrl: "https://muximod.example", withoutServe: false, display: "browser" })],
   },
   {
     name: "selects terminal QR output explicitly",
-    input: { args: ["--terminal"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "terminal" })],
+    input: { args: ["--terminal"], env: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/muximo/main/muximod.sock", muximodBaseUrl: undefined, withoutServe: false, display: "terminal" })],
   },
   {
     name: "accepts an explicit browser QR option",
-    input: { args: ["--open"], env: { AGENTD_INSTANCE_DIR: "/tmp/mobile-agent/main" } },
-    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/mobile-agent/main/agentd.sock", agentdBaseUrl: undefined, withoutServe: false, display: "browser" })],
+    input: { args: ["--open"], env: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" } },
+    assert: [returns<{}, ParsedPairCommandOptions>({ controlSocket: "/tmp/muximo/main/muximod.sock", muximodBaseUrl: undefined, withoutServe: false, display: "browser" })],
   },
 ] satisfies readonly OperationCase<"default", ParseInput, ParsedPairCommandOptions, {}>[];
 
@@ -137,7 +137,7 @@ const parseTable: OperationTable<undefined, "default", ParseInput, ParsedPairCom
   observe: () => ({}),
 };
 
-describe("agent pair CLI adapter", () => {
+describe("muximo pair CLI adapter", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, parseTable);
   runOperationTable(register, commandTable);

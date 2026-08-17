@@ -27,6 +27,11 @@ export function ConnectionSettingsView({ viewModel }: { viewModel: ConnectionSet
         ) : null}
 
         {viewModel.hasSavedProfile && !viewModel.isScanningQr && !viewModel.isPairingQr ? <button className="flex min-h-[37px] w-full items-center justify-center rounded-[9px] border border-[#214d2b] bg-transparent text-[0.63rem] text-[#9c7662] transition-colors hover:border-[#3c8248] hover:text-[#b6eabd] max-[920px]:min-h-11" type="button" onClick={viewModel.onClear}>Forget saved connection</button> : null}
+
+        <dl aria-label="Application version" className="mt-9 border-t border-[#17391f] pt-4 font-mono text-[0.56rem] text-[#5d9168]">
+          <div className="flex items-center justify-between gap-4"><dt className="tracking-[0.12em]">APP VERSION</dt><dd className="m-0 text-[#a7e8ae]">v{viewModel.appInfo.version}</dd></div>
+          <div className="mt-2 flex items-center justify-between gap-4"><dt className="tracking-[0.12em]">BUILD</dt><dd className="m-0 text-[#7caf83]">{viewModel.appInfo.build}</dd></div>
+        </dl>
       </section>
     </main>
   );

@@ -33,6 +33,7 @@ import {
   terminalsPath,
 } from "../../app/workspace-routes";
 import { useAgentdEvents } from "../api/agentd-events";
+import { mobileAgentBridge, mobileAgentFallbackAppInfo, type MobileAgentAppInfo } from "../../platform/mobile-bridge";
 
 export type { ProductStage } from "../../app/workspace-routes";
 
@@ -85,6 +86,17 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [isScanningQr, setIsScanningQr] = useState(false);
   const [isPairingQr, setIsPairingQr] = useState(false);
   const [pairingMessage, setPairingMessage] = useState<string | null>(null);
+  const [appInfo, setAppInfo] = useState<MobileAgentAppInfo>(mobileAgentFallbackAppInfo);
+
+  useEffect(() => {
+    let disposed = false;
+    void mobileAgentBridge.getAppInfo().then((nextAppInfo) => {
+      if (!disposed) setAppInfo(nextAppInfo);
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const navigateTo = useCallback((path: string) => {
     void navigate({ to: path });
@@ -456,6 +468,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   }), [navigate, panesQuery.error, panesQuery.status, selectedSession, selectedTerminal, sessionPanes, terminalId]);
 
   const connectionSettings = useMemo<ConnectionSettingsViewModel>(() => ({
+    appInfo,
     hasSavedProfile: Boolean(connectionProfile),
     isScanningQr,
     isPairingQr,
@@ -510,7 +523,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         });
     },
     onBack: () => navigateTo(terminalsPath()),
-  }), [connectionProfile, connectionSettingsError, isPairingQr, isScanningQr, navigate, pairingMessage]);
+  }), [appInfo, connectionProfile, connectionSettingsError, isPairingQr, isScanningQr, navigate, pairingMessage]);
 
   return {
     stage,

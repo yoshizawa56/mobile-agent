@@ -1,12 +1,16 @@
-name: iOS Preflight
+name: TestFlight
 
 on:
-  push:
-    tags:
-      - "preflight/v*"
+  workflow_dispatch:
+
+run-name: TestFlight / ${{ github.ref_name }} / ${{ github.sha }}
 
 permissions:
   contents: read
+
+concurrency:
+  group: testflight-app-store-connect-upload
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -18,6 +22,16 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Record source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n' '## TestFlight build'
+            printf '%s\n' "- Ref: \`$GITHUB_REF\`"
+            printf '%s\n' "- Commit: \`$GITHUB_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run repository checks
         uses: ./.github/actions/repository-checks
 
@@ -26,9 +40,6 @@ jobs:
     needs: verify
     runs-on: macos-15
     timeout-minutes: 45
-    concurrency:
-      group: ios-app-store-connect-upload
-      cancel-in-progress: false
     environment:
       name: app-store-connect
     permissions:

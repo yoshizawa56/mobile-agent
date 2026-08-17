@@ -1,5 +1,5 @@
 {
-  "name": "@mobile-agent/application",
+  "name": "@muximo/application",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -16,11 +16,11 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mobile-agent/domain": "workspace:*",
-    "@mobile-agent/protocol": "workspace:*"
+    "@muximo/domain": "workspace:*",
+    "@muximo/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@mobile-agent/test-support": "workspace:*",
+    "@muximo/test-support": "workspace:*",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

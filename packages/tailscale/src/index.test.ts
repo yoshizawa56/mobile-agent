@@ -8,7 +8,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   buildServeArgs,
   buildServeHttpUrl,
@@ -51,7 +51,7 @@ const invocationCases = [
       executablePaths: [],
       expected: {
         command: "/bin/zsh",
-        invocationArgs: ["-ic", "printf '%s\\n' '__mobile_agent_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__mobile_agent_tailscale_stdout_end__'; exit \"$status\""],
+        invocationArgs: ["-ic", "printf '%s\\n' '__muximo_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__muximo_tailscale_stdout_end__'; exit \"$status\""],
         path: "/usr/bin:/Applications/Tailscale.app/Contents/MacOS:/Users/tester/Applications/Tailscale.app/Contents/MacOS",
         cliMode: "1",
         shellFallback: true,
@@ -185,7 +185,7 @@ const stdoutCases = [
   {
     name: "extracts command output between shell markers",
     input: {
-      stdout: "zsh startup message\n__mobile_agent_tailscale_stdout_begin__\n{\"Self\":{}}\n__mobile_agent_tailscale_stdout_end__\n",
+      stdout: "zsh startup message\n__muximo_tailscale_stdout_begin__\n{\"Self\":{}}\n__muximo_tailscale_stdout_end__\n",
       expected: "{\"Self\":{}}\n",
     },
     assert: [returns<EmptyContext, string>("{\"Self\":{}}\n")],
@@ -212,7 +212,7 @@ const stdoutTable: OperationTable<undefined, "default", StdoutInput, string, Emp
 const argsCases = [
   { name: "builds a persistent HTTPS command", input: { localPort: 4317, externalPort: 443 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:4317"])] },
   { name: "builds a command for a custom external port", input: { localPort: 1, externalPort: 8449 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=8449", "--yes", "http://127.0.0.1:1"])] },
-  { name: "builds a path-mounted command", input: { localPort: 4317, externalPort: 443, path: "agentd" }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "--set-path=/agentd", "http://127.0.0.1:4317"])] },
+  { name: "builds a path-mounted command", input: { localPort: 4317, externalPort: 443, path: "muximod" }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "--set-path=/muximod", "http://127.0.0.1:4317"])] },
 ] satisfies readonly OperationCase<"default", TailscaleServeConfig, string[], EmptyContext>[];
 
 const argsTable: OperationTable<undefined, "default", TailscaleServeConfig, string[], EmptyContext> = {

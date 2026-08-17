@@ -6,7 +6,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { paneStateLabel } from "./pane-board-viewmodel";
 
 type Input = { state: "waiting_input" | "waiting_approval" | "running" | "failed" };

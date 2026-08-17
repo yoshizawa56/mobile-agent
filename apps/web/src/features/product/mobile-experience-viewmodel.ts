@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@mobile-agent/protocol";
-import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, registerWorkspace } from "../api/agentd-api";
+import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@muximo/protocol";
+import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, registerWorkspace } from "../api/muximod-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import { pairBrowserFromQr, parsePairingQrPayload } from "../connection/browser-auth";
@@ -32,8 +32,8 @@ import {
   settingsPath,
   terminalsPath,
 } from "../../app/workspace-routes";
-import { useAgentdEvents } from "../api/agentd-events";
-import { mobileAgentBridge, mobileAgentFallbackAppInfo, type MobileAgentAppInfo } from "../../platform/mobile-bridge";
+import { useMuximodEvents } from "../api/muximod-events";
+import { muximoBridge, muximoFallbackAppInfo, type MuximoAppInfo } from "../../platform/muximo-bridge";
 
 export type { ProductStage } from "../../app/workspace-routes";
 
@@ -86,11 +86,11 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const [isScanningQr, setIsScanningQr] = useState(false);
   const [isPairingQr, setIsPairingQr] = useState(false);
   const [pairingMessage, setPairingMessage] = useState<string | null>(null);
-  const [appInfo, setAppInfo] = useState<MobileAgentAppInfo>(mobileAgentFallbackAppInfo);
+  const [appInfo, setAppInfo] = useState<MuximoAppInfo>(muximoFallbackAppInfo);
 
   useEffect(() => {
     let disposed = false;
-    void mobileAgentBridge.getAppInfo().then((nextAppInfo) => {
+    void muximoBridge.getAppInfo().then((nextAppInfo) => {
       if (!disposed) setAppInfo(nextAppInfo);
     }).catch(() => undefined);
     return () => {
@@ -102,26 +102,26 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     void navigate({ to: path });
   }, [navigate]);
 
-  const agentdConnection = useMemo(
+  const muximodConnection = useMemo(
     () => connectionForProfile(connectionProfile),
     [connectionProfile],
   );
-  const connectionKey = agentdConnection ? `${agentdConnection.route ?? "custom"}:${agentdConnection.httpBaseUrl}` : "unconfigured";
+  const connectionKey = muximodConnection ? `${muximodConnection.route ?? "custom"}:${muximodConnection.httpBaseUrl}` : "unconfigured";
 
   useEffect(() => {
     if (connectionProfile || stage === "terminals" || stage === "settings") return;
     navigateTo(terminalsPath());
   }, [connectionProfile, navigateTo, stage]);
 
-  useAgentdEvents(agentdConnection, connectionKey);
+  useMuximodEvents(muximodConnection, connectionKey);
 
   const terminalsQuery = useQuery({
     queryKey: ["terminals", connectionKey],
     queryFn: () => {
-      if (!agentdConnection) throw new Error("Connection profile is not configured");
-      return fetchTerminals(agentdConnection);
+      if (!muximodConnection) throw new Error("Connection profile is not configured");
+      return fetchTerminals(muximodConnection);
     },
-    enabled: Boolean(agentdConnection),
+    enabled: Boolean(muximodConnection),
     staleTime: 5_000,
     retry: 1,
   });
@@ -131,10 +131,10 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const workspacesQuery = useQuery({
     queryKey: ["workspaces", connectionKey],
     queryFn: () => {
-      if (!agentdConnection) throw new Error("Connection profile is not configured");
-      return fetchWorkspaces(agentdConnection);
+      if (!muximodConnection) throw new Error("Connection profile is not configured");
+      return fetchWorkspaces(muximodConnection);
     },
-    enabled: Boolean(agentdConnection) && (stage === "new-session" || stage === "new-pane"),
+    enabled: Boolean(muximodConnection) && (stage === "new-session" || stage === "new-pane"),
     staleTime: 5_000,
     retry: 1,
   });
@@ -151,12 +151,12 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
   const browseWorkspaceDirectories = useCallback((path?: string) => {
     setWorkspaceBrowserStatus("loading");
     setWorkspaceBrowserError(null);
-    if (!agentdConnection) {
+    if (!muximodConnection) {
       setWorkspaceBrowserStatus("error");
       setWorkspaceBrowserError("Connection profile is not configured");
       return;
     }
-    void fetchWorkspaceDirectories(path, agentdConnection)
+    void fetchWorkspaceDirectories(path, muximodConnection)
       .then((directories) => {
         setWorkspaceCandidates(directories);
         setWorkspaceBrowserPath(path ?? null);
@@ -166,7 +166,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         setWorkspaceBrowserError(errorMessage(error) ?? "Could not browse host directories");
         setWorkspaceBrowserStatus("error");
       });
-  }, [agentdConnection]);
+  }, [muximodConnection]);
 
   const openWorkspaceRegistration = useCallback(() => {
     setWorkspaceRegistrationOpen(true);
@@ -176,7 +176,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
 
   const registerNewWorkspace = useCallback(() => {
     const directory = workspaceRegistrationDirectory.trim();
-    if (!directory || isRegisteringWorkspace || !agentdConnection) return;
+    if (!directory || isRegisteringWorkspace || !muximodConnection) return;
     setIsRegisteringWorkspace(true);
     setWorkspaceRegistrationError(null);
     void registerWorkspace({
@@ -184,7 +184,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setupScriptPath: workspaceSetupScriptPath.trim() || null,
       cleanupScriptPath: workspaceCleanupScriptPath.trim() || null,
       worktreeCopyPatterns: parseWorktreeCopyPatterns(workspaceWorktreeCopyPatterns),
-    }, agentdConnection)
+    }, muximodConnection)
       .then((workspace) => {
         queryClient.setQueryData<WorkspaceDirectory[]>(["workspaces", connectionKey], (current) => {
           const next = [...(current ?? []).filter((candidate) => candidate.id !== workspace.id), workspace];
@@ -197,15 +197,15 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       })
       .catch((error: unknown) => setWorkspaceRegistrationError(errorMessage(error) ?? "Could not register workspace"))
       .finally(() => setIsRegisteringWorkspace(false));
-  }, [agentdConnection, connectionKey, isRegisteringWorkspace, queryClient, workspaceCleanupScriptPath, workspaceRegistrationDirectory, workspaceSetupScriptPath, workspaceWorktreeCopyPatterns]);
+  }, [muximodConnection, connectionKey, isRegisteringWorkspace, queryClient, workspaceCleanupScriptPath, workspaceRegistrationDirectory, workspaceSetupScriptPath, workspaceWorktreeCopyPatterns]);
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions", connectionKey, terminalId],
     queryFn: () => {
-      if (!agentdConnection) throw new Error("Connection profile is not configured");
-      return fetchSessions(agentdConnection);
+      if (!muximodConnection) throw new Error("Connection profile is not configured");
+      return fetchSessions(muximodConnection);
     },
-    enabled: Boolean(agentdConnection) && Boolean(terminalId),
+    enabled: Boolean(muximodConnection) && Boolean(terminalId),
     staleTime: 1_000,
     refetchInterval: stage === "sessions" ? 5_000 : false,
     retry: 1,
@@ -216,12 +216,12 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     : sessions.find((session) => session.name === sessionName) ?? null;
 
   const panesQuery = useQuery({
-    queryKey: paneQueryKey(agentdConnection, selectedSession?.name),
+    queryKey: paneQueryKey(muximodConnection, selectedSession?.name),
     queryFn: () => {
-      if (!agentdConnection) throw new Error("Connection profile is not configured");
-      return fetchPanes(selectedSession!.name, agentdConnection);
+      if (!muximodConnection) throw new Error("Connection profile is not configured");
+      return fetchPanes(selectedSession!.name, muximodConnection);
     },
-    enabled: Boolean(agentdConnection) && Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room" || stage === "new-pane"),
+    enabled: Boolean(muximodConnection) && Boolean(selectedSession?.name) && (stage === "session-overview" || stage === "control-room" || stage === "new-pane"),
     staleTime: 1_000,
     refetchInterval: stage === "session-overview" ? 3_000 : false,
     retry: 1,
@@ -232,12 +232,12 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     : null;
   const selectedPaneId = selectedPane?.tmuxPaneId ?? (selectedPaneRouteId ? "" : sessionPanes[0]?.tmuxPaneId ?? "");
   const paneTarget = selectedPaneId;
-  const terminalView = usePaneViewModel({ target: paneTarget, connection: agentdConnection });
+  const terminalView = usePaneViewModel({ target: paneTarget, connection: muximodConnection });
 
   const paneBoard = usePaneBoardViewModel({
     selectedTarget: selectedPaneId ?? "",
     sessionName: selectedSession?.name,
-    connection: agentdConnection,
+    connection: muximodConnection,
     alwaysOpen: stage === "control-room",
     onSelect: (target) => {
       const pane = sessionPanes.find((candidate) => candidate.tmuxPaneId === target);
@@ -260,8 +260,8 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     selectedTerminal,
     selectedSession,
     connectionStep: stage === "connecting" ? 2 : 0,
-    status: agentdConnection ? (stage === "terminals" ? queryStatus(terminalsQuery.status) : queryStatus(sessionsQuery.status)) : undefined,
-    errorMessage: agentdConnection ? (stage === "terminals" ? errorMessage(terminalsQuery.error) : errorMessage(sessionsQuery.error)) : null,
+    status: muximodConnection ? (stage === "terminals" ? queryStatus(terminalsQuery.status) : queryStatus(sessionsQuery.status)) : undefined,
+    errorMessage: muximodConnection ? (stage === "terminals" ? errorMessage(terminalsQuery.error) : errorMessage(sessionsQuery.error)) : null,
     onSelectTerminal: (terminal) => {
       setCreatedSession(null);
       navigateTo(sessionsPath(terminal.id));
@@ -329,10 +329,10 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
     onBack: () => terminalId && navigateTo(sessionsPath(terminalId)),
     onCreate: () => {
       const workspaceId = newSessionWorkspaceId || workspaces[0]?.id;
-      if (!selectedTerminal || isCreatingSession || !workspaceId || !agentdConnection) return;
+      if (!selectedTerminal || isCreatingSession || !workspaceId || !muximodConnection) return;
       setIsCreatingSession(true);
       setNewSessionError(null);
-      void createSession({ name: newSessionName, workspaceId }, agentdConnection)
+      void createSession({ name: newSessionName, workspaceId }, muximodConnection)
         .then((session) => {
           setCreatedSession(session);
           queryClient.setQueryData<TmuxSession[]>(["sessions", connectionKey, terminalId], (current) => [
@@ -344,7 +344,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         .catch((error: unknown) => setNewSessionError(errorMessage(error) ?? "Could not create tmux session"))
         .finally(() => setIsCreatingSession(false));
     },
-  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingSession, isRegisteringWorkspace, navigate, newSessionError, newSessionName, newSessionWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedTerminal, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
+  }), [muximodConnection, browseWorkspaceDirectories, connectionKey, isCreatingSession, isRegisteringWorkspace, navigate, newSessionError, newSessionName, newSessionWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedTerminal, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
 
   const newPane = useMemo<NewPaneViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -407,7 +407,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       const useWorktree = newPaneSelectionMode === "worktree";
       const workspaceRequired = useWorktree || (newPaneKind === "agent" && newPanePlacement === "window");
       const workspaceId = workspaceRequired ? newPaneWorkspaceId || workspaces[0]?.id : undefined;
-      if (!selectedSession || !selectedTerminal || isCreatingPane || (workspaceRequired && !workspaceId) || !agentdConnection) return;
+      if (!selectedSession || !selectedTerminal || isCreatingPane || (workspaceRequired && !workspaceId) || !muximodConnection) return;
       setIsCreatingPane(true);
       setNewPaneError(null);
       void createPane({
@@ -419,13 +419,13 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         useWorktree,
         placement: newPanePlacement,
         targetPaneId: newPanePlacement === "window" ? null : newPaneTargetPaneId,
-      }, agentdConnection)
+      }, muximodConnection)
         .then((pane) => {
-          queryClient.setQueryData<PaneSummary[]>(paneQueryKey(agentdConnection, selectedSession.name), (current) => [
+          queryClient.setQueryData<PaneSummary[]>(paneQueryKey(muximodConnection, selectedSession.name), (current) => [
             ...(current ?? []).filter((candidate) => candidate.id !== pane.id),
             pane,
           ]);
-          void queryClient.invalidateQueries({ queryKey: paneQueryKey(agentdConnection, selectedSession.name) });
+          void queryClient.invalidateQueries({ queryKey: paneQueryKey(muximodConnection, selectedSession.name) });
           if (terminalId) navigateTo(panePath(terminalId, selectedSession.name, pane.id));
         })
         .catch((error: unknown) => setNewPaneError(errorMessage(error) ?? "Could not open pane"))
@@ -438,7 +438,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         : null;
       navigateTo(returnPane ? panePath(terminalId, selectedSession.name, returnPane.id) : sessionPath(terminalId, selectedSession.name));
     },
-  }), [agentdConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneReturnPaneId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
+  }), [muximodConnection, browseWorkspaceDirectories, connectionKey, isCreatingPane, isRegisteringWorkspace, navigate, newPaneAgent, newPaneError, newPaneKind, newPaneName, newPanePlacement, newPaneReturnPaneId, newPaneSelectionMode, newPaneTargetPaneId, newPaneWorkspaceId, openWorkspaceRegistration, queryClient, registerNewWorkspace, selectedSession, selectedTerminal, sessionPanes, terminalId, workspaceBrowserError, workspaceBrowserPath, workspaceBrowserStatus, workspaceCandidates, workspaceCleanupScriptPath, workspaceError, workspaceRegistrationDirectory, workspaceRegistrationError, workspaceRegistrationOpen, workspaceSetupScriptPath, workspaceStatus, workspaceWorktreeCopyPatterns, workspaces]);
 
   const sessionOverview = useMemo<SessionOverviewViewModel>(() => ({
     terminal: selectedTerminal ?? fallbackTerminal,
@@ -490,7 +490,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       try {
         parsePairingQrPayload(value);
       } catch (error: unknown) {
-        setConnectionSettingsError(errorMessage(error) ?? "This QR code is not a valid mobile-agent pairing code");
+        setConnectionSettingsError(errorMessage(error) ?? "This QR code is not a valid muximo pairing code");
         return;
       }
       setIsScanningQr(false);
@@ -501,14 +501,14 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
         deviceName: "",
         onProgress: (progress) => {
           if (progress.phase === "claiming") setPairingMessage("Preparing to register device…");
-          else if (progress.phase === "awaiting_approval") setPairingMessage("Waiting for approval from agentd…");
+          else if (progress.phase === "awaiting_approval") setPairingMessage("Waiting for approval from muximod…");
           else setPairingMessage("Registered. Connecting…");
         },
       })
         .then((result) => {
           const profile = saveBrowserConnectionProfile({
             name: result.deviceName,
-            agentdBaseUrl: result.payload.agentdBaseUrl,
+            muximodBaseUrl: result.payload.muximodBaseUrl,
             serverId: result.serverId,
           });
           setConnectionProfile(profile);
@@ -575,7 +575,7 @@ const fallbackTerminal: TerminalEndpoint = {
   host: "localhost",
   tailnetIp: "localhost",
   state: "online",
-  detail: "agentd",
+  detail: "muximod",
   lastSeen: "unknown",
 };
 

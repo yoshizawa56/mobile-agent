@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-export type AgentdInstancePaths = {
+export type MuximodInstancePaths = {
   instanceDirectory: string;
   databaseFile: string;
   hookOutputDirectory: string;
@@ -9,72 +9,72 @@ export type AgentdInstancePaths = {
   controlSocket: string;
 };
 
-export type AgentdPathOverrides = {
+export type MuximodPathOverrides = {
   databaseFile?: string;
   hookOutputDirectory?: string;
   pidFile?: string;
   controlSocket?: string;
 };
 
-export const agentdControlSocketMaxBytes = 103;
+export const muximodControlSocketMaxBytes = 103;
 
 /**
- * Resolve the filesystem paths owned by one agentd instance.
+ * Resolve the filesystem paths owned by one muximod instance.
  *
- * AGENTD_INSTANCE_DIR is the normal configuration surface. The individual
+ * MUXIMOD_INSTANCE_DIR is the normal configuration surface. The individual
  * path variables remain supported as advanced and legacy overrides, but an
  * instance directory always supplies deterministic defaults for the paths
  * that were not overridden explicitly.
  */
-export function resolveAgentdPaths(
+export function resolveMuximodPaths(
   env: NodeJS.ProcessEnv = process.env,
-  overrides: AgentdPathOverrides = {},
-): AgentdInstancePaths {
-  const configuredInstanceDirectory = nonEmptyPath(env.AGENTD_INSTANCE_DIR);
+  overrides: MuximodPathOverrides = {},
+): MuximodInstancePaths {
+  const configuredInstanceDirectory = nonEmptyPath(env.MUXIMOD_INSTANCE_DIR);
   const hasConfiguredInstanceDirectory = Boolean(configuredInstanceDirectory);
-  const instanceDirectory = resolve(configuredInstanceDirectory ?? defaultAgentdInstanceDirectory(env));
-  const configuredDatabaseFile = nonEmptyPath(overrides.databaseFile) ?? nonEmptyPath(env.AGENTD_DB_FILE) ?? nonEmptyPath(env.AGENT_DATABASE_FILE);
-  const databaseFile = resolveDatabaseFile(configuredDatabaseFile ?? join(instanceDirectory, "agentd.sqlite"));
-  const hookOutputDirectory = resolvePath(nonEmptyPath(overrides.hookOutputDirectory) ?? nonEmptyPath(env.AGENT_HOOK_OUTPUT_DIR) ?? join(instanceDirectory, "hooks"));
+  const instanceDirectory = resolve(configuredInstanceDirectory ?? defaultMuximodInstanceDirectory(env));
+  const configuredDatabaseFile = nonEmptyPath(overrides.databaseFile) ?? nonEmptyPath(env.MUXIMOD_DB_FILE) ?? nonEmptyPath(env.MUXIMO_DATABASE_FILE);
+  const databaseFile = resolveDatabaseFile(configuredDatabaseFile ?? join(instanceDirectory, "muximod.sqlite"));
+  const hookOutputDirectory = resolvePath(nonEmptyPath(overrides.hookOutputDirectory) ?? nonEmptyPath(env.MUXIMO_HOOK_OUTPUT_DIR) ?? join(instanceDirectory, "hooks"));
   const pidFile = resolvePath(
     nonEmptyPath(overrides.pidFile)
-      ?? nonEmptyPath(env.AGENTD_PID_FILE)
+      ?? nonEmptyPath(env.MUXIMOD_PID_FILE)
       ?? (hasConfiguredInstanceDirectory ? defaultPidFile(instanceDirectory, databaseFile) : legacyPidFile(databaseFile, instanceDirectory)),
   );
   const controlSocket = resolvePath(
     nonEmptyPath(overrides.controlSocket)
-      ?? nonEmptyPath(env.AGENTD_CONTROL_SOCKET)
+      ?? nonEmptyPath(env.MUXIMOD_CONTROL_SOCKET)
       ?? (hasConfiguredInstanceDirectory ? defaultControlSocket(instanceDirectory) : legacyControlSocket(databaseFile, instanceDirectory)),
   );
 
   return { instanceDirectory, databaseFile, hookOutputDirectory, pidFile, controlSocket };
 }
 
-export function defaultAgentdInstanceDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.HOME ?? homedir(), ".local", "state", "mobile-agent");
+export function defaultMuximodInstanceDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.HOME ?? homedir(), ".local", "state", "muximo");
 }
 
-export function validateAgentdControlSocketPath(path: string): void {
+export function validateMuximodControlSocketPath(path: string): void {
   const bytes = Buffer.byteLength(path);
-  if (bytes > agentdControlSocketMaxBytes) {
-    throw new Error(`agentd control socket path is too long (${bytes} bytes; maximum ${agentdControlSocketMaxBytes}): ${path}`);
+  if (bytes > muximodControlSocketMaxBytes) {
+    throw new Error(`muximod control socket path is too long (${bytes} bytes; maximum ${muximodControlSocketMaxBytes}): ${path}`);
   }
 }
 
 function defaultPidFile(instanceDirectory: string, databaseFile: string): string {
-  return databaseFile === ":memory:" ? join(instanceDirectory, "agentd.pid") : join(instanceDirectory, "agentd.sqlite.pid");
+  return databaseFile === ":memory:" ? join(instanceDirectory, "muximod.pid") : join(instanceDirectory, "muximod.sqlite.pid");
 }
 
 function defaultControlSocket(instanceDirectory: string): string {
-  return join(instanceDirectory, "agentd.sock");
+  return join(instanceDirectory, "muximod.sock");
 }
 
 function legacyPidFile(databaseFile: string, instanceDirectory: string): string {
-  return databaseFile === ":memory:" ? join(instanceDirectory, "agentd.pid") : `${databaseFile}.pid`;
+  return databaseFile === ":memory:" ? join(instanceDirectory, "muximod.pid") : `${databaseFile}.pid`;
 }
 
 function legacyControlSocket(databaseFile: string, instanceDirectory: string): string {
-  return databaseFile === ":memory:" ? join(instanceDirectory, "agentd.control.sock") : `${databaseFile}.control.sock`;
+  return databaseFile === ":memory:" ? join(instanceDirectory, "muximod.control.sock") : `${databaseFile}.control.sock`;
 }
 
 function resolveDatabaseFile(value: string): string {

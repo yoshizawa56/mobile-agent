@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/protocol";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";
@@ -15,7 +15,7 @@ import type { NewPaneAgent, NewPaneKind } from "../pane/new-pane-viewmodel";
 import { usePaneViewModel } from "../pane/pane-viewmodel";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import { mockPanes } from "../../mock/mock-data";
-import { mobileAgentFallbackAppInfo } from "../../platform/mobile-bridge";
+import { muximoFallbackAppInfo } from "../../platform/muximo-bridge";
 import { TerminalsView } from "../../routes/terminals/-terminals-view";
 import type { TerminalsViewModel } from "../../routes/terminals/-terminals-viewmodel";
 import { SessionsView } from "../../routes/terminals/$terminalId/sessions/-sessions-view";
@@ -40,9 +40,9 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const [connectionStep, setConnectionStep] = useState(initialStage === "connecting" ? 2 : 0);
   const [newSession, setNewSession] = useState<TmuxSession | null>(null);
   const [newSessionName, setNewSessionName] = useState("design-lab");
-  const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState("workspace-mobile-agent");
+  const [newSessionWorkspaceId, setNewSessionWorkspaceId] = useState("workspace-muximo");
   const [newPaneName, setNewPaneName] = useState("review");
-  const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("workspace-mobile-agent");
+  const [newPaneWorkspaceId, setNewPaneWorkspaceId] = useState("workspace-muximo");
   const [newPaneKind, setNewPaneKind] = useState<NewPaneKind>("agent");
   const [newPaneAgent, setNewPaneAgent] = useState<NewPaneAgent>("codex");
   const [newPaneSelectionMode, setNewPaneSelectionMode] = useState<WorkspaceSelectionMode>(initialSelectionMode);
@@ -50,12 +50,12 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const [newPaneTargetPaneId, setNewPaneTargetPaneId] = useState<string | null>("%0");
 
   const storyWorkspaces: WorkspaceDirectory[] = initialWorkspaceState === "empty" ? [] : [{
-    id: "workspace-mobile-agent",
-    name: "mobile-agent",
-    directory: "~/work/mobile-agent",
+    id: "workspace-muximo",
+    name: "muximo",
+    directory: "~/work/muximo",
     isGit: true,
-    setupScriptPath: "~/.config/agent/setup",
-    cleanupScriptPath: "~/.config/agent/cleanup",
+    setupScriptPath: "~/.config/muximo/setup",
+    cleanupScriptPath: "~/.config/muximo/cleanup",
     worktreeCopyPatterns: [".env", ".env.local"],
   }, {
     id: "workspace-scratch",
@@ -90,7 +90,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const terminalViewModel = usePaneViewModel({ target: paneTarget });
 
   const connectionSettingsViewModel = useMemo<ConnectionSettingsViewModel>(() => ({
-    appInfo: mobileAgentFallbackAppInfo,
+    appInfo: muximoFallbackAppInfo,
     hasSavedProfile: true,
     isScanningQr: false,
     isPairingQr: false,
@@ -340,7 +340,7 @@ export const TerminalPicker: Story = {
 export const ConnectionSetup: Story = {
   name: "Setup / no connection configured",
   render: () => <ConnectionSettingsView viewModel={{
-    appInfo: mobileAgentFallbackAppInfo,
+    appInfo: muximoFallbackAppInfo,
     hasSavedProfile: false,
     isScanningQr: false,
     isPairingQr: false,
@@ -391,22 +391,22 @@ export const WorkspaceWorktreePicker: Story = {
 
 export const Attaching: Story = {
   name: "Setup / attaching session",
-  render: () => <MobileExperience initialStage="connecting" initialTerminalId="macbook-air" initialSessionName="mobile-agent" autoAdvance={false} />,
+  render: () => <MobileExperience initialStage="connecting" initialTerminalId="macbook-air" initialSessionName="muximo" autoAdvance={false} />,
 };
 
 export const SessionReadyNoPane: Story = {
   name: "Session / no pane selected",
-  render: () => <MobileExperience initialStage="session-overview" initialTerminalId="macbook-air" initialSessionName="mobile-agent" />,
+  render: () => <MobileExperience initialStage="session-overview" initialTerminalId="macbook-air" initialSessionName="muximo" />,
 };
 
 export const NewPane: Story = {
   name: "Session / new pane with placement",
-  render: () => <MobileExperience initialStage="new-pane" initialTerminalId="macbook-air" initialSessionName="mobile-agent" />,
+  render: () => <MobileExperience initialStage="new-pane" initialTerminalId="macbook-air" initialSessionName="muximo" />,
 };
 
 export const AgentWaiting: Story = {
   name: "Control room / agent waiting",
-  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="mobile-agent" initialPaneId="%0" />,
+  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="muximo" initialPaneId="%0" />,
 };
 
 export const AgentApproval: Story = {
@@ -416,25 +416,25 @@ export const AgentApproval: Story = {
 
 export const AgentRunning: Story = {
   name: "Control room / agent running",
-  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="mobile-agent" initialPaneId="%1" />,
+  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="muximo" initialPaneId="%1" />,
 };
 
 export const Shell: Story = {
   name: "Control room / shell",
-  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="mobile-agent" initialPaneId="%2" />,
+  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="muximo" initialPaneId="%2" />,
 };
 
 export const GhostMap: Story = {
   name: "Control room / readable window map",
-  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="mobile-agent" initialPaneId="%2" initialMapOpen />,
+  render: () => <MobileExperience initialStage="control-room" initialTerminalId="macbook-air" initialSessionName="muximo" initialPaneId="%2" initialMapOpen />,
 };
 
 export const MobileDisconnected: Story = {
   name: "Recovery / mobile disconnected",
-  render: () => <MobileExperience initialStage="disconnected" initialTerminalId="macbook-air" initialSessionName="mobile-agent" />,
+  render: () => <MobileExperience initialStage="disconnected" initialTerminalId="macbook-air" initialSessionName="muximo" />,
 };
 
 export const ShellEnded: Story = {
   name: "Recovery / shell ended",
-  render: () => <MobileExperience initialStage="ended" initialTerminalId="macbook-air" initialSessionName="mobile-agent" />,
+  render: () => <MobileExperience initialStage="ended" initialTerminalId="macbook-air" initialSessionName="muximo" />,
 };

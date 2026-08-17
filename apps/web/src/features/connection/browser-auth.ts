@@ -1,4 +1,4 @@
-import type { AgentdAuthProvider, AgentdConnection } from "@mobile-agent/agentd-client";
+import type { MuximodAuthProvider, MuximodConnection } from "@muximo/muximod-client";
 import {
   authChallengeRequestSchema,
   authChallengeResponseSchema,
@@ -12,7 +12,7 @@ import {
   pairingStatusSchema,
   type PairingCodePayload,
   type PublicKeyJwk,
-} from "@mobile-agent/protocol";
+} from "@muximo/protocol";
 import {
   encodeJsonBase64Url,
   pairingClaimMessage,
@@ -20,7 +20,7 @@ import {
   sessionMessage,
   sha256Hex,
   signEcdsa,
-} from "@mobile-agent/protocol";
+} from "@muximo/protocol";
 
 type StoredBrowserDevice = {
   serverId: string;
@@ -36,7 +36,7 @@ type CachedSession = {
   expiresAt: string;
 };
 
-const authDatabaseName = "mobile-agent.auth.v1";
+const authDatabaseName = "muximo.auth.v1";
 const authStoreName = "devices";
 const clientVersion = "web";
 
@@ -57,9 +57,9 @@ export function parsePairingQrPayload(value: string): PairingCodePayload {
   try {
     payload = pairingCodePayloadSchema.parse(decodePairingCode(value));
   } catch {
-    throw new Error("QR code does not contain a valid mobile-agent pairing code");
+    throw new Error("QR code does not contain a valid muximo pairing code");
   }
-  if (new URL(payload.agentdBaseUrl).protocol !== "http:" && new URL(payload.agentdBaseUrl).protocol !== "https:") {
+  if (new URL(payload.muximodBaseUrl).protocol !== "http:" && new URL(payload.muximodBaseUrl).protocol !== "https:") {
     throw new Error("Pairing endpoint must use http or https");
   }
   return payload;
@@ -73,7 +73,7 @@ export async function pairBrowserFromQr(
   },
 ): Promise<BrowserPairingResult> {
   const payload = parsePairingQrPayload(value);
-  const endpoint = payload.agentdBaseUrl.replace(/\/$/, "");
+  const endpoint = payload.muximodBaseUrl.replace(/\/$/, "");
   const info = authInfoSchema.parse(await requestJson(`${endpoint}/auth/v1/info`));
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
@@ -104,7 +104,7 @@ export async function pairBrowserFromQr(
       signature: await signEcdsa(keyPair.privateKey, claimMessage),
     })),
   }));
-  if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId) throw new Error("agentd returned an unexpected pairing identity");
+  if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId) throw new Error("muximod returned an unexpected pairing identity");
   options.onProgress?.({ phase: "awaiting_approval", fingerprint: claim.keyFingerprint });
 
   const status = await waitForPairingApproval(endpoint, payload.pairingId, claim.claimToken);
@@ -119,15 +119,15 @@ export async function pairBrowserFromQr(
   return { payload, serverId: info.serverId, deviceId: status.deviceId, deviceName: options.deviceName.trim() || defaultDeviceName() };
 }
 
-export function createBrowserAgentdAuth(connection: AgentdConnection): AgentdAuthProvider {
+export function createBrowserMuximodAuth(connection: MuximodConnection): MuximodAuthProvider {
   let cached: CachedSession | undefined;
-  const provider: AgentdAuthProvider = {
+  const provider: MuximodAuthProvider = {
     getAccessToken: async () => {
       const info = authInfoSchema.parse(await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/info`));
       if (cached && cached.serverId === info.serverId && cached.expiresAt > new Date(Date.now() + 30_000).toISOString()) return cached.accessToken;
 
       const device = await loadBrowserDevice(info.serverId);
-      if (!device) throw new Error("This browser is not paired with agentd");
+      if (!device) throw new Error("This browser is not paired with muximod");
       const challenge = authChallengeResponseSchema.parse(await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/challenges`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -145,7 +145,7 @@ export function createBrowserAgentdAuth(connection: AgentdConnection): AgentdAut
         headers: { "content-type": "application/json" },
         body: JSON.stringify(authSessionRequestSchema.parse({ deviceId: device.deviceId, challengeId: challenge.challengeId, signature })),
       }));
-      if (session.serverId !== info.serverId || session.deviceId !== device.deviceId) throw new Error("agentd returned an unexpected session identity");
+      if (session.serverId !== info.serverId || session.deviceId !== device.deviceId) throw new Error("muximod returned an unexpected session identity");
       cached = { serverId: session.serverId, deviceId: session.deviceId, accessToken: session.accessToken, expiresAt: session.expiresAt };
       return session.accessToken;
     },
@@ -180,7 +180,7 @@ async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
       ? payload.message
-      : `agentd returned ${response.status}`;
+      : `muximod returned ${response.status}`;
     throw new Error(message);
   }
   return payload;

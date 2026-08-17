@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@mobile-agent/application";
+import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
 import { TerminalQrRenderer, type QrRendererPort } from "./terminal-qr-renderer.js";
 
 export type TerminalPairingPresenterOptions = {
@@ -19,11 +19,11 @@ export class TerminalPairingPresenter implements PairingPresenterPort {
 
   public async showPairing(offer: PairingOffer): Promise<void> {
     const qr = await this.qrRenderer.render(offer.pairingCode);
-    this.write("agent pair\n");
-    this.write(`agentd: ${offer.agentdBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
+    this.write("muximo pair\n");
+    this.write(`muximod: ${offer.muximodBaseUrl}\nExpires: ${new Date(offer.expiresAt).toLocaleString()}\n\n`);
     this.write(qr);
     if (!qr.endsWith("\n")) this.write("\n");
-    this.write("Scan this QR code in the Mobile Agent app. Waiting for a connection request.\n");
+    this.write("Scan this QR code in the Muximo app. Waiting for a connection request.\n");
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/protocol";
 import { NewPaneView } from "./new-pane-view";
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./new-pane-viewmodel";
 import type { WorkspaceSelectionMode } from "../workspace/workspace-picker-viewmodel";
@@ -9,13 +9,13 @@ const storyPanes: PaneSummary[] = [
   {
     id: "pane-review",
     tmuxPaneId: "%0",
-    sessionName: "mobile-agent",
+    sessionName: "muximo",
     windowId: "@0",
     paneIndex: 0,
     kind: "agent",
     name: "Review the viewport lease",
-    cwd: "~/work/mobile-agent",
-    workspaceId: "mobile-agent",
+    cwd: "~/work/muximo",
+    workspaceId: "muximo",
     agentId: "codex",
     state: "waiting_input",
     title: "codex · review",
@@ -24,13 +24,13 @@ const storyPanes: PaneSummary[] = [
   {
     id: "pane-shell",
     tmuxPaneId: "%2",
-    sessionName: "mobile-agent",
+    sessionName: "muximo",
     windowId: "@1",
     paneIndex: 0,
     kind: "shell",
     name: "Local shell",
-    cwd: "~/work/mobile-agent",
-    workspaceId: "mobile-agent",
+    cwd: "~/work/muximo",
+    workspaceId: "muximo",
     agentId: null,
     state: "running",
     title: "zsh",
@@ -39,12 +39,12 @@ const storyPanes: PaneSummary[] = [
 ];
 
 const storyWorkspaces: WorkspaceDirectory[] = [{
-  id: "workspace-mobile-agent",
-  name: "mobile-agent",
-  directory: "~/work/mobile-agent",
+  id: "workspace-muximo",
+  name: "muximo",
+  directory: "~/work/muximo",
   isGit: true,
-  setupScriptPath: "~/.config/agent/setup",
-  cleanupScriptPath: "~/.config/agent/cleanup",
+  setupScriptPath: "~/.config/muximo/setup",
+  cleanupScriptPath: "~/.config/muximo/cleanup",
   worktreeCopyPatterns: [".env", ".env.local"],
 }, {
   id: "workspace-scratch",
@@ -64,11 +64,11 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
       host: "toru-macbook-air",
       tailnetIp: "100.112.247.15",
       state: "online",
-      detail: "agentd 0.1 · macOS",
+      detail: "muximod 0.1 · macOS",
       lastSeen: "active now",
     },
     session: {
-      name: "mobile-agent",
+      name: "muximo",
       paneCount: 2,
       waitingCount: 1,
       detail: "1 agent · 1 shell · waiting input",
@@ -77,7 +77,7 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
     workspacePicker: {
       workspaces: storyWorkspaces,
       workspaceCandidates: storyWorkspaces,
-      workspaceId: "workspace-mobile-agent",
+      workspaceId: "workspace-muximo",
       mode: "workspace",
       workspaceStatus: "ready",
       browserStatus: "ready",

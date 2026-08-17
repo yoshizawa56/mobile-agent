@@ -10,7 +10,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let appWindow = window ?? UIWindow(frame: UIScreen.main.bounds)
         window = appWindow
 
-        appWindow.rootViewController = MobileAgentWebViewController()
+        appWindow.rootViewController = MuximoWebViewController()
         appWindow.makeKeyAndVisible()
         return true
     }

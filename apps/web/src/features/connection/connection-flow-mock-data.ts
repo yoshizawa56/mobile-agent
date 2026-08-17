@@ -7,7 +7,7 @@ export const mockTerminals: TerminalEndpoint[] = [
     host: "toru-macbook-air",
     tailnetIp: "100.112.247.15",
     state: "online",
-    detail: "agentd 0.1 · macOS",
+    detail: "muximod 0.1 · macOS",
     lastSeen: "active now",
   },
   {
@@ -16,14 +16,14 @@ export const mockTerminals: TerminalEndpoint[] = [
     host: "studio-mini",
     tailnetIp: "100.112.247.42",
     state: "offline",
-    detail: "agentd 0.1 · macOS",
+    detail: "muximod 0.1 · macOS",
     lastSeen: "last seen 2h ago",
   },
 ];
 
 export const mockSessions: TmuxSession[] = [
   {
-    name: "mobile-agent",
+    name: "muximo",
     paneCount: 4,
     waitingCount: 1,
     detail: "2 agents · 1 shell · waiting input",

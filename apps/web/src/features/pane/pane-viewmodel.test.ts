@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { terminalProtocolVersion, type ClientControlMessage, type ServerControlMessage } from "@mobile-agent/protocol";
+import { terminalProtocolVersion, type ClientControlMessage, type ServerControlMessage } from "@muximo/protocol";
 import {
   hasObserved,
   noFixture,
@@ -9,7 +9,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   createPasteImageMessage,
   createTerminalAttachMessage,

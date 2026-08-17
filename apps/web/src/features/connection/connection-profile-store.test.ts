@@ -11,11 +11,11 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   clearBrowserConnectionProfile,
   connectionForProfile,
-  normalizeAgentdBaseUrl,
+  normalizeMuximodBaseUrl,
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
   type BrowserConnectionProfile,
@@ -37,13 +37,13 @@ type EmptyContext = {};
 const normalizeCases = [
   { name: "removes a trailing slash", input: "https://workstation.tailnet.ts.net/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net")] },
   { name: "preserves a non-default port", input: "https://workstation.tailnet.ts.net:8449/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net:8449")] },
-  { name: "removes path and query details", input: "https://example.test/agentd/?ignored=1", assert: [returns<EmptyContext, string>("https://example.test/agentd")] },
+  { name: "removes path and query details", input: "https://example.test/muximod/?ignored=1", assert: [returns<EmptyContext, string>("https://example.test/muximod")] },
 ] satisfies readonly OperationCase<"default", string, string, EmptyContext>[];
 
 const normalizeTable: OperationTable<undefined, "default", string, string, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: normalizeCases,
-  execute: (_fixture, input) => normalizeAgentdBaseUrl(input),
+  execute: (_fixture, input) => normalizeMuximodBaseUrl(input),
   observe: () => ({}),
 };
 
@@ -64,7 +64,7 @@ const connectionTable: OperationTable<undefined, "default", null, ReturnType<typ
 
 type ProfileFixture = { storage: MemoryStorage };
 type ProfileStep =
-  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "agentdBaseUrl"> }
+  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> }
   | { type: "set-raw"; value: string }
   | { type: "clear" }
   | { type: "read" };
@@ -87,7 +87,7 @@ const hasProfileEndpoint = (expected: string): Assertion<ProfileContext, Profile
   name: `returns endpoint ${expected}`,
   check: (_ctx, result) => {
     if (!result.ok) throw result.error;
-    expect(result.value?.agentdBaseUrl).toBe(expected);
+    expect(result.value?.muximodBaseUrl).toBe(expected);
   },
 });
 
@@ -103,7 +103,7 @@ const profileCases = [
   {
     name: "round-trips a profile without credentials",
     steps: [
-      { type: "save", input: { name: "Workstation", agentdBaseUrl: "https://workstation.tailnet.ts.net/" } },
+      { type: "save", input: { name: "Workstation", muximodBaseUrl: "https://workstation.tailnet.ts.net/" } },
       { type: "read" },
     ],
     assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
@@ -117,7 +117,7 @@ const profileCases = [
     assert: [returns<ProfileContext, ProfileResult>(null)],
   },
   {
-    name: "reads the legacy serveUrl field as an agentd endpoint",
+    name: "reads the legacy serveUrl field as a muximod endpoint",
     steps: [
       { type: "set-raw", value: JSON.stringify({ id: "default", name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/", updatedAt: "2026-08-15T00:00:00.000Z" }) },
       { type: "read" },
@@ -127,7 +127,7 @@ const profileCases = [
   {
     name: "clears a saved profile",
     steps: [
-      { type: "save", input: { name: "Workstation", agentdBaseUrl: "https://workstation.tailnet.ts.net" } },
+      { type: "save", input: { name: "Workstation", muximodBaseUrl: "https://workstation.tailnet.ts.net" } },
       { type: "clear" },
       { type: "read" },
     ],
@@ -142,13 +142,13 @@ const profileTable: ScenarioTable<ProfileFixture, "default", ProfileStep, Profil
     let result: ProfileResult = null;
     for (const step of steps) {
       if (step.type === "save") result = saveBrowserConnectionProfile(step.input, fixture.storage);
-      if (step.type === "set-raw") fixture.storage.setItem("mobile-agent.connection-profile.v1", step.value);
+      if (step.type === "set-raw") fixture.storage.setItem("muximo.connection-profile.v1", step.value);
       if (step.type === "clear") clearBrowserConnectionProfile(fixture.storage);
       if (step.type === "read") result = readBrowserConnectionProfile(fixture.storage);
     }
     return result;
   },
-  observe: (fixture) => ({ raw: fixture.storage.getItem("mobile-agent.connection-profile.v1") }),
+  observe: (fixture) => ({ raw: fixture.storage.getItem("muximo.connection-profile.v1") }),
 };
 
 describe("browser connection profile", () => {

@@ -9,7 +9,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 import type { AgentObservation, AgentMonitor } from "./index.js";
 
@@ -83,7 +83,7 @@ const table: OperationTable<undefined, "default", MonitorInput, MonitorResult, E
   defaultFixture: noFixture(),
   cases,
   execute: async (_fixture, input) => {
-    const root = mkdtempSync(join(tmpdir(), "mobile-agent-plugin-monitor-"));
+    const root = mkdtempSync(join(tmpdir(), "muximo-plugin-monitor-"));
     try {
       const providerRoot = input.provider === "codex" ? join(root, "sessions", "2026", "08") : join(root, "projects", "workspace");
       mkdirSync(providerRoot, { recursive: true });

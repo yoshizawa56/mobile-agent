@@ -1,5 +1,5 @@
-import type { WorkspaceRecord } from "@mobile-agent/domain";
-import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, worktreeCopyPatternLimits } from "@mobile-agent/domain";
+import type { WorkspaceRecord } from "@muximo/domain";
+import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, worktreeCopyPatternLimits } from "@muximo/domain";
 import type { WorkspaceRepository } from "./index.js";
 
 export type WorkspaceDirectoryInfo = {

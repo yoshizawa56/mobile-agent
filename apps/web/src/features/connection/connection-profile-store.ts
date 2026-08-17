@@ -1,15 +1,15 @@
-import { createServeConnection, type AgentdConnection } from "@mobile-agent/agentd-client";
-import { createBrowserAgentdAuth } from "./browser-auth";
+import { createServeConnection, type MuximodConnection } from "@muximo/muximod-client";
+import { createBrowserMuximodAuth } from "./browser-auth";
 
 export type BrowserConnectionProfile = {
   id: string;
   name: string;
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   serverId?: string;
   updatedAt: string;
 };
 
-const storageKey = "mobile-agent.connection-profile.v1";
+const storageKey = "muximo.connection-profile.v1";
 
 export function readBrowserConnectionProfile(storage: Storage | undefined = getStorage()): BrowserConnectionProfile | null {
   if (!storage) return null;
@@ -24,13 +24,13 @@ export function readBrowserConnectionProfile(storage: Storage | undefined = getS
 }
 
 export function saveBrowserConnectionProfile(
-  input: Pick<BrowserConnectionProfile, "name" | "agentdBaseUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
+  input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
   const profile: BrowserConnectionProfile = {
     id: "default",
-    name: input.name.trim() || new URL(input.agentdBaseUrl).hostname,
-    agentdBaseUrl: normalizeAgentdBaseUrl(input.agentdBaseUrl),
+    name: input.name.trim() || new URL(input.muximodBaseUrl).hostname,
+    muximodBaseUrl: normalizeMuximodBaseUrl(input.muximodBaseUrl),
     ...(input.serverId ? { serverId: input.serverId } : {}),
     updatedAt: new Date().toISOString(),
   };
@@ -43,17 +43,17 @@ export function clearBrowserConnectionProfile(storage: Storage | undefined = get
   storage?.removeItem(storageKey);
 }
 
-export function connectionForProfile(profile: BrowserConnectionProfile | null): AgentdConnection | undefined {
+export function connectionForProfile(profile: BrowserConnectionProfile | null): MuximodConnection | undefined {
   if (!profile) return undefined;
-  const connection = createServeConnection(profile.agentdBaseUrl);
-  connection.auth = createBrowserAgentdAuth(connection);
+  const connection = createServeConnection(profile.muximodBaseUrl);
+  connection.auth = createBrowserMuximodAuth(connection);
   return connection;
 }
 
-export function normalizeAgentdBaseUrl(value: string): string {
+export function normalizeMuximodBaseUrl(value: string): string {
   const url = new URL(value.trim());
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("agentd URL must use https:// (http:// is allowed only for local development)");
+    throw new Error("muximod URL must use https:// (http:// is allowed only for local development)");
   }
   url.hash = "";
   url.search = "";
@@ -64,16 +64,16 @@ export function normalizeAgentdBaseUrl(value: string): string {
 function parseProfile(value: unknown): BrowserConnectionProfile {
   if (!value || typeof value !== "object") throw new Error("Invalid connection profile");
   const candidate = value as Record<string, unknown>;
-  const agentdBaseUrl = typeof candidate.agentdBaseUrl === "string"
-    ? candidate.agentdBaseUrl
+  const muximodBaseUrl = typeof candidate.muximodBaseUrl === "string"
+    ? candidate.muximodBaseUrl
     : typeof candidate.serveUrl === "string" ? candidate.serveUrl : undefined;
-  if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || !agentdBaseUrl || typeof candidate.updatedAt !== "string") {
+  if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || !muximodBaseUrl || typeof candidate.updatedAt !== "string") {
     throw new Error("Invalid connection profile");
   }
   return {
     id: candidate.id,
     name: candidate.name,
-    agentdBaseUrl: normalizeAgentdBaseUrl(agentdBaseUrl),
+    muximodBaseUrl: normalizeMuximodBaseUrl(muximodBaseUrl),
     ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };

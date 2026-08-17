@@ -4,10 +4,10 @@ import type {
   PaneRecord,
   PaneState,
   WorkspaceRecord,
-} from "@mobile-agent/domain";
+} from "@muximo/domain";
 
-export { ApplicationError, type AgentdApplication, type AgentdHookEvent } from "./agentd.js";
-export { agentdSocketReadyState, type AgentdSocket, type AgentdSocketData } from "./socket.js";
+export { ApplicationError, type MuximodApplication, type MuximodHookEvent } from "./muximod.js";
+export { muximodSocketReadyState, type MuximodSocket, type MuximodSocketData } from "./socket.js";
 
 export {
   PairDevice,

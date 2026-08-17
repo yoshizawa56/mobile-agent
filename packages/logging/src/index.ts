@@ -173,7 +173,7 @@ export function parseLogLevel(value: string | undefined, fallback: LogLevel = "w
 }
 
 export function defaultLogFile(environment: NodeJS.ProcessEnv = process.env): string {
-  return resolve(environment.AGENT_LOG_FILE ?? join(environment.HOME ?? homedir(), ".local", "state", "mobile-agent", "agentd.log"));
+  return resolve(environment.MUXIMO_LOG_FILE ?? join(environment.HOME ?? homedir(), ".local", "state", "muximo", "muximod.log"));
 }
 
 export function errorFields(error: unknown): LogContext {

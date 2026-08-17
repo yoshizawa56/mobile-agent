@@ -12,7 +12,7 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { createLogger, createRotatingFileSink, createStreamSink, errorFields, errorMessage, formatHumanRecord, parseLogLevel, type LogRecord } from "./index.js";
 
 type LogKey = "metadata" | "human" | "rotate" | "stream" | "level" | "hostile";
@@ -44,7 +44,7 @@ const metadataAssertion: Assertion<LogContext, LogResult> = {
   name: "adds process and child metadata while redacting fields",
   check: (ctx) => expect(ctx.records[0]).toMatchObject({
     timestamp: "2026-08-14T00:00:00.000Z",
-    service: "agent-cli",
+    service: "muximo-cli",
     pid: 123,
     processInstanceId: "process-1",
     mode: "attached",
@@ -67,9 +67,9 @@ const humanAssertion: Assertion<LogContext, LogResult> = {
 const rotateAssertion: Assertion<LogContext, LogResult> = {
   name: "writes bounded private JSON log files",
   check: (ctx) => {
-    expect(ctx.files).toContain("agentd.log");
+    expect(ctx.files).toContain("muximod.log");
     expect(ctx.files.length).toBeLessThanOrEqual(3);
-    expect(JSON.parse(readFileSync(ctx.logPath!, "utf8").trim())).toMatchObject({ service: "agentd", event: "daemon.health_check" });
+    expect(JSON.parse(readFileSync(ctx.logPath!, "utf8").trim())).toMatchObject({ service: "muximod", event: "daemon.health_check" });
     expect(statSync(ctx.logPath!).mode & 0o777).toBe(0o600);
     expect(statSync(join(ctx.logPath!, "..")).mode & 0o777).toBe(0o700);
   },
@@ -131,7 +131,7 @@ const table: ScenarioTable<LogFixture, LogKey, LogStep, LogResult, LogContext> =
         const record: LogRecord = {
           timestamp: "2026-08-14T00:00:00.000Z",
           level: "error",
-          service: "agent-cli",
+          service: "muximo-cli",
           pid: 123,
           processInstanceId: "process-1",
           mode: "attached",
@@ -173,7 +173,7 @@ const table: ScenarioTable<LogFixture, LogKey, LogStep, LogResult, LogContext> =
   observe: (fixture) => ({
     records: [...fixture.records],
     output: fixture.output + (fixture.outputStream instanceof Writable ? readStreamOutput(fixture.outputStream) : ""),
-    files: fixture.root ? readdirSync(join(fixture.root, "logs")).filter((file) => file.startsWith("agentd.log")) : [],
+    files: fixture.root ? readdirSync(join(fixture.root, "logs")).filter((file) => file.startsWith("muximod.log")) : [],
     logPath: fixture.logPath,
     writes: fixture.writes,
     fields: fixture.fields,
@@ -188,19 +188,19 @@ describe("structured logger", () => {
 function createLoggingFixture(kind: LogKey): FixtureHandle<LogFixture> {
   const fixture: LogFixture = { records: [], output: "", writes: 0 };
   if (kind === "metadata") {
-    fixture.logger = createLogger({ service: "agent-cli", mode: "attached", level: "debug", sink: { write: (record) => fixture.records.push(record) }, processInstanceId: "process-1", pid: 123, clock: () => new Date("2026-08-14T00:00:00.000Z") });
+    fixture.logger = createLogger({ service: "muximo-cli", mode: "attached", level: "debug", sink: { write: (record) => fixture.records.push(record) }, processInstanceId: "process-1", pid: 123, clock: () => new Date("2026-08-14T00:00:00.000Z") });
   } else if (kind === "human") {
     // The record is created in execute so observation remains read-only.
   } else if (kind === "rotate") {
-    fixture.root = mkdtempSync(join(tmpdir(), "mobile-agent-logging-test-"));
-    fixture.logPath = join(fixture.root, "logs", "agentd.log");
-    fixture.logger = createLogger({ service: "agentd", mode: "background", level: "info", sink: createRotatingFileSink(fixture.logPath, { maxBytes: 240, maxFiles: 2 }), processInstanceId: "process-1", pid: 123 });
+    fixture.root = mkdtempSync(join(tmpdir(), "muximo-logging-test-"));
+    fixture.logPath = join(fixture.root, "logs", "muximod.log");
+    fixture.logger = createLogger({ service: "muximod", mode: "background", level: "info", sink: createRotatingFileSink(fixture.logPath, { maxBytes: 240, maxFiles: 2 }), processInstanceId: "process-1", pid: 123 });
   } else if (kind === "stream") {
     fixture.outputStream = new Writable({ write(_chunk, _encoding, callback) { fixture.writes += 1; callback(new Error("stream closed")); } });
-    fixture.logger = createLogger({ service: "agent-cli", mode: "attached", level: "debug", sink: createStreamSink(fixture.outputStream, "human") });
+    fixture.logger = createLogger({ service: "muximo-cli", mode: "attached", level: "debug", sink: createStreamSink(fixture.outputStream, "human") });
   } else if (kind === "level") {
     fixture.outputStream = new Writable({ write(chunk, _encoding, callback) { fixture.output += chunk.toString(); callback(); } });
-    fixture.logger = createLogger({ service: "agent-cli", mode: "attached", level: "warn", sink: createStreamSink(fixture.outputStream, "human") });
+    fixture.logger = createLogger({ service: "muximo-cli", mode: "attached", level: "warn", sink: createStreamSink(fixture.outputStream, "human") });
   }
   return { fixture, cleanup: () => { fixture.logger?.close(); if (fixture.root) rmSync(fixture.root, { recursive: true, force: true }); } };
 }

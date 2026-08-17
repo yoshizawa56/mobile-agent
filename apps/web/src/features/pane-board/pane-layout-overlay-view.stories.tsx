@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { PaneSummary } from "@mobile-agent/protocol";
+import type { PaneSummary } from "@muximo/protocol";
 import { useState } from "react";
 import { PaneLayoutOverlay } from "./pane-layout-overlay-view";
 
@@ -11,8 +11,8 @@ const basePane: PaneSummary = {
   paneIndex: 0,
   kind: "agent",
   name: "Agent status",
-  cwd: "~/work/mobile-agent",
-  workspaceId: "mobile-agent",
+  cwd: "~/work/muximo",
+  workspaceId: "muximo",
   agentId: "codex",
   state: "running",
   title: "codex · status demo",

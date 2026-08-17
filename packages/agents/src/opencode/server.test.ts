@@ -9,7 +9,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   OpenCodeServerManager,
   type OpenCodeServerEntry,
@@ -62,7 +62,7 @@ type ServerResult = {
 
 function createHarness(): Harness {
   return {
-    registryFile: join(mkdtempSync(join(tmpdir(), "mobile-agent-opencode-server-")), "opencode-servers.json"),
+    registryFile: join(mkdtempSync(join(tmpdir(), "muximo-opencode-server-")), "opencode-servers.json"),
     nextPid: 1_000,
     ports: [],
     healthyPorts: new Set(),

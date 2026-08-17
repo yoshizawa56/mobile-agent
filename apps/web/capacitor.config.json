@@ -1,6 +1,6 @@
 {
-  "appId": "com.mobileagent.app",
-  "appName": "Mobile Agent",
+  "appId": "com.muximo.app",
+  "appName": "Muximo",
   "webDir": "dist",
   "server": {
     "hostname": "localhost",

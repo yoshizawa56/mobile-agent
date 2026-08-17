@@ -6,7 +6,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { TERMINAL_FONT_FAMILY, TERMINAL_SYMBOL_FONT_FAMILY } from "./terminal-font";
 
 type Context = {};

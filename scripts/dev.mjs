@@ -10,8 +10,8 @@ import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeT
 import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
-  agentdHost: "127.0.0.1",
-  agentdPort: 4317,
+  muximodHost: "127.0.0.1",
+  muximodPort: 4317,
   webHost: "0.0.0.0",
   webPort: 5227,
   adoptExistingServices: true,
@@ -50,21 +50,21 @@ function readDuration(name, fallback, environment) {
 
 export function resolveDevConfig(environment = process.env, cwd = process.cwd()) {
   let baseEnvironment = applyDevWorktreeProfile(environment, cwd);
-  const agentdHost = baseEnvironment.AGENTD_HOST ?? DEFAULT_DEV_CONFIG.agentdHost;
-  const agentdPort = readPort("AGENTD_PORT", baseEnvironment.AGENTD_PORT ?? DEFAULT_DEV_CONFIG.agentdPort, baseEnvironment);
+  const muximodHost = baseEnvironment.MUXIMOD_HOST ?? DEFAULT_DEV_CONFIG.muximodHost;
+  const muximodPort = readPort("MUXIMOD_PORT", baseEnvironment.MUXIMOD_PORT ?? DEFAULT_DEV_CONFIG.muximodPort, baseEnvironment);
   const webHost = baseEnvironment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
   const webPort = readPort("VITE_DEV_PORT", baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort, baseEnvironment);
-  const agentdProbeHost = probeHostForBind(agentdHost);
-  const serveProvider = baseEnvironment.AGENT_DEV_SERVE_PROVIDER;
+  const muximodProbeHost = probeHostForBind(muximodHost);
+  const serveProvider = baseEnvironment.MUXIMO_DEV_SERVE_PROVIDER;
   const servePort = serveProvider
-    ? readPort("AGENT_DEV_SERVE_PORT", baseEnvironment.AGENT_DEV_SERVE_PORT ?? 443, baseEnvironment)
+    ? readPort("MUXIMO_DEV_SERVE_PORT", baseEnvironment.MUXIMO_DEV_SERVE_PORT ?? 443, baseEnvironment)
     : undefined;
   if (serveProvider === "tailscale") {
     const hostname = resolveTailscaleHostname(baseEnvironment);
     if (hostname) {
       baseEnvironment = {
         ...baseEnvironment,
-        AGENT_TAILSCALE_HOSTNAME: hostname,
+        MUXIMO_TAILSCALE_HOSTNAME: hostname,
         VITE_ALLOWED_HOSTS: appendAllowedHost(baseEnvironment.VITE_ALLOWED_HOSTS, hostname),
       };
     }
@@ -74,19 +74,19 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
     ...DEFAULT_DEV_CONFIG,
     repoRoot: cwd,
     baseEnvironment,
-    agentdHost,
-    agentdPort,
-    agentdProbeHost,
+    muximodHost,
+    muximodPort,
+    muximodProbeHost,
     webHost,
     webPort,
     serveProvider,
     servePort,
     // A linked worktree must never silently attach to another worktree's
-    // agentd or Vite process. Reusing an existing listener remains available
+    // muximod or Vite process. Reusing an existing listener remains available
     // to direct supervisor tests and explicitly constructed configurations.
     adoptExistingServices: false,
-    readyTimeoutMs: readDuration("MOBILE_AGENT_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, baseEnvironment),
-    shutdownTimeoutMs: readDuration("MOBILE_AGENT_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, baseEnvironment),
+    readyTimeoutMs: readDuration("MUXIMO_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, baseEnvironment),
+    shutdownTimeoutMs: readDuration("MUXIMO_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, baseEnvironment),
   };
 }
 
@@ -101,7 +101,7 @@ function formatHost(host) {
 }
 
 function resolveTailscaleHostname(environment) {
-  const configured = normalizeHostname(environment.AGENT_TAILSCALE_HOSTNAME);
+  const configured = normalizeHostname(environment.MUXIMO_TAILSCALE_HOSTNAME);
   if (configured) return configured;
 
   const binary = environment.TAILSCALE_BIN ?? "tailscale";
@@ -145,20 +145,20 @@ function browserHost(host) {
 
 function serviceDefinitions(config) {
   return {
-    agentd: {
-      name: "agentd",
-      host: config.agentdProbeHost,
-      port: config.agentdPort,
-      environmentVariable: "AGENTD_PORT",
-      url: endpoint(config.agentdProbeHost, config.agentdPort),
-      healthUrl: endpoint(config.agentdProbeHost, config.agentdPort, "/health"),
+    muximod: {
+      name: "muximod",
+      host: config.muximodProbeHost,
+      port: config.muximodPort,
+      environmentVariable: "MUXIMOD_PORT",
+      url: endpoint(config.muximodProbeHost, config.muximodPort),
+      healthUrl: endpoint(config.muximodProbeHost, config.muximodPort, "/health"),
       command: "bun",
       args: ["--watch", "src/index.ts"],
-      cwd: resolve(config.repoRoot, "apps/agentd"),
+      cwd: resolve(config.repoRoot, "apps/muximod"),
       environment: {
         ...config.baseEnvironment,
-        AGENTD_HOST: config.agentdHost,
-        AGENTD_PORT: String(config.agentdPort),
+        MUXIMOD_HOST: config.muximodHost,
+        MUXIMOD_PORT: String(config.muximodPort),
       },
     },
     web: {
@@ -198,7 +198,7 @@ export async function configureDevServe(config, runCommand = runExternalCommand)
     throw new DevRuntimeError("could not configure Tailscale Serve", { cause: error });
   }
 
-  let hostname = config.baseEnvironment.AGENT_TAILSCALE_HOSTNAME;
+  let hostname = config.baseEnvironment.MUXIMO_TAILSCALE_HOSTNAME;
   if (!hostname) {
     try {
       hostname = parseTailscaleHostname((await runCommand(binary, ["status", "--json"], { env: config.baseEnvironment })).stdout);
@@ -446,20 +446,20 @@ function failedHealth(detail, cause) {
   return { ok: false, detail, cause };
 }
 
-export async function checkAgentdHealth(config, request = probeHttp) {
+export async function checkMuximodHealth(config, request = probeHttp) {
   try {
-    const response = await request(endpoint(config.agentdProbeHost, config.agentdPort, "/health"), {
+    const response = await request(endpoint(config.muximodProbeHost, config.muximodPort, "/health"), {
       timeoutMs: config.probeTimeoutMs,
     });
-    if (response.statusCode !== 200) return failedHealth(`agentd /health returned ${responseSummary(response)}`);
+    if (response.statusCode !== 200) return failedHealth(`muximod /health returned ${responseSummary(response)}`);
 
     const body = jsonBody(response.body);
-    if (body?.ok !== true || body?.service !== "agentd" || body?.protocolVersion !== 1) {
-      return failedHealth(`agentd /health returned an unexpected payload: ${responseSummary(response)}`);
+    if (body?.ok !== true || body?.service !== "muximod" || body?.protocolVersion !== 1) {
+      return failedHealth(`muximod /health returned an unexpected payload: ${responseSummary(response)}`);
     }
     return readyHealth("HTTP /health is responding with protocol version 1", body);
   } catch (error) {
-    return failedHealth(`agentd health probe failed: ${errorMessage(error)}`, error);
+    return failedHealth(`muximod health probe failed: ${errorMessage(error)}`, error);
   }
 }
 
@@ -569,7 +569,7 @@ export function createDevSupervisor(options = {}) {
 class DevSupervisor {
   constructor(options) {
     this.config = options.config ?? resolveDevConfig();
-    this.verbose = options.verbose ?? this.config.baseEnvironment.AGENT_DEV_VERBOSE === "1";
+    this.verbose = options.verbose ?? this.config.baseEnvironment.MUXIMO_DEV_VERBOSE === "1";
     this.logger = options.logger ?? console;
     this.spawnProcess = options.spawnProcess ?? spawnChild;
     this.inspectPort = options.inspectPort ?? ((host, port) => inspectPort(host, port));
@@ -597,13 +597,13 @@ class DevSupervisor {
     if (this.state !== "created") return this;
     this.state = "starting";
     this.log("info", "[dev] starting local stack (Tailscale Serve is opt-in)");
-    this.log("info", `[dev] worktree=${this.config.baseEnvironment.AGENT_WORKTREE_ID ?? "unknown"}`);
-    this.log("info", `[dev] instance=${this.config.baseEnvironment.AGENTD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.AGENTD_TMUX_SOCKET ?? "default"} (shared)`);
-    this.log("info", `[dev] agentd target: ${this.services.agentd.url}`);
+    this.log("info", `[dev] worktree=${this.config.baseEnvironment.MUXIMO_WORKTREE_ID ?? "unknown"}`);
+    this.log("info", `[dev] instance=${this.config.baseEnvironment.MUXIMOD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.MUXIMOD_TMUX_SOCKET ?? "default"} (shared)`);
+    this.log("info", `[dev] muximod target: ${this.services.muximod.url}`);
     this.log("info", `[dev] web target: ${this.services.web.url}`);
 
     try {
-      await this.ensureService("agentd");
+      await this.ensureService("muximod");
       if (this.state !== "starting") return this;
       await this.ensureService("web");
       if (this.state !== "starting") return this;
@@ -613,7 +613,7 @@ class DevSupervisor {
       this.log("debug", `[dev] Tailscale Serve configuration finished in ${Date.now() - serveStartedAt}ms`);
       if (serve?.stderr) this.log("warn", `[dev] Tailscale Serve: ${serve.stderr.trim()}`);
       this.state = "running";
-      this.log("info", `[dev] ready: ${this.services.agentd.healthUrl} is healthy`);
+      this.log("info", `[dev] ready: ${this.services.muximod.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves the Web UI`);
       if (serve) {
         this.log("info", `[dev] Tailscale Serve: ${serve.url ?? `HTTPS port ${serve.externalPort}`} -> http://127.0.0.1:${serve.localPort}`);
@@ -793,7 +793,7 @@ class DevSupervisor {
   }
 
   async checkHealth(definition) {
-    if (definition.name === "agentd") return checkAgentdHealth(this.config, this.probeHttp);
+    if (definition.name === "muximod") return checkMuximodHealth(this.config, this.probeHttp);
     return checkWebHealth(this.config, { http: this.probeHttp });
   }
 
@@ -943,6 +943,6 @@ if (resolve(process.argv[1] ?? "") === scriptPath) {
 }
 
 function formatDevError(error) {
-  if (process.env.AGENT_DEV_VERBOSE === "1" && error instanceof Error && error.stack) return redactDiagnosticText(error.stack);
+  if (process.env.MUXIMO_DEV_VERBOSE === "1" && error instanceof Error && error.stack) return redactDiagnosticText(error.stack);
   return `[dev] ${errorMessage(error)}`;
 }

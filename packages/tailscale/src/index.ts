@@ -24,8 +24,8 @@ export type TailscaleInvocationOptions = {
   allowShellFallback?: boolean;
 };
 
-const shellStdoutStartMarker = "__mobile_agent_tailscale_stdout_begin__";
-const shellStdoutEndMarker = "__mobile_agent_tailscale_stdout_end__";
+const shellStdoutStartMarker = "__muximo_tailscale_stdout_begin__";
+const shellStdoutEndMarker = "__muximo_tailscale_stdout_end__";
 
 /**
  * Builds the child-process invocation for the Tailscale CLI.

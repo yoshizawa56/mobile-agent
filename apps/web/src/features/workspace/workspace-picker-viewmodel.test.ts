@@ -11,12 +11,12 @@ import {
   type ScenarioTable,
   type TestRegistrar,
   type FixtureHandle,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import type { WorkspacePickerInput, WorkspacePickerState } from "./workspace-picker-viewmodel";
 import { workspacePickerState, workspacePickerErrorMessage } from "./workspace-picker-viewmodel";
 
 const workspaces = [
-  { id: "workspace-1", name: "mobile-agent", directory: "~/work/mobile-agent", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
+  { id: "workspace-1", name: "muximo", directory: "~/work/muximo", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
   { id: "workspace-2", name: "scratch", directory: "~/tmp/scratch", isGit: false, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
 ];
 

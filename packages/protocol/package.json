@@ -1,5 +1,5 @@
 {
-  "name": "@mobile-agent/protocol",
+  "name": "@muximo/protocol",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -19,7 +19,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@mobile-agent/test-support": "workspace:*",
+    "@muximo/test-support": "workspace:*",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

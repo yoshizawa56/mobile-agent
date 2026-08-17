@@ -1,4 +1,4 @@
-import type { WorkspaceDirectory } from "@mobile-agent/protocol";
+import type { WorkspaceDirectory } from "@muximo/protocol";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
 export type WorkspaceSelectionMode = "workspace" | "worktree";

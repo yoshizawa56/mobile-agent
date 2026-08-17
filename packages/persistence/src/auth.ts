@@ -24,7 +24,7 @@ export type AuthDeviceRecord = {
 export type AuthPairingRecord = {
   pairingId: string;
   serverId: string;
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   status: AuthPairingStatus;
   offeredAt: string;
   expiresAt: string;
@@ -50,7 +50,7 @@ export type AuthSessionRecord = {
 };
 
 export type CreatePairingInput = {
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   expiresAt: string;
   secret: string;
 };
@@ -59,7 +59,7 @@ export type CreatePairingResult = {
   pairingId: string;
   serverId: string;
   secret: string;
-  agentdBaseUrl: string;
+  muximodBaseUrl: string;
   expiresAt: string;
 };
 
@@ -105,7 +105,7 @@ export class AuthStore {
     }).immediate();
 
     const row = this.sqlite.prepare("SELECT server_id AS serverId FROM auth_metadata WHERE id = 1").get() as { serverId?: string } | null;
-    if (!row?.serverId) throw new AuthStoreError("auth_metadata_missing", "agentd authentication metadata could not be initialized");
+    if (!row?.serverId) throw new AuthStoreError("auth_metadata_missing", "muximod authentication metadata could not be initialized");
     return row.serverId;
   }
 
@@ -114,7 +114,7 @@ export class AuthStore {
     const pairingId = randomOpaque(16);
     this.sqlite.prepare(`
       INSERT INTO auth_pairings (
-        pairing_id, server_id, web_origin, agentd_base_url, secret_hash, status,
+        pairing_id, server_id, web_origin, muximod_base_url, secret_hash, status,
         offered_at, expires_at
       ) VALUES (?, ?, ?, ?, ?, 'offered', ?, ?)
     `).run(
@@ -123,7 +123,7 @@ export class AuthStore {
       // Keep the legacy NOT NULL column populated for databases created by
       // v1. It is no longer part of the pairing model or returned to clients.
       "",
-      input.agentdBaseUrl,
+      input.muximodBaseUrl,
       hashOpaque(input.secret),
       timestamp(),
       input.expiresAt,
@@ -132,7 +132,7 @@ export class AuthStore {
       pairingId,
       serverId,
       secret: input.secret,
-      agentdBaseUrl: input.agentdBaseUrl,
+      muximodBaseUrl: input.muximodBaseUrl,
       expiresAt: input.expiresAt,
     };
   }
@@ -330,7 +330,7 @@ type AuthPairingRow = {
   pairing_id: string;
   server_id: string;
   web_origin: string;
-  agentd_base_url: string;
+  muximod_base_url: string;
   secret_hash: string;
   claim_token_hash: string | null;
   status: string;
@@ -377,7 +377,7 @@ function toPairingRecord(row: AuthPairingRow): AuthPairingRecord {
   return {
     pairingId: row.pairing_id,
     serverId: row.server_id,
-    agentdBaseUrl: row.agentd_base_url,
+    muximodBaseUrl: row.muximod_base_url,
     status: row.status as AuthPairingStatus,
     offeredAt: row.offered_at,
     expiresAt: row.expires_at,

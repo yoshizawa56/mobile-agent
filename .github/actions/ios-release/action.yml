@@ -49,7 +49,7 @@ runs:
           exit 1
         fi
 
-        printf 'IOS_BUNDLE_ID=com.mobileagent.app\n' >> "$GITHUB_ENV"
+        printf 'IOS_BUNDLE_ID=com.muximo.app\n' >> "$GITHUB_ENV"
         printf 'RELEASE_TAG=%s\n' "$release_tag" >> "$GITHUB_ENV"
 
     - name: Set up Bun
@@ -65,7 +65,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        bun run --filter @mobile-agent/web cap:sync
+        bun run --filter @muximo/web cap:sync
 
     - name: Prepare signing assets
       shell: bash
@@ -95,7 +95,7 @@ runs:
         certificate_path="$RUNNER_TEMP/ios-distribution.p12"
         profile_path="$RUNNER_TEMP/ios-app-store.mobileprovision"
         profile_plist="$RUNNER_TEMP/ios-app-store-profile.plist"
-        keychain_path="$RUNNER_TEMP/mobile-agent-build.keychain-db"
+        keychain_path="$RUNNER_TEMP/muximo-build.keychain-db"
         keychain_password="$(openssl rand -hex 32)"
 
         printf '%s' "$IOS_DIST_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
@@ -192,7 +192,7 @@ runs:
           -derivedDataPath "$RUNNER_TEMP/DerivedData" \
           -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
           -disableAutomaticPackageResolution \
-          -archivePath "$RUNNER_TEMP/MobileAgent.xcarchive" \
+          -archivePath "$RUNNER_TEMP/Muximo.xcarchive" \
           clean archive \
           CODE_SIGN_STYLE=Manual \
           CODE_SIGN_IDENTITY="Apple Distribution" \
@@ -243,7 +243,7 @@ runs:
         rm -rf "$export_path"
         xcodebuild \
           -exportArchive \
-          -archivePath "$RUNNER_TEMP/MobileAgent.xcarchive" \
+          -archivePath "$RUNNER_TEMP/Muximo.xcarchive" \
           -exportOptionsPlist "$export_options_path" \
           -exportPath "$export_path" \
           | tee "$RUNNER_TEMP/xcodebuild-export.log"
@@ -325,7 +325,7 @@ runs:
       run: |
         set +e
 
-        security delete-keychain "$RUNNER_TEMP/mobile-agent-build.keychain-db" 2>/dev/null || true
+        security delete-keychain "$RUNNER_TEMP/muximo-build.keychain-db" 2>/dev/null || true
         rm -f \
           "$RUNNER_TEMP/ios-distribution.p12" \
           "$RUNNER_TEMP/ios-app-store.mobileprovision" \

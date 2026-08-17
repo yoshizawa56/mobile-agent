@@ -44,7 +44,7 @@ jobs:
             exit 1
           fi
 
-  build-agent:
+  build-muximo:
     name: Build ${{ matrix.name }}
     needs: verify
     runs-on: ubuntu-latest
@@ -77,22 +77,22 @@ jobs:
       - name: Build workspace packages
         run: bun run build
 
-      - name: Build standalone agent executable
+      - name: Build standalone muximo executable
         env:
-          AGENT_BUILD_TARGET: ${{ matrix.target }}
-          AGENT_BUILD_OUTPUT: dist/agent-${{ matrix.name }}
+          MUXIMO_BUILD_TARGET: ${{ matrix.target }}
+          MUXIMO_BUILD_OUTPUT: dist/muximo-${{ matrix.name }}
         run: |
           mkdir -p dist
-          bun run build:agent
-          chmod +x "$AGENT_BUILD_OUTPUT"
-          test -s "$AGENT_BUILD_OUTPUT"
-          file "$AGENT_BUILD_OUTPUT"
+          bun run build:muximo
+          chmod +x "$MUXIMO_BUILD_OUTPUT"
+          test -s "$MUXIMO_BUILD_OUTPUT"
+          file "$MUXIMO_BUILD_OUTPUT"
 
-      - name: Upload standalone agent executable
+      - name: Upload standalone muximo executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-agent-${{ matrix.name }}
-          path: dist/agent-${{ matrix.name }}
+          name: release-muximo-${{ matrix.name }}
+          path: dist/muximo-${{ matrix.name }}
           if-no-files-found: error
           retention-days: 1
 
@@ -123,7 +123,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-agent, build-ios]
+    needs: [build-muximo, build-ios]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -133,7 +133,7 @@ jobs:
       - name: Download release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: release-agent-*
+          pattern: release-muximo-*
           path: dist
           merge-multiple: true
 
@@ -143,10 +143,10 @@ jobs:
           set -euo pipefail
 
           expected_assets=(
-            agent-linux-x64
-            agent-linux-arm64
-            agent-darwin-arm64
-            agent-darwin-x64
+            muximo-linux-x64
+            muximo-linux-arm64
+            muximo-darwin-arm64
+            muximo-darwin-x64
           )
           for asset in "${expected_assets[@]}"; do
             test -s "dist/$asset"
@@ -164,10 +164,10 @@ jobs:
         shell: bash
         run: |
           sha256sum \
-            dist/agent-linux-x64 \
-            dist/agent-linux-arm64 \
-            dist/agent-darwin-arm64 \
-            dist/agent-darwin-x64 \
+            dist/muximo-linux-x64 \
+            dist/muximo-linux-arm64 \
+            dist/muximo-darwin-arm64 \
+            dist/muximo-darwin-x64 \
             > dist/SHA256SUMS.txt
 
       - name: Create or validate draft GitHub Release
@@ -245,10 +245,10 @@ jobs:
 
           expected_assets=(
             SHA256SUMS.txt
-            agent-linux-x64
-            agent-linux-arm64
-            agent-darwin-arm64
-            agent-darwin-x64
+            muximo-linux-x64
+            muximo-linux-arm64
+            muximo-darwin-arm64
+            muximo-darwin-x64
           )
           expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | sort)"
           actual_asset_list="$(gh release view "$RELEASE_TAG" \

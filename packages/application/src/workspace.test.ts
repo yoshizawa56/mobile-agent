@@ -1,4 +1,4 @@
-import type { WorkspaceRecord } from "@mobile-agent/domain";
+import type { WorkspaceRecord } from "@muximo/domain";
 import { describe, it } from "vitest";
 import {
   hasNoError,
@@ -8,7 +8,7 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { WorkspaceCrud, type UpdateWorkspaceInput, type WorkspaceDirectoryPort, type WorkspaceRepository } from "./index.js";
 
 type WorkspaceStep =

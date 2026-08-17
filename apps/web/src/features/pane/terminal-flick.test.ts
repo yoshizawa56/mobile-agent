@@ -11,7 +11,7 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   classifyTerminalFlick,
   installTerminalFlickInput,

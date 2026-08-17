@@ -6,7 +6,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import {
   connectingPath,
   panePath,
@@ -33,10 +33,10 @@ const parseCases = [
   routeCase("maps the terminals route", "/terminals", { stage: "terminals", terminalId: null, sessionName: null, paneId: null }),
   routeCase("maps the settings route", "/settings", { stage: "settings", terminalId: null, sessionName: null, paneId: null }),
   routeCase("maps the sessions route", "/terminals/macbook-air/sessions", { stage: "sessions", terminalId: "macbook-air", sessionName: null, paneId: null }),
-  routeCase("maps the session overview route", "/terminals/macbook-air/sessions/mobile-agent", { stage: "session-overview", terminalId: "macbook-air", sessionName: "mobile-agent", paneId: null }),
-  routeCase("maps the connecting route", "/terminals/macbook-air/sessions/mobile-agent/connecting", { stage: "connecting", terminalId: "macbook-air", sessionName: "mobile-agent", paneId: null }),
-  routeCase("maps the control room route", "/terminals/macbook-air/sessions/mobile-agent/panes/pane-review", { stage: "control-room", terminalId: "macbook-air", sessionName: "mobile-agent", paneId: "pane-review" }),
-  routeCase("decodes a legacy tmux pane route", "/terminals/macbook-air/sessions/mobile-agent/panes/%250", { stage: "control-room", terminalId: "macbook-air", sessionName: "mobile-agent", paneId: "%0" }),
+  routeCase("maps the session overview route", "/terminals/macbook-air/sessions/muximo", { stage: "session-overview", terminalId: "macbook-air", sessionName: "muximo", paneId: null }),
+  routeCase("maps the connecting route", "/terminals/macbook-air/sessions/muximo/connecting", { stage: "connecting", terminalId: "macbook-air", sessionName: "muximo", paneId: null }),
+  routeCase("maps the control room route", "/terminals/macbook-air/sessions/muximo/panes/pane-review", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "pane-review" }),
+  routeCase("decodes a legacy tmux pane route", "/terminals/macbook-air/sessions/muximo/panes/%250", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "%0" }),
 ] satisfies readonly OperationCase<"default", { pathname: string }, Route, Context>[];
 
 const parseTable: OperationTable<undefined, "default", { pathname: string }, Route, Context> = {
@@ -58,7 +58,7 @@ const sessionTable: OperationTable<undefined, "default", { terminalId: string },
 };
 
 const overviewCases = [
-  { name: "builds a URL-encoded session path", input: { terminalId: "macbook-air", sessionName: "mobile agent" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/mobile%20agent")] },
+  { name: "builds a URL-encoded session path", input: { terminalId: "macbook-air", sessionName: "muximo agent" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/muximo%20agent")] },
 ] satisfies readonly OperationCase<"default", { terminalId: string; sessionName: string }, string, Context>[];
 
 const overviewTable: OperationTable<undefined, "default", { terminalId: string; sessionName: string }, string, Context> = {
@@ -69,7 +69,7 @@ const overviewTable: OperationTable<undefined, "default", { terminalId: string; 
 };
 
 const connectingCases = [
-  { name: "builds a connecting path", input: { terminalId: "macbook-air", sessionName: "mobile-agent" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/mobile-agent/connecting")] },
+  { name: "builds a connecting path", input: { terminalId: "macbook-air", sessionName: "muximo" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/muximo/connecting")] },
 ] satisfies readonly OperationCase<"default", { terminalId: string; sessionName: string }, string, Context>[];
 
 const connectingTable: OperationTable<undefined, "default", { terminalId: string; sessionName: string }, string, Context> = {
@@ -80,7 +80,7 @@ const connectingTable: OperationTable<undefined, "default", { terminalId: string
 };
 
 const paneCases = [
-  { name: "builds a pane path", input: { terminalId: "macbook-air", sessionName: "mobile-agent", paneId: "pane-review" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/mobile-agent/panes/pane-review")] },
+  { name: "builds a pane path", input: { terminalId: "macbook-air", sessionName: "muximo", paneId: "pane-review" }, assert: [returns<Context, string>("/terminals/macbook-air/sessions/muximo/panes/pane-review")] },
 ] satisfies readonly OperationCase<"default", { terminalId: string; sessionName: string; paneId: string }, string, Context>[];
 
 const paneTable: OperationTable<undefined, "default", { terminalId: string; sessionName: string; paneId: string }, string, Context> = {

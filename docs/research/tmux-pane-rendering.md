@@ -9,14 +9,14 @@ The MVP shares the same tmux pane between desktop and mobile and acquires a view
 ~~~text
 xterm.js
   <-> WebSocket (control JSON + terminal bytes)
-agentd
+muximod
   <-> Bun.Terminal
 tmux attach-session -t <target>
   <->
 tmux window / pane TUI
 ~~~
 
-xterm.js is responsible for interpreting terminal escape sequences, cursor state, copy selection, and mouse input. tmux remains the owner of pane scrollback and copy mode; mobile touch scrolling is encoded as terminal mouse-wheel input and forwarded through the PTY. agentd does not interpret terminal bytes. It forwards PTY input and output, resizes the PTY, and manages the tmux viewport lease.
+xterm.js is responsible for interpreting terminal escape sequences, cursor state, copy selection, and mouse input. tmux remains the owner of pane scrollback and copy mode; mobile touch scrolling is encoded as terminal mouse-wheel input and forwarded through the PTY. muximod does not interpret terminal bytes. It forwards PTY input and output, resizes the PTY, and manages the tmux viewport lease.
 
 When connecting, the current xterm.js cols and rows are sent to the PTY. The TUI therefore renders at the actual mobile terminal size. The initial implementation may expose that size change to a desktop client attached to the same tmux session.
 
@@ -27,7 +27,7 @@ tmux Control Mode is useful for pane discovery, lifecycle management, input, res
 The terminal data route and the management route are therefore separate:
 
 - terminal data route: run tmux attach-session through Bun.Terminal and relay raw bytes over WebSocket;
-- management route: use tmux Control Mode inside agentd for pane discovery, user options, AgentSession state, and events;
+- management route: use tmux Control Mode inside muximod for pane discovery, user options, AgentSession state, and events;
 - web client: interpret and render terminal bytes with xterm.js.
 
 ## Candidates for rendering an individual pane without desktop interference
@@ -40,7 +40,7 @@ When acquiring the lease, snapshot the layout, zoom state, active pane, window-s
 
 ### B. Create a dedicated tmux client
 
-agentd should own a dedicated mobile tmux client even in the MVP. This is not a twin agent execution; it is another client attached to the same pane. The active-pane flag isolates pane selection, while the lease manages window-level zoom and size.
+muximod should own a dedicated mobile tmux client even in the MVP. This is not a twin agent execution; it is another client attached to the same pane. The active-pane flag isolates pane selection, while the lease manages window-level zoom and size.
 
 ### C. Control Mode plus a headless xterm instance per pane
 

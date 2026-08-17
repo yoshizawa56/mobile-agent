@@ -9,14 +9,14 @@ import {
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { ListPanes, ResizePane, SendPaneInput, type PaneGateway, type PaneRepository } from "./index.js";
-import type { PaneRecord } from "@mobile-agent/domain";
+import type { PaneRecord } from "@muximo/domain";
 
 const pane: PaneRecord = {
   id: "pane-1",
   tmuxPaneId: "%1",
-  sessionName: "agentd",
+  sessionName: "muximod",
   windowId: "@0",
   kind: "shell",
   name: "shell",

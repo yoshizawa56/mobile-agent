@@ -1,4 +1,4 @@
-# QR pairing and agentd authentication
+# QR pairing and muximod authentication
 
 Status: pairing code v3 implementation baseline.
 
@@ -6,33 +6,33 @@ Last updated: 2026-08-15
 
 ## 1. Goal and scope
 
-`agentd` must not treat network reachability as authorization. Tailscale Serve is the recommended route, but the same application authentication must work through HTTPS reverse proxies, Cloudflare Tunnel, ngrok, same-origin development routes, and a future SSH port-forwarding route.
+`muximod` must not treat network reachability as authorization. Tailscale Serve is the recommended route, but the same application authentication must work through HTTPS reverse proxies, Cloudflare Tunnel, ngrok, same-origin development routes, and a future SSH port-forwarding route.
 
 The first implementation covers:
 
-- QR display from `agent pair` on the host;
+- QR display from `muximo pair` on the host;
 - QR reading and pairing from the web client;
 - host-side approval;
 - device authentication for HTTP, terminal WebSocket, and events WebSocket;
 - persistent pairing across trusted worktree switches;
 - persistent device registrations; a revocation administration command is reserved for the next increment.
 
-The first implementation does not cover native key-store integration, SSH route creation, server-key pinning, application-level end-to-end encryption, RBAC, or multiple concurrent `agentd` instances in one environment.
+The first implementation does not cover native key-store integration, SSH route creation, server-key pinning, application-level end-to-end encryption, RBAC, or multiple concurrent `muximod` instances in one environment.
 
 ## 2. Threat model and invariants
 
-The OS account running `agentd`, its local tmux server, and its owner-only local control channel are trusted. A network peer, including a peer that is allowed by the Tailscale ACL, is not trusted until device authentication succeeds.
+The OS account running `muximod`, its local tmux server, and its owner-only local control channel are trusted. A network peer, including a peer that is allowed by the Tailscale ACL, is not trusted until device authentication succeeds.
 
 The following are normative invariants:
 
 1. Every operation that can read agent state or cause execution requires an active paired device.
-2. `agentd` never receives or persists a device private key.
-3. A device private key is generated and retained by the client. The long-lived device credential stored by `agentd` is the device public key.
-4. `agentd` may persist hashes of short-lived enrollment and session credentials. These are credential verifiers, not asymmetric private keys, and raw values must not be persisted.
+2. `muximod` never receives or persists a device private key.
+3. A device private key is generated and retained by the client. The long-lived device credential stored by `muximod` is the device public key.
+4. `muximod` may persist hashes of short-lived enrollment and session credentials. These are credential verifiers, not asymmetric private keys, and raw values must not be persisted.
 5. `/api/*`, `/terminal`, and `/events` use the same device revocation boundary.
 6. Pairing requires both possession of a short-lived QR secret and explicit approval through the host-local control channel.
 7. Local, staging, and production are separate authentication realms. They do not share a base authentication database, `serverId`, device keys, or browser key records.
-8. A single active `agentd` instance owns an environment in v1. Running two instances against the same environment database is unsupported.
+8. A single active `muximod` instance owns an environment in v1. Running two instances against the same environment database is unsupported.
 9. Non-loopback browser connections require HTTPS/WSS. `http://localhost` is allowed for local development and SSH-forwarded native routes. Plain remote HTTP is not supported.
 10. CORS and `Origin` checks are transport defense-in-depth only; the paired device key is the authorization boundary for every client.
 
@@ -47,7 +47,7 @@ The device generates an ECDSA P-256 key pair with SHA-256:
 | Value | Owner | Persistence |
 | --- | --- | --- |
 | Device private key | Web/native client | Browser `CryptoKey` in IndexedDB; native OS key store |
-| Device public key | `agentd` | `auth_devices` in the environment database |
+| Device public key | `muximod` | `auth_devices` in the environment database |
 | Device fingerprint | Both sides | RFC 7638 JWK thumbprint |
 
 The browser generates the private key as non-extractable. It exports only the public JWK. The private `CryptoKey` is stored in IndexedDB together with `deviceId`, `serverId`, algorithm version, and fingerprint. Access tokens and WebSocket tickets are kept in memory, not in `localStorage`.
@@ -58,7 +58,7 @@ Native clients use the platform key store, preferably with hardware-backed and u
 
 ### 3.2 Server identity
 
-There is no `agentd` server private key in v1.
+There is no `muximod` server private key in v1.
 
 `serverId` is a random, persistent 128-bit identifier for an authentication realm. It is stored in `auth_metadata`, returned by `/auth/v1/info`, and included in signed messages so that a device cannot accidentally use a key from another environment. It is not cryptographic proof that a route terminates at the genuine server.
 
@@ -66,47 +66,47 @@ Server authenticity in v1 comes from HTTPS/Tailscale/SSH route validation. A per
 
 ## 4. Environment, Serve, and worktree rules
 
-Each agentd environment has its own endpoint profile:
+Each muximod environment has its own endpoint profile:
 
 ```text
-local: http://127.0.0.1:<agentd-port> or a Tailscale Serve URL
-stg:   https://<stg-agentd-host>:<serve-port>
-prod:  https://<prod-agentd-host>:<serve-port>
+local: http://127.0.0.1:<muximod-port> or a Tailscale Serve URL
+stg:   https://<stg-muximod-host>:<serve-port>
+prod:  https://<prod-muximod-host>:<serve-port>
 ```
 
-The Web UI and agentd are independent services. The Web Serve route exposes only the UI, while the agentd Serve route exposes only the authenticated API and WebSockets:
+The Web UI and muximod are independent services. The Web Serve route exposes only the UI, while the muximod Serve route exposes only the authenticated API and WebSockets:
 
 ```text
 Web Serve   -> worktree Web port
-agentd Serve -> worktree agentd port
+muximod Serve -> worktree muximod port
 ```
 
-The client stores the agentd endpoint received from the pairing code. Changing that endpoint normally requires pairing with the new agentd environment again.
+The client stores the muximod endpoint received from the pairing code. Changing that endpoint normally requires pairing with the new muximod environment again.
 
-The Web connection profile may store `agentdBaseUrl`, `serverId`, display name, and route metadata. It must not store private keys, access tokens, QR secrets, or WebSocket tickets in `localStorage`.
+The Web connection profile may store `muximodBaseUrl`, `serverId`, display name, and route metadata. It must not store private keys, access tokens, QR secrets, or WebSocket tickets in `localStorage`.
 
-The SQLite database is environment-scoped at its source and worktree-scoped at runtime. Each worktree receives a snapshot copy of the environment database and starts `agentd` with that copy. Give each worktree a distinct `AGENTD_INSTANCE_DIR`; its `agentd.sqlite` is the runtime copy. The recommended source layout is:
+The SQLite database is environment-scoped at its source and worktree-scoped at runtime. Each worktree receives a snapshot copy of the environment database and starts `muximod` with that copy. Give each worktree a distinct `MUXIMOD_INSTANCE_DIR`; its `muximod.sqlite` is the runtime copy. The recommended source layout is:
 
 ```text
-~/.local/state/mobile-agent/<environment>/agentd.sqlite
+~/.local/state/muximo/<environment>/muximod.sqlite
 ```
 
 The existing default path may be treated as the local environment source during migration. It must not be reused by staging or production.
 
 Copying the database is intentional and clones the complete committed environment state, including `serverId`, approved device registrations, unexpired access-session records, pending pairings, and their revocation state. The clone is the same logical environment as of the snapshot, but its state diverges afterward: a revocation or new pairing in one worktree does not appear in another. This is acceptable only for trusted worktrees. A worktree that must be a distinct security principal starts from a new database and is paired separately.
 
-Because the database uses SQLite WAL mode, a worktree must be created from a consistent SQLite snapshot (for example, the existing SQLite snapshot mechanism, SQLite backup, or `VACUUM INTO`). A raw copy of only the main database file while `agentd` is writing is not a valid snapshot. The copy operation must not expose the source database, WAL files, or backups to an untrusted worktree.
+Because the database uses SQLite WAL mode, a worktree must be created from a consistent SQLite snapshot (for example, the existing SQLite snapshot mechanism, SQLite backup, or `VACUUM INTO`). A raw copy of only the main database file while `muximod` is writing is not a valid snapshot. The copy operation must not expose the source database, WAL files, or backups to an untrusted worktree.
 
 If a copied database contains an active access-session hash, a client that still holds the corresponding raw token may use it against the clone until the token expires or is revoked in that clone. This is deliberate snapshot behavior, bounded by the session TTL. Pending pairings and other durable short-lived records follow the same rule. Process-local challenges, WebSocket tickets, live sockets, and terminal PTYs are not database state and are not copied.
 
-Runtime state and authentication state may be split into separate databases later. In v1 they may share one environment database, but only one active `agentd` may own it.
+Runtime state and authentication state may be split into separate databases later. In v1 they may share one environment database, but only one active `muximod` may own it.
 
 ## 5. QR payload and host control
 
-`agent pair` uses an owner-only local control channel to ask the running `agentd` to create a pairing. The preferred channel is a Unix domain socket with owner-only permissions, for example:
+`muximo pair` uses an owner-only local control channel to ask the running `muximod` to create a pairing. The preferred channel is a Unix domain socket with owner-only permissions, for example:
 
 ```text
-~/.local/state/mobile-agent/<environment>/agentd-control.sock
+~/.local/state/muximo/<environment>/muximod-control.sock
 ```
 
 A loopback endpoint with a persistent owner-only control token is an allowed fallback. The control channel must never be exposed through Serve, a tunnel, or a general LAN listener.
@@ -114,12 +114,12 @@ A loopback endpoint with a persistent owner-only control token is an allowed fal
 The CLI command is conceptually:
 
 ```text
-agent pair [--without-serve] [--agentd-base-url URL] [--control-socket PATH]
+muximo pair [--without-serve] [--muximod-base-url URL] [--control-socket PATH]
 ```
 
-The command creates a pairing valid for five minutes, displays the QR in the foreground, and waits. It does not ask for approval merely because a QR was scanned. After `agentd` receives and validates a complete claim (pairing secret, public key, and proof-of-possession signature), it sends the pending device name and public-key fingerprint to the waiting CLI through the owner-only control channel. The CLI then asks the host user for explicit approval. Empty input, timeout, rejection, or `Ctrl-C` rejects the pairing. A rejected or consumed pairing cannot be reused.
+The command creates a pairing valid for five minutes, displays the QR in the foreground, and waits. It does not ask for approval merely because a QR was scanned. After `muximod` receives and validates a complete claim (pairing secret, public key, and proof-of-possession signature), it sends the pending device name and public-key fingerprint to the waiting CLI through the owner-only control channel. The CLI then asks the host user for explicit approval. Empty input, timeout, rejection, or `Ctrl-C` rejects the pairing. A rejected or consumed pairing cannot be reused.
 
-The command is an outer adapter for the `PairDevice` application use case in `packages/application`. The use case depends only on `PairingControlPort` and `PairingPresenterPort`. The CLI's Unix-socket client implements the control port, while the terminal presenter implements the presentation port. `apps/agent-cli/src/index.ts` is the composition root: it wires the use case and concrete adapters into the command registry. Terminal QR rendering and the `qrcode` package are confined to `@mobile-agent/cli-adapters`; the use case, shared protocol, and `@mobile-agent/agent-cli` do not depend directly on terminal rendering.
+The command is an outer adapter for the `PairDevice` application use case in `packages/application`. The use case depends only on `PairingControlPort` and `PairingPresenterPort`. The CLI's Unix-socket client implements the control port, while the terminal presenter implements the presentation port. `apps/muximo-cli/src/index.ts` is the composition root: it wires the use case and concrete adapters into the command registry. Terminal QR rendering and the `qrcode` package are confined to `@muximo/cli-adapters`; the use case, shared protocol, and `@muximo/muximo-cli` do not depend directly on terminal rendering.
 
 The QR is a raw in-app pairing code. It is decoded by the client scanner and
 never navigates the browser. New codes use a compact binary payload so the
@@ -129,16 +129,16 @@ endpoint and enrollment secret fit into fewer QR modules:
 ma3:<base64url(compact-binary-payload)>
 ```
 
-The binary payload is `[u16 length + agentdBaseUrl][u16 length + pairingId][pairingSecret]` in UTF-8. The final secret occupies the remaining bytes, avoiding a third length field.
+The binary payload is `[u16 length + muximodBaseUrl][u16 length + pairingId][pairingSecret]` in UTF-8. The final secret occupies the remaining bytes, avoiding a third length field.
 
 The compact payload contains only the values required before the first claim:
 
 ```text
-agentdBaseUrl + pairingId + pairingSecret
+muximodBaseUrl + pairingId + pairingSecret
 ```
 
 `serverId` is fetched from `/auth/v1/info`, and pairing expiry is enforced by
-agentd, so neither is duplicated in the QR. Clients may continue to decode
+muximod, so neither is duplicated in the QR. Clients may continue to decode
 the previous `ma2:<base64url(canonical-json)>` format during migration, but
 the CLI emits only `ma3`.
 
@@ -151,9 +151,9 @@ The QR secret is an enrollment capability, not a complete login credential. Poss
 ```mermaid
 sequenceDiagram
     actor User as Host user
-    participant CLI as agent CLI
+    participant CLI as muximo CLI
     participant Control as Local control socket
-    participant A as agentd
+    participant A as muximod
     participant DB as Environment SQLite
     participant W as Web client
     participant K as Browser key store
@@ -166,7 +166,7 @@ sequenceDiagram
     CLI-->>User: display QR
 
     User->>W: scan QR inside the client
-    W->>W: decode agentdBaseUrl, pairingId, and pairing secret
+    W->>W: decode muximodBaseUrl, pairingId, and pairing secret
     W->>A: read server identity from /auth/v1/info
     W->>K: generate non-extractable P-256 key
     W->>A: claim(pairingSecret, public JWK, clientNonce, signature)
@@ -201,9 +201,9 @@ Only the first valid claim is accepted atomically. If a QR is copied and an atta
 
 ### 7.0 Token model: stateful opaque credentials
 
-v1 does not use JWT, PASETO, or another self-contained/stateless access token. Every credential that grants or bootstraps access is opaque and validated against server-side state. This is required for immediate revocation, one-use WebSocket tickets, and consistent behavior when a SQLite snapshot is copied between trusted worktrees. There is no `agentd` signing private key in v1.
+v1 does not use JWT, PASETO, or another self-contained/stateless access token. Every credential that grants or bootstraps access is opaque and validated against server-side state. This is required for immediate revocation, one-use WebSocket tickets, and consistent behavior when a SQLite snapshot is copied between trusted worktrees. There is no `muximod` signing private key in v1.
 
-The raw value is held only by the client for as long as necessary. `agentd` stores a SHA-256 hash for durable credentials or keeps a hash in process memory for ephemeral credentials. A token is therefore not self-authenticating: possession of the raw value is useful only while the corresponding state exists, is unexpired, and is not revoked.
+The raw value is held only by the client for as long as necessary. `muximod` stores a SHA-256 hash for durable credentials or keeps a hash in process memory for ephemeral credentials. A token is therefore not self-authenticating: possession of the raw value is useful only while the corresponding state exists, is unexpired, and is not revoked.
 
 | Credential | Raw value held by | Server-side state | Lifetime | Replay rule |
 | --- | --- | --- | --- | --- |
@@ -248,7 +248,7 @@ MA-PAIR-CLAIM-V1
 <clientNonce>
 ```
 
-The browser generates the P-256 key pair locally after reading the QR. It retains the private key in its key store, exports the public JWK, and sends that public JWK in this claim request. `agentd` verifies the secret hash, server realm, public-key format, and proof-of-possession signature before recording the pending claim. It then creates a random claim token, stores only its hash in the pairing row, and returns the raw claim token once. The pending public key is not yet an `auth_devices` registration and cannot create a session or call `/api`. The claim token is a status-polling capability only.
+The browser generates the P-256 key pair locally after reading the QR. It retains the private key in its key store, exports the public JWK, and sends that public JWK in this claim request. `muximod` verifies the secret hash, server realm, public-key format, and proof-of-possession signature before recording the pending claim. It then creates a random claim token, stores only its hash in the pairing row, and returns the raw claim token once. The pending public key is not yet an `auth_devices` registration and cannot create a session or call `/api`. The claim token is a status-polling capability only.
 
 The browser polls:
 
@@ -259,7 +259,7 @@ Authorization: Pairing <claimToken>
 
 The status endpoint returns only `offered`, `awaiting_approval`, `approved`, `rejected`, or `expired`, plus `deviceId` after approval. The claim token is valid only until the ten-minute claim deadline and never returns an access token before approval. After approval, repeated polling may return the same `deviceId` until the claim record expires; it still cannot be used for any other operation.
 
-When the host approves through the local control channel, `agentd` performs one transaction that creates the active `auth_devices` row from the pending public key and marks the pairing consumed. Only after this transaction does the browser proceed to device challenge and session creation. A rejection marks the pending claim rejected and discards the pending registration; the browser must generate a new key and use a new QR.
+When the host approves through the local control channel, `muximod` performs one transaction that creates the active `auth_devices` row from the pending public key and marks the pairing consumed. Only after this transaction does the browser proceed to device challenge and session creation. A rejection marks the pending claim rejected and discards the pending registration; the browser must generate a new key and use a new QR.
 
 ### 7.2 Device session
 
@@ -270,7 +270,7 @@ POST /auth/v1/challenges
 { "deviceId": "..." }
 ```
 
-The request is rate-limited. `agentd` verifies that the device exists and is active, then stores the challenge nonce only in process memory. The challenge expires after 60 seconds and is consumed on the first verification attempt, including an invalid signature. A daemon restart invalidates outstanding challenges.
+The request is rate-limited. `muximod` verifies that the device exists and is active, then stores the challenge nonce only in process memory. The challenge expires after 60 seconds and is consumed on the first verification attempt, including an invalid signature. A daemon restart invalidates outstanding challenges.
 
 The client signs:
 
@@ -290,7 +290,7 @@ POST /auth/v1/sessions
 { "deviceId": "...", "challengeId": "...", "signature": "..." }
 ```
 
-On success, `agentd` atomically consumes the challenge, creates an `auth_sessions` row, and returns a random 256-bit opaque access token and session metadata. The token is stored only in client memory; `agentd` stores only its hash. The session is bound to `serverId` and `deviceId`, but not to route, hostname, IP address, or User-Agent. The client repeats challenge-response near expiry and replaces the token. No refresh token is used in v1.
+On success, `muximod` atomically consumes the challenge, creates an `auth_sessions` row, and returns a random 256-bit opaque access token and session metadata. The token is stored only in client memory; `muximod` stores only its hash. The session is bound to `serverId` and `deviceId`, but not to route, hostname, IP address, or User-Agent. The client repeats challenge-response near expiry and replaces the token. No refresh token is used in v1.
 
 An access token is reusable for ordinary HTTP requests until its 15-minute expiry. The service-level device revocation path marks the device revoked, revokes all its sessions, and closes its live WebSockets; the user-facing administration command is a follow-up increment.
 
@@ -316,7 +316,7 @@ POST /auth/v1/ws-tickets
 { "endpoint": "events" }
 ```
 
-The ticket is a random 256-bit value. `agentd` stores only its hash in process memory, with a record containing the issuing `authSessionId`, `deviceId`, exact endpoint, issue time, and 30-second expiry. It is consumed atomically before the upgrade is completed. The ticket is bound to the current device/session and exact endpoint:
+The ticket is a random 256-bit value. `muximod` stores only its hash in process memory, with a record containing the issuing `authSessionId`, `deviceId`, exact endpoint, issue time, and 30-second expiry. It is consumed atomically before the upgrade is completed. The ticket is bound to the current device/session and exact endpoint:
 
 ```text
 wss://host/terminal?ticket=<ticket>
@@ -388,11 +388,11 @@ The following values must never be written to SQLite, audit logs, request logs, 
 
 - Native Keychain/Keystore/Secure Enclave adapters.
 - SSH port-forwarding route creation.
-- Persistent `agentd` server identity key and client pinning.
+- Persistent `muximod` server identity key and client pinning.
 - Application-level E2E encryption or HPKE/libsodium transport wrapping.
 - RBAC and per-device scopes.
 - Remote approval UI.
-- Multiple concurrent `agentd` instances sharing one environment.
+- Multiple concurrent `muximod` instances sharing one environment.
 - Key recovery, rotation, and device transfer.
 - Separate `auth.sqlite` and runtime database.
 

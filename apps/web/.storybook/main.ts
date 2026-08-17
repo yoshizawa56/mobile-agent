@@ -15,7 +15,7 @@ const config: StorybookConfig = {
     define: {
       ...viteConfig.define,
       "import.meta.env.STORYBOOK": JSON.stringify("true"),
-      "import.meta.env.VITE_AGENTD_MOCK_MODE": JSON.stringify("true"),
+      "import.meta.env.VITE_MUXIMOD_MOCK_MODE": JSON.stringify("true"),
     },
   }),
 };

@@ -4,11 +4,11 @@
 
 This project is pre-alpha. It controls terminals and agent processes, so a vulnerability may expose command execution, terminal output, credentials available to the host account, or local files. Treat the current deployment model as a security boundary with known limitations, not as a completed security product.
 
-The supported public-reporting path is the repository's [private security advisory form](https://github.com/yoshizawa56/mobile-agent/security/advisories/new). If private advisories are unavailable, contact the maintainer privately through GitHub before publishing details.
+The supported public-reporting path is the repository's [private security advisory form](https://github.com/yoshizawa56/muximo/security/advisories/new). If private advisories are unavailable, contact the maintainer privately through GitHub before publishing details.
 
 ## Current deployment boundary
 
-`agentd` is intended to bind to loopback and be reached through Tailscale Serve and its ACLs. Do not expose the HTTP or WebSocket port directly to the public internet.
+`muximod` is intended to bind to loopback and be reached through Tailscale Serve and its ACLs. Do not expose the HTTP or WebSocket port directly to the public internet.
 
 The current MVP does not yet provide application-level pairing or bearer-token authentication. Tailscale identity/ACLs are therefore part of the deployment boundary until that layer is implemented.
 
@@ -17,9 +17,9 @@ The browser client stores only a non-secret Serve URL. SSH keys, passwords, Tail
 Known limitations in the current MVP:
 
 - application-level pairing and per-device authorization are not implemented;
-- identity headers from Tailscale Serve are not yet independently verified by agentd;
-- agentd can control the host user's tmux sessions and processes;
-- plugin code runs with the privileges of the agentd host process.
+- identity headers from Tailscale Serve are not yet independently verified by muximod;
+- muximod can control the host user's tmux sessions and processes;
+- plugin code runs with the privileges of the muximod host process.
 
 ## Supply-chain controls
 

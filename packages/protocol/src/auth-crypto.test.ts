@@ -8,7 +8,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import type { PairingCodePayload, PairingQrPayload } from "./index.js";
 import { decodePairingCode, encodeJsonBase64Url, encodePairingCode } from "./auth-crypto.js";
 
@@ -20,14 +20,14 @@ type PairingCodeResult = string | PairingCodePayload;
 
 const payload: PairingQrPayload = {
   v: 2,
-  agentdBaseUrl: "https://agent-host.tailnet.ts.net:8444/",
+  muximodBaseUrl: "https://muximo-host.tailnet.ts.net:8444/",
   serverId: "server-1234567890123456",
   pairingId: "pairing-1234567890123456",
   pairingSecret: "abcdefghijklmnopqrstuvwxyz0123456789_-",
   expiresAt: 1_797_444_800_000,
 };
 const codePayload: PairingCodePayload = {
-  agentdBaseUrl: "https://agent-host.tailnet.ts.net:8444",
+  muximodBaseUrl: "https://muximo-host.tailnet.ts.net:8444",
   pairingId: payload.pairingId,
   pairingSecret: payload.pairingSecret,
 };
@@ -50,7 +50,7 @@ const pairingCodeCases = [
     assert: [hasRawPairingCodeShape()],
   },
   {
-    name: "round-trips the agentd endpoint and pairing secret",
+    name: "round-trips the muximod endpoint and pairing secret",
     input: { type: "decode", value: encodePairingCode(payload) },
     assert: [returns<EmptyContext, PairingCodeResult>(codePayload)],
   },
@@ -61,8 +61,8 @@ const pairingCodeCases = [
   },
   {
     name: "rejects a browser navigation URL",
-    input: { type: "decode", value: "https://agent-host.example/settings#ma1=payload" },
-    assert: [hasError<EmptyContext, PairingCodeResult>({ message: "QR code is not a mobile-agent pairing code" })],
+    input: { type: "decode", value: "https://muximo-host.example/settings#ma1=payload" },
+    assert: [hasError<EmptyContext, PairingCodeResult>({ message: "QR code is not a muximo pairing code" })],
   },
 ] satisfies readonly OperationCase<"default", PairingCodeInput, PairingCodeResult, EmptyContext>[];
 

@@ -14,15 +14,15 @@ export function PhoneFrame({ children }: { children: ReactNode }) {
 export function MockTerminal() {
   return (
     <div className="absolute inset-0 overflow-hidden px-4 py-3 font-mono text-[11px] leading-[1.55] text-[#d8e1d9]">
-      <div><span className="text-[#7ce38b]">~/work/mobile-agent</span> <span className="text-[#596661]">(main)</span></div>
+      <div><span className="text-[#7ce38b]">~/work/muximo</span> <span className="text-[#596661]">(main)</span></div>
       <div className="text-[#c9e58b]">❯ git status --short</div>
       <div className="text-[#9fc7a5]">&nbsp; M apps/web/src/styles.css</div>
       <div className="text-[#9fc7a5]">&nbsp; M apps/web/src/mock/mock-data.ts</div>
       <div className="text-[#596661]">&nbsp;</div>
-      <div className="text-[#c9e58b]">❯ bun run --filter @mobile-agent/web test</div>
+      <div className="text-[#c9e58b]">❯ bun run --filter @muximo/web test</div>
       <div><span className="text-[#7ce38b]">✓</span> <span className="text-[#9fc7a5]">1 test file passed</span> <span className="text-[#596661]">0.18s</span></div>
       <div className="text-[#596661]">&nbsp;</div>
-      <div><span className="text-[#7ce38b]">~/work/mobile-agent</span> <span className="text-[#c9e58b]">❯</span> <span className="ml-0.5 inline-block h-[13px] w-[7px] translate-y-[2px] animate-pulse bg-[#d8e1d9]" /></div>
+      <div><span className="text-[#7ce38b]">~/work/muximo</span> <span className="text-[#c9e58b]">❯</span> <span className="ml-0.5 inline-block h-[13px] w-[7px] translate-y-[2px] animate-pulse bg-[#d8e1d9]" /></div>
     </div>
   );
 }
@@ -33,7 +33,7 @@ export function MockShellScreen({ overlay }: { overlay?: ReactNode }) {
       <header className="flex h-[50px] shrink-0 items-center justify-between gap-3 border-b border-[#17391f] bg-[rgb(6_13_8_/_88%)] px-[14px] backdrop-blur-[18px]">
         <div className="flex items-center gap-2.5">
           <span className="grid size-7 rotate-[-8deg] place-items-center rounded-[9px] border border-[#2c6b38] bg-[#071309] font-mono text-lg leading-none text-lime shadow-[inset_0_0_0_1px_rgb(139_255_154_/_8%),0_0_24px_rgb(57_214_91_/_12%)]">⌁</span>
-          <span className="text-[0.95rem] font-bold tracking-[-0.035em]">agent<span className="text-lime-deep">.</span></span>
+          <span className="text-[0.95rem] font-bold tracking-[-0.035em]">muximo<span className="text-lime-deep">.</span></span>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-[7px] rounded-full border border-line-strong bg-[rgb(10_22_13_/_86%)] px-[9px] py-[6px]">
@@ -49,7 +49,7 @@ export function MockShellScreen({ overlay }: { overlay?: ReactNode }) {
         <span className="shrink-0 text-lime"><AppIcon name="terminal" size={14} /></span>
         <strong className="shrink-0">zsh</strong>
         <span className="text-[#3e6547]">·</span>
-        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">mobile-agent</span>
+        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">muximo</span>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <button className="grid size-6 min-w-6 place-items-center rounded-[7px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986]" type="button" aria-label="Open a new pane"><AppIcon name="new-pane" size={14} /></button>
           <button className="grid size-6 min-w-6 place-items-center rounded-[7px] border border-[#1d4c29] bg-[#0b1c0f] text-[#81a986]" type="button" aria-label="Open window map"><AppIcon name="layout" size={14} /></button>

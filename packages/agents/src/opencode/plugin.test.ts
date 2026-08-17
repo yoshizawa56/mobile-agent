@@ -7,7 +7,7 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import type { AgentMonitor, AgentObservationSink, AgentPluginV1 } from "../index.js";
 import { createOpenCodePlugin } from "./plugin.js";
 import type { OpenCodeMonitorOptions } from "./monitor.js";

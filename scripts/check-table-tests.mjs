@@ -202,7 +202,7 @@ function isTestFramework(source) {
 }
 
 function isTableSupport(source) {
-  return source.type === "StringLiteral" && source.value === "@mobile-agent/test-support";
+  return source.type === "StringLiteral" && source.value === "@muximo/test-support";
 }
 
 function isTableRunner(callee, runnerNames, runnerNamespaces) {

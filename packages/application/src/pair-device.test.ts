@@ -7,13 +7,13 @@ import {
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
-} from "@mobile-agent/test-support";
+} from "@muximo/test-support";
 import { PairDevice, type PairingClaim, type PairingControlPort, type PairingOffer, type PairingPresenterPort, type PairDeviceResult } from "./pair-device.js";
 
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
   pairingCode: "ma3:pairing-code",
-  agentdBaseUrl: "https://agentd.example",
+  muximodBaseUrl: "https://muximod.example",
   expiresAt: Date.now() + 300_000,
 };
 
@@ -44,7 +44,7 @@ class FakePresenter implements PairingPresenterPort {
 }
 
 type PairFixture = { control: FakeControl; presenter: FakePresenter };
-type PairInput = { agentdBaseUrl: string };
+type PairInput = { muximodBaseUrl: string };
 type PairContext = { controlCalls: readonly string[]; presenterCalls: readonly string[] };
 type PairKey = "approved" | "rejected";
 
@@ -56,7 +56,7 @@ const pairCases = [
   {
     name: "coordinates offer, claim, approval, and result",
     fixture: "approved",
-    input: { agentdBaseUrl: offer.agentdBaseUrl },
+    input: { muximodBaseUrl: offer.muximodBaseUrl },
     assert: [
       returns<PairContext, PairDeviceResult>({ status: "approved", deviceId: "device-1" }),
       hasObserved<PairContext, PairDeviceResult>("controlCalls", ["create", `wait:${offer.pairingId}`, `approve:${offer.pairingId}`]),
@@ -66,7 +66,7 @@ const pairCases = [
   {
     name: "rejects after a negative presentation decision",
     fixture: "rejected",
-    input: { agentdBaseUrl: offer.agentdBaseUrl },
+    input: { muximodBaseUrl: offer.muximodBaseUrl },
     assert: [
       returns<PairContext, PairDeviceResult>({ status: "rejected" }),
       hasObserved<PairContext, PairDeviceResult>("controlCalls", ["create", `wait:${offer.pairingId}`, `reject:${offer.pairingId}`]),

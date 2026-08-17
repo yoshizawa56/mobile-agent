@@ -62,7 +62,7 @@ key=
 env_path=
 stride=$DEFAULT_STRIDE
 slot_count=$DEFAULT_SLOT_COUNT
-temporary_directory=${TMPDIR:-/tmp}/mobile-agent-allocate-ports.$$
+temporary_directory=${TMPDIR:-/tmp}/muximo-allocate-ports.$$
 
 umask 077
 mkdir "$temporary_directory" 2>/dev/null || die "could not create temporary directory: $temporary_directory"

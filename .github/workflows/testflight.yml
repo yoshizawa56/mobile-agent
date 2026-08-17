@@ -40,8 +40,6 @@ jobs:
     needs: verify
     runs-on: macos-15
     timeout-minutes: 45
-    environment:
-      name: app-store-connect
     permissions:
       contents: read
 

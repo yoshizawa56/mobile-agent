@@ -1,4 +1,7 @@
+import type { MobileAgentAppInfo } from "../../platform/mobile-bridge";
+
 export type ConnectionSettingsViewModel = {
+  appInfo: MobileAgentAppInfo;
   hasSavedProfile: boolean;
   isScanningQr: boolean;
   isPairingQr: boolean;

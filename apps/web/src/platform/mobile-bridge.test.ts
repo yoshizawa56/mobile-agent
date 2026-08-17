@@ -2,6 +2,7 @@ import { describe, it } from "vitest";
 import {
   hasObserved,
   noFixture,
+  returns,
   runOperationTable,
   runScenarioTable,
   type FixtureHandle,
@@ -11,7 +12,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@mobile-agent/test-support";
-import { createMobileAgentBridge, type MobileAgentBridge } from "./mobile-bridge";
+import { createMobileAgentBridge, mobileAgentFallbackAppInfo, type MobileAgentAppInfo, type MobileAgentBridge } from "./mobile-bridge";
 
 type BridgeContext = {
   platform: string;
@@ -45,6 +46,21 @@ const bridgeTable: OperationTable<undefined, "default", {}, MobileAgentBridge, B
     if (!result.ok) return { platform: "", isNative: false, capabilities: { appLifecycle: true, routeProvider: false, keychain: false, notifications: false, liveActivities: false } };
     return { platform: result.value.platform, isNative: result.value.isNative, capabilities: result.value.capabilities };
   },
+};
+
+const appInfoCases = [
+  {
+    name: "returns the web package version outside a native app",
+    input: {},
+    assert: [returns<undefined, MobileAgentAppInfo>(mobileAgentFallbackAppInfo)],
+  },
+] satisfies readonly OperationCase<"default", {}, MobileAgentAppInfo, undefined>[];
+
+const appInfoTable: OperationTable<undefined, "default", {}, MobileAgentAppInfo, undefined> = {
+  defaultFixture: noFixture(),
+  cases: appInfoCases,
+  execute: () => createMobileAgentBridge().getAppInfo(),
+  observe: () => undefined,
 };
 
 type VisibilityStep = { type: "set-visibility"; value: DocumentVisibilityState } | { type: "dispatch" } | { type: "unsubscribe" };
@@ -118,5 +134,6 @@ const visibilityTable: ScenarioTable<VisibilityFixture, "default", VisibilitySte
 describe("mobile agent bridge", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, bridgeTable);
+  runOperationTable(register, appInfoTable);
   runScenarioTable(register, visibilityTable);
 });

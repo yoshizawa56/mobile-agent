@@ -15,6 +15,7 @@ import type { NewPaneAgent, NewPaneKind } from "../pane/new-pane-viewmodel";
 import { usePaneViewModel } from "../pane/pane-viewmodel";
 import type { PaneBoardViewModel } from "../pane-board/pane-board-viewmodel";
 import { mockPanes } from "../../mock/mock-data";
+import { mobileAgentFallbackAppInfo } from "../../platform/mobile-bridge";
 import { TerminalsView } from "../../routes/terminals/-terminals-view";
 import type { TerminalsViewModel } from "../../routes/terminals/-terminals-viewmodel";
 import { SessionsView } from "../../routes/terminals/$terminalId/sessions/-sessions-view";
@@ -89,6 +90,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
   const terminalViewModel = usePaneViewModel({ target: paneTarget });
 
   const connectionSettingsViewModel = useMemo<ConnectionSettingsViewModel>(() => ({
+    appInfo: mobileAgentFallbackAppInfo,
     hasSavedProfile: true,
     isScanningQr: false,
     isPairingQr: false,
@@ -338,6 +340,7 @@ export const TerminalPicker: Story = {
 export const ConnectionSetup: Story = {
   name: "Setup / no connection configured",
   render: () => <ConnectionSettingsView viewModel={{
+    appInfo: mobileAgentFallbackAppInfo,
     hasSavedProfile: false,
     isScanningQr: false,
     isPairingQr: false,

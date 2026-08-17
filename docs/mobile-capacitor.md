@@ -70,32 +70,27 @@ ports are placed in the WebView.
 
 ## Release CI and App Store Connect
 
-The `preflight` and `release` workflows are separate. Shared repository checks
-and iOS build/upload processing live in local composite actions under
-`.github/actions/`, while only the final workflow contains standalone agent
-builds and GitHub Release publishing.
+The `TestFlight` workflow is a manual `workflow_dispatch` workflow. Select the
+branch in GitHub Actions and run it against the current `GITHUB_SHA`; the run
+summary records both the ref and exact commit. It has no version input and does
+not create a Git tag.
 
-- `preflight/v0.1.0` or `preflight/v0.1.0-beta.1` runs repository checks and
-  uploads a signed `Release` build to App Store Connect for TestFlight
-  validation. It does not build the standalone agent release or create a
-  GitHub Release.
-- `v0.1.0` or `v0.1.0-beta.1` requires the matching preflight tag to point to
-  the same commit and a successful `preflight` workflow run for that exact tag
-  and commit. It then rebuilds that commit, uploads the resulting `.ipa`, and
-  creates the GitHub Release. The workflow does not submit the build to App
-  Review or publish it to the public App Store.
+The native app marketing version is read from `apps/web/package.json`. Every
+upload receives a unique timestamp-based App Store build number, so repeated
+TestFlight builds of the same package version can be distinguished by build
+number, upload time, and the recorded commit SHA. To start a new App Store
+version, update the package version in a normal source change.
+
+The `v0.1.0` or `v0.1.0-beta.1` tag starts the final release workflow directly.
+It runs repository checks, builds the standalone agents, uploads the iOS app,
+and creates the GitHub Release. It does not submit the build to App Review or
+publish it to the public App Store.
 
 Before pushing a release tag, create a GitHub Environment named
 `app-store-connect`. Add the following environment variables and secrets to
-that environment. Required reviewers are not necessary if protected tag
-creation is the release approval; configure the environment's deployment tag
-policy to allow only `preflight/*` and `v*`.
-
-Protect the `preflight/*` and `v*` tag namespaces with repository rules that
-restrict tag creation, updates, and deletion to the release maintainers. The
-rules should cover tag refs, not branch refs. The final workflow also checks
-the completed result of the exact preflight workflow run, so pushing the final
-tag too early fails closed; rerun that final workflow after preflight finishes.
+that environment. If the environment uses deployment branch or tag policies,
+allow the branches that trusted maintainers use for manual TestFlight runs as
+well as the protected `v*` release tags.
 
 On the Apple side, create the App Store Connect app record for bundle ID
 `com.mobileagent.app`, and prepare an Apple Distribution certificate, an App
@@ -121,32 +116,32 @@ base64 -i MobileAgentAppStore.mobileprovision
 
 The profile's App ID must be exactly `com.mobileagent.app`, and the
 distribution certificate and profile must belong to the same Apple Developer
-Team. The workflow derives the marketing version from the tag and generates a
-unique execution-time App Store build number. iOS release jobs are serialized
-so retries and preflight/final tags cannot race while allocating build numbers.
+Team. The workflow derives the marketing version from
+`apps/web/package.json` for manual TestFlight runs and from the `v*` tag for
+final releases. It generates a unique execution-time App Store build number.
+iOS upload jobs are serialized so concurrent manual runs cannot race while
+allocating build numbers.
 
-After the environment is configured, push a preflight tag at the candidate
-commit:
+After the environment is configured, open the `TestFlight` workflow in GitHub
+Actions, select the branch containing the candidate commit, and choose `Run
+workflow`. The run summary shows the exact commit uploaded to App Store
+Connect. The equivalent CLI command is:
 
 ```sh
-CANDIDATE_SHA="$(git rev-parse HEAD)"
-git tag "preflight/v0.1.0" "$CANDIDATE_SHA"
-git push origin "preflight/v0.1.0"
+gh workflow run testflight.yml --ref main
 ```
 
 After the build has been processed and validated in TestFlight, create the
-final tag on the same commit:
+final tag when you are ready to publish the corresponding source release:
 
 ```sh
+CANDIDATE_SHA="<the SHA shown in the TestFlight run summary>"
 git tag "v0.1.0" "$CANDIDATE_SHA"
 git push origin "v0.1.0"
 ```
 
-The final workflow checks that `preflight/v0.1.0` and `v0.1.0` resolve to the
-same commit and that the preflight workflow completed successfully before
-building. Apple still processes the uploaded build asynchronously; uploading
-the build does not submit it to App Review or make it available to App Store
-customers.
+Apple still processes the uploaded build asynchronously; uploading the build
+does not submit it to App Review or make it available to App Store customers.
 
 ## Bridge boundary
 
@@ -154,6 +149,9 @@ customers.
 by the Web UI:
 
 - `@capacitor/app` supplies foreground/background transitions on native builds;
+- the Settings screen reads the native bundle's marketing version and build
+  number through `App.getInfo()`; browser builds fall back to the Web package
+  version;
 - returning to the foreground asks the terminal view to recreate its WebSocket;
 - browser builds use `visibilitychange` as the equivalent lifecycle signal;
 - route provider, Keychain, notifications, and Live Activities are explicit

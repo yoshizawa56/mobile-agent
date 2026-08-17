@@ -1,8 +1,18 @@
 import { App } from "@capacitor/app";
 import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
+import webPackage from "../../package.json";
 
 export type MobileAgentPlatform = "web" | "ios" | "android";
 export type MobileAgentAppState = "active" | "background";
+export type MobileAgentAppInfo = {
+  version: string;
+  build: string;
+};
+
+export const mobileAgentFallbackAppInfo = {
+  version: webPackage.version,
+  build: "web",
+} satisfies MobileAgentAppInfo;
 
 export type MobileAgentBridge = {
   readonly platform: MobileAgentPlatform;
@@ -14,6 +24,7 @@ export type MobileAgentBridge = {
     notifications: false;
     liveActivities: false;
   };
+  getAppInfo(): Promise<MobileAgentAppInfo>;
   getAppState(): MobileAgentAppState;
   onAppStateChange(listener: (state: MobileAgentAppState) => void): () => void;
 };
@@ -38,6 +49,7 @@ export function createMobileAgentBridge(): MobileAgentBridge {
     platform,
     isNative: Capacitor.isNativePlatform(),
     capabilities,
+    getAppInfo: () => readAppInfo(),
     getAppState: () => currentAppState(),
     onAppStateChange: (listener) => subscribeToAppState(listener),
   };
@@ -52,6 +64,17 @@ function normalizePlatform(platform: string): MobileAgentPlatform {
 
 function currentAppState(): MobileAgentAppState {
   return typeof document === "undefined" || document.visibilityState === "visible" ? "active" : "background";
+}
+
+async function readAppInfo(): Promise<MobileAgentAppInfo> {
+  if (!Capacitor.isNativePlatform()) return mobileAgentFallbackAppInfo;
+
+  try {
+    const info = await App.getInfo();
+    return { version: info.version, build: info.build };
+  } catch {
+    return mobileAgentFallbackAppInfo;
+  }
 }
 
 function subscribeToAppState(listener: (state: MobileAgentAppState) => void): () => void {

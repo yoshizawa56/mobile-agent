@@ -33,8 +33,9 @@ runs:
           refs/tags/v*)
             release_tag="$GITHUB_REF_NAME"
             ;;
-          refs/tags/preflight/v*)
-            release_tag="${GITHUB_REF_NAME#preflight/}"
+          refs/heads/*)
+            package_version="$(node -p "require('./apps/web/package.json').version")"
+            release_tag="v$package_version"
             ;;
           *)
             echo "Unsupported release ref: $GITHUB_REF" >&2
@@ -44,7 +45,7 @@ runs:
 
         if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
           echo "Unsupported release tag: $release_tag" >&2
-          echo "Expected a tag such as v0.0.1 or v0.0.1-beta.1" >&2
+          echo "Expected a release tag or a branch with a valid apps/web/package.json version." >&2
           exit 1
         fi
 
@@ -147,7 +148,7 @@ runs:
           printf 'IOS_TEAM_ID=%s\n' "$profile_team_id"
         } >> "$GITHUB_ENV"
 
-    - name: Set release version and build number
+    - name: Set app version and build number
       shell: bash
       run: |
         set -euo pipefail

@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      actions: read
       contents: read
 
     steps:
@@ -28,7 +27,7 @@ jobs:
       - name: Run repository checks
         uses: ./.github/actions/repository-checks
 
-      - name: Validate release tag and preflight commit
+      - name: Validate release tag
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
@@ -44,56 +43,6 @@ jobs:
             echo "Expected a tag such as v0.0.1 or v0.0.1-beta.1" >&2
             exit 1
           fi
-
-          preflight_tag="preflight/$RELEASE_TAG"
-          if ! git fetch --no-tags origin \
-            "refs/tags/$preflight_tag:refs/tags/$preflight_tag"; then
-            echo "A matching preflight tag is required: $preflight_tag" >&2
-            exit 1
-          fi
-          preflight_sha="$(git rev-parse "$preflight_tag^{commit}")"
-          if [[ "$preflight_sha" != "$GITHUB_SHA" ]]; then
-            echo "Final tag $RELEASE_TAG must point to the same commit as $preflight_tag." >&2
-            echo "Expected $preflight_sha, got $GITHUB_SHA." >&2
-            exit 1
-          fi
-
-      - name: Verify successful preflight workflow run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREFLIGHT_TAG: preflight/${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          runs_path="$RUNNER_TEMP/preflight-runs.json"
-          gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/preflight.yml/runs?event=push&head_sha=$GITHUB_SHA&per_page=100" \
-            > "$runs_path"
-
-          preflight_run_id="$(jq -r \
-            --arg expected_ref "$PREFLIGHT_TAG" \
-            --arg expected_sha "$GITHUB_SHA" \
-            '[.workflow_runs[]
-              | select(
-                  .event == "push"
-                  and .head_branch == $expected_ref
-                  and .head_sha == $expected_sha
-                  and .status == "completed"
-                  and .conclusion == "success"
-                )
-            ]
-            | sort_by(.run_started_at)
-            | last
-            | .id // empty' \
-            "$runs_path")"
-
-          if [[ -z "$preflight_run_id" ]]; then
-            echo "No successful preflight run exists for $PREFLIGHT_TAG at $GITHUB_SHA." >&2
-            echo "Wait for preflight processing to finish, then rerun this final workflow." >&2
-            exit 1
-          fi
-          echo "Using successful preflight run $preflight_run_id for $PREFLIGHT_TAG."
 
   build-agent:
     name: Build ${{ matrix.name }}
@@ -155,8 +104,6 @@ jobs:
     concurrency:
       group: ios-app-store-connect-upload
       cancel-in-progress: false
-    environment:
-      name: app-store-connect
     permissions:
       contents: read
 

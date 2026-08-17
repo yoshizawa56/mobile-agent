@@ -104,8 +104,6 @@ jobs:
     concurrency:
       group: ios-app-store-connect-upload
       cancel-in-progress: false
-    environment:
-      name: app-store-connect
     permissions:
       contents: read
 

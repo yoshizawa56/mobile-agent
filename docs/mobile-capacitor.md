@@ -86,11 +86,10 @@ It runs repository checks, builds the standalone agents, uploads the iOS app,
 and creates the GitHub Release. It does not submit the build to App Review or
 publish it to the public App Store.
 
-Before pushing a release tag, create a GitHub Environment named
-`app-store-connect`. Add the following environment variables and secrets to
-that environment. If the environment uses deployment branch or tag policies,
-allow the branches that trusted maintainers use for manual TestFlight runs as
-well as the protected `v*` release tags.
+Before running TestFlight or pushing a release tag, add the following values to
+the repository-level Actions secrets at `Settings > Secrets and variables >
+Actions > Repository secrets`. A GitHub Environment is not required for these
+workflows.
 
 On the Apple side, create the App Store Connect app record for bundle ID
 `com.mobileagent.app`, and prepare an Apple Distribution certificate, an App
@@ -122,9 +121,9 @@ final releases. It generates a unique execution-time App Store build number.
 iOS upload jobs are serialized so concurrent manual runs cannot race while
 allocating build numbers.
 
-After the environment is configured, open the `TestFlight` workflow in GitHub
-Actions, select the branch containing the candidate commit, and choose `Run
-workflow`. The run summary shows the exact commit uploaded to App Store
+After the repository secrets are configured, open the `TestFlight` workflow in
+GitHub Actions, select the branch containing the candidate commit, and choose
+`Run workflow`. The run summary shows the exact commit uploaded to App Store
 Connect. The equivalent CLI command is:
 
 ```sh

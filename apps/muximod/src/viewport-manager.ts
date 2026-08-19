@@ -311,6 +311,9 @@ export class TmuxViewportManager {
   }
 
   private reconcileMobileViewport(record: LeaseRecord, cols: number, rows: number, forceRefresh = false): void {
+    const clamped = clampViewportSize(cols, rows);
+    cols = clamped.cols;
+    rows = clamped.rows;
     record.owner = "mobile";
     record.mobileCols = cols;
     record.mobileRows = rows;
@@ -394,19 +397,23 @@ export class TmuxViewportManager {
 
   private claimDesktop(record: LeaseRecord, client: TmuxClient, reason: ViewportReason): void {
     if (record.released || !record.mobileClient || record.mobileClient.name === client.name) return;
+    if (!isValidClientSize(client)) return;
+
+    const clampedClient = clampViewportSize(client.width, client.height);
+    const effectiveClient: TmuxClient = { ...client, width: clampedClient.cols, height: clampedClient.rows };
 
     if (record.owner === "desktop") {
       const previous = record.latestDesktop;
-      record.latestDesktop = client;
+      record.latestDesktop = effectiveClient;
       if (
         !previous ||
-        previous.name !== client.name ||
-        previous.width !== client.width ||
-        previous.height !== client.height
+        previous.name !== effectiveClient.name ||
+        previous.width !== effectiveClient.width ||
+        previous.height !== effectiveClient.height
       ) {
         this.adapter.setWindowSize(record.pane.windowId, "manual");
-        this.adapter.resizeWindow(record.pane.windowId, client.width, client.height);
-        this.adapter.refreshClient(client.name);
+        this.adapter.resizeWindow(record.pane.windowId, effectiveClient.width, effectiveClient.height);
+        this.adapter.refreshClient(effectiveClient.name);
       }
       return;
     }
@@ -417,13 +424,13 @@ export class TmuxViewportManager {
       // mobile lease is active. tmux's client formats can still report the
       // window-level active pane for that client, so use the pane captured at
       // lease acquisition for the protected client.
-      const desktopPaneId = record.desktopClientFlags.has(client.name)
+      const desktopPaneId = record.desktopClientFlags.has(effectiveClient.name)
         ? record.snapshot.activePaneId
-        : client.paneId;
+        : effectiveClient.paneId;
       const pcChangedPane = desktopPaneId && desktopPaneId !== record.snapshot.activePaneId;
 
       if (record.snapshot.zoomed && !pcChangedPane) {
-        this.adapter.restoreSnapshot(record.snapshot, client);
+        this.adapter.restoreSnapshot(record.snapshot, effectiveClient);
       } else {
         // window_layout deliberately ignores the zoomed visible layout. This
         // removes the mobile zoom while preserving any layout change made by
@@ -436,10 +443,10 @@ export class TmuxViewportManager {
     }
 
     record.owner = "desktop";
-    record.latestDesktop = client;
+    record.latestDesktop = effectiveClient;
     this.adapter.setWindowSize(record.pane.windowId, "manual");
-    this.adapter.resizeWindow(record.pane.windowId, client.width, client.height);
-    this.adapter.refreshClient(client.name);
+    this.adapter.resizeWindow(record.pane.windowId, effectiveClient.width, effectiveClient.height);
+    this.adapter.refreshClient(effectiveClient.name);
     this.emit(record, "desktop", reason);
   }
 
@@ -526,8 +533,10 @@ export class TmuxViewportManager {
           record.latestDesktop?.name === desktop.name &&
           (record.latestDesktop.width !== desktop.width || record.latestDesktop.height !== desktop.height)
         ) {
-          record.latestDesktop = desktop;
-          this.adapter.resizeWindow(record.pane.windowId, desktop.width, desktop.height);
+          if (!isValidClientSize(desktop)) continue;
+          const clamped = clampViewportSize(desktop.width, desktop.height);
+          record.latestDesktop = { ...desktop, width: clamped.cols, height: clamped.rows };
+          this.adapter.resizeWindow(record.pane.windowId, clamped.cols, clamped.rows);
           this.adapter.refreshClient(desktop.name);
         }
       }
@@ -634,4 +643,16 @@ function shellQuote(value: string): string {
 
 function hasTmuxClientFlag(client: TmuxClient, flag: string): boolean {
   return client.flags.split(",").includes(flag);
+}
+
+function clampViewportSize(cols: number, rows: number): { cols: number; rows: number } {
+  const clampedCols = Math.max(20, Math.min(Math.trunc(cols) || 80, 500));
+  const clampedRows = Math.max(5, Math.min(Math.trunc(rows) || 24, 300));
+  return { cols: clampedCols, rows: clampedRows };
+}
+
+function isValidClientSize(client: TmuxClient): boolean {
+  return Number.isInteger(client.width) && Number.isInteger(client.height)
+    && client.width >= 20 && client.width <= 500
+    && client.height >= 5 && client.height <= 300;
 }

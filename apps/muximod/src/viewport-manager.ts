@@ -56,6 +56,7 @@ type LeaseRecord = {
   desktopClientFlags: Map<string, string>;
   onEvent?: (event: ViewportEvent) => void;
   released: boolean;
+  lastSeenLayout?: string;
 };
 
 type TmuxHookEvent = "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached";
@@ -335,6 +336,14 @@ export class TmuxViewportManager {
       this.adapter.selectPane(record.pane.paneId);
       this.adapter.zoomPane(record.pane.paneId);
     }
+    // Remember the mobile-expected layout so a desktop-side split/resize
+    // (which does not change client focus/size) can still be detected as
+    // desktop activity. Without this, pane sizes would not hand back.
+    try {
+      record.lastSeenLayout = this.adapter.snapshotWindow(record.pane).layout;
+    } catch {
+      record.lastSeenLayout = undefined;
+    }
 
     if (record.mobileClient) {
       let client = record.mobileClient;
@@ -526,8 +535,17 @@ export class TmuxViewportManager {
             !record.latestDesktop ||
             record.latestDesktop.width !== desktop.width ||
             record.latestDesktop.height !== desktop.height;
-          if (focusChanged || sizeChanged) {
-            this.claimDesktop(record, desktop, sizeChanged ? "desktop_resize" : "desktop_focus");
+          let layoutChanged = false;
+          if (record.lastSeenLayout) {
+            try {
+              const currentLayout = this.adapter.snapshotWindow(record.pane).layout;
+              layoutChanged = currentLayout !== record.lastSeenLayout;
+            } catch {
+              layoutChanged = false;
+            }
+          }
+          if (focusChanged || sizeChanged || layoutChanged) {
+            this.claimDesktop(record, desktop, sizeChanged ? "desktop_resize" : layoutChanged ? "desktop_activity" : "desktop_focus");
           }
         } else if (
           record.latestDesktop?.name === desktop.name &&

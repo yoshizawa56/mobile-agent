@@ -31,6 +31,7 @@ import {
   sessionsPath,
   settingsPath,
   terminalsPath,
+  workspacesPath,
 } from "../../app/workspace-routes";
 import { useMuximodEvents } from "../api/muximod-events";
 import { muximoBridge, muximoFallbackAppInfo, type MuximoAppInfo } from "../../platform/muximo-bridge";
@@ -290,6 +291,7 @@ export function useMobileExperienceViewModel(): MobileExperienceViewModel {
       setConnectionSettingsError(null);
       navigateTo(settingsPath());
     },
+    onOpenWorkspaces: () => navigateTo(workspacesPath()),
   }), [navigate, selectedSession, selectedTerminal, sessions, sessionsQuery.error, sessionsQuery.status, stage, terminalId, terminals, terminalsQuery.error, terminalsQuery.status, sessionName]);
 
   const newSession = useMemo<NewSessionViewModel>(() => ({

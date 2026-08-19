@@ -200,6 +200,8 @@ function groupByWindow(panes: PaneSummary[]): Array<{
     windowHeight?: number;
     hasGeometry: boolean;
     panes: PaneSummary[];
+    windowWidths: number[];
+    windowHeights: number[];
   }>();
   for (const pane of panes) {
     const current = windows.get(pane.windowId) ?? {
@@ -211,14 +213,52 @@ function groupByWindow(panes: PaneSummary[]): Array<{
       windowHeight: pane.windowHeight,
       hasGeometry: true,
       panes: [],
+      windowWidths: [],
+      windowHeights: [],
     };
     current.hasGeometry = current.hasGeometry && hasPaneGeometry(pane);
-    current.windowWidth ??= pane.windowWidth;
-    current.windowHeight ??= pane.windowHeight;
+    if (typeof pane.windowWidth === "number" && pane.windowWidth > 0) current.windowWidths.push(pane.windowWidth);
+    if (typeof pane.windowHeight === "number" && pane.windowHeight > 0) current.windowHeights.push(pane.windowHeight);
     current.panes.push(pane);
     windows.set(pane.windowId, current);
   }
-  return [...windows.values()];
+  return [...windows.values()].map(({ windowWidths, windowHeights, ...rest }) => {
+    const consensusWidth = consensusWindowDimension(windowWidths);
+    const consensusHeight = consensusWindowDimension(windowHeights);
+    // If window dimensions are inconsistent across panes (stale snapshot during
+    // viewport resize), prefer the consensus value and mark geometry as
+    // unavailable when no consensus exists. This prevents absolute panes from
+    // being rendered with a mismatched 200%-wide window that looks translucent.
+    const windowWidth = consensusWidth ?? rest.windowWidth;
+    const windowHeight = consensusHeight ?? rest.windowHeight;
+    const validWindow = typeof windowWidth === "number" && typeof windowHeight === "number"
+      && windowWidth >= 20 && windowWidth <= 500
+      && windowHeight >= 5 && windowHeight <= 300;
+    return {
+      ...rest,
+      windowWidth,
+      windowHeight,
+      hasGeometry: rest.hasGeometry && validWindow,
+    };
+  });
+}
+
+function consensusWindowDimension(values: number[]): number | undefined {
+  if (!values.length) return undefined;
+  const counts = new Map<number, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best: number | undefined;
+  let bestCount = 0;
+  for (const [value, count] of counts) {
+    if (count > bestCount || (count === bestCount && (best === undefined || value > best))) {
+      best = value;
+      bestCount = count;
+    }
+  }
+  // Require at least half the panes to agree; otherwise the window was
+  // resized between pane listings and no dimension is trustworthy.
+  if (best !== undefined && bestCount * 2 < values.length) return undefined;
+  return best;
 }
 
 function windowIdNumber(id: string): string {
@@ -226,8 +266,15 @@ function windowIdNumber(id: string): string {
 }
 
 export function hasPaneGeometry(pane: Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">): boolean {
-  return [pane.left, pane.top].every((value) => typeof value === "number" && value >= 0)
-    && [pane.width, pane.height, pane.windowWidth, pane.windowHeight].every((value) => typeof value === "number" && value > 0);
+  if (![pane.left, pane.top].every((value) => typeof value === "number" && value >= 0)) return false;
+  if (![pane.width, pane.height, pane.windowWidth, pane.windowHeight].every((value) => typeof value === "number" && value > 0)) return false;
+  // Pane must fit inside the window; a wider pane indicates a stale window
+  // size (mobile/desktop viewport race) and should fall back to grid layout.
+  if (typeof pane.width === "number" && typeof pane.windowWidth === "number" && pane.width > pane.windowWidth) return false;
+  if (typeof pane.height === "number" && typeof pane.windowHeight === "number" && pane.height > pane.windowHeight) return false;
+  if (typeof pane.windowWidth === "number" && (pane.windowWidth < 20 || pane.windowWidth > 500)) return false;
+  if (typeof pane.windowHeight === "number" && (pane.windowHeight < 5 || pane.windowHeight > 300)) return false;
+  return true;
 }
 
 export const MIN_TOUCH_PANE_WIDTH_RATIO = 0.16;
@@ -251,10 +298,16 @@ function paneGeometryStyle(
   window: { windowWidth?: number; windowHeight?: number },
 ): CSSProperties | undefined {
   if (!hasPaneGeometry(pane) || !window.windowWidth || !window.windowHeight) return undefined;
+  const clamp = (value: number) => Math.max(0, Math.min(100, value));
+  const left = clamp((pane.left! / window.windowWidth) * 100);
+  const top = clamp((pane.top! / window.windowHeight) * 100);
+  const width = clamp((pane.width! / window.windowWidth) * 100);
+  const height = clamp((pane.height! / window.windowHeight) * 100);
+  // Prevent panes from overflowing the window due to rounding errors.
   return {
-    left: `${(pane.left! / window.windowWidth) * 100}%`,
-    top: `${(pane.top! / window.windowHeight) * 100}%`,
-    width: `${(pane.width! / window.windowWidth) * 100}%`,
-    height: `${(pane.height! / window.windowHeight) * 100}%`,
+    left: `${left}%`,
+    top: `${top}%`,
+    width: `${Math.min(width, 100 - left)}%`,
+    height: `${Math.min(height, 100 - top)}%`,
   };
 }

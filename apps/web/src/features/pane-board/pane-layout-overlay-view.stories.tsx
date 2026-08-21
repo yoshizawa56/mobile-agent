@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { PaneSummary } from "@muximo/protocol";
+import type { PaneSummary } from "@muximo/api";
 import { useState } from "react";
 import { PaneLayoutOverlay } from "./pane-layout-overlay-view";
 

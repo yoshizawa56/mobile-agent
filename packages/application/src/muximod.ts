@@ -1,13 +1,14 @@
 import type { WorkspaceRecord, WorkspaceSelection } from "@muximo/domain";
 import type {
-  CreatePaneRequest,
-  PaneSummary,
-  RegisterWorkspaceRequest,
-  TerminalEndpoint,
-  TmuxSession,
-  UpdateWorkspaceRequest,
-  WorkspaceDirectory,
-} from "@muximo/protocol";
+  CreatePaneInput,
+  CreateSessionInput,
+  MuximodPaneSummary,
+  MuximodSessionSummary,
+  MuximodTerminalEndpoint,
+  MuximodWorkspaceDirectory,
+  RegisterWorkspaceCommand,
+  UpdateWorkspaceCommand,
+} from "./muximod-models.js";
 
 export type MuximodHookEvent =
   | "client-attached"
@@ -30,28 +31,28 @@ export class ApplicationError extends Error {
 
 /**
  * Application use-case port consumed by HTTP, CLI, and future native
- * adapters. It contains no Hono, Bun, tmux, SQLite, or filesystem types.
+ * adapters. It contains no transport-runtime, tmux, SQLite, or filesystem types.
  */
 export type MuximodApplication = {
   terminal: {
-    get(): Promise<TerminalEndpoint>;
+    get(): Promise<MuximodTerminalEndpoint>;
   };
   workspaces: {
-    list(): Promise<WorkspaceDirectory[]>;
-    browse(parentPath?: string): Promise<WorkspaceDirectory[]>;
-    register(input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory>;
-    update(workspaceId: string, input: UpdateWorkspaceRequest): Promise<WorkspaceDirectory>;
+    list(): Promise<MuximodWorkspaceDirectory[]>;
+    browse(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
+    register(input: RegisterWorkspaceCommand): Promise<MuximodWorkspaceDirectory>;
+    update(workspaceId: string, input: UpdateWorkspaceCommand): Promise<MuximodWorkspaceDirectory>;
     delete(workspaceId: string): Promise<void>;
     resolveDirectory(workspaceId: string): Promise<WorkspaceRecord>;
     resolveSelection(selection: WorkspaceSelection): Promise<WorkspaceRecord>;
   };
   sessions: {
-    list(): Promise<TmuxSession[]>;
-    create(input: { name: string; initialCwd: string }): Promise<TmuxSession>;
+    list(): Promise<MuximodSessionSummary[]>;
+    create(input: CreateSessionInput): Promise<MuximodSessionSummary>;
   };
   panes: {
-    list(sessionName?: string): Promise<PaneSummary[]>;
-    create(input: CreatePaneRequest, workspace?: WorkspaceRecord): Promise<PaneSummary>;
+    list(sessionName?: string): Promise<MuximodPaneSummary[]>;
+    create(input: CreatePaneInput, workspace?: WorkspaceRecord): Promise<MuximodPaneSummary>;
   };
   hooks: {
     handleTmux(event: MuximodHookEvent, client: string): void;

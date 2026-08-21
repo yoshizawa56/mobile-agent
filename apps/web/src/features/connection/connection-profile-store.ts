@@ -1,4 +1,4 @@
-import { createServeConnection, type MuximodConnection } from "@muximo/muximod-client";
+import { createServeConnection, type MuximodConnection } from "../api/muximod-client.js";
 import { createBrowserMuximodAuth } from "./browser-auth";
 
 export type BrowserConnectionProfile = {

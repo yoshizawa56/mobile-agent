@@ -1,4 +1,4 @@
-import type { WorkspaceDirectory } from "@muximo/protocol";
+import type { WorkspaceDirectory } from "@muximo/api";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
 export type WorkspaceSelectionMode = "workspace" | "worktree";

@@ -1,18 +1,16 @@
-import type { MuximodAuthProvider, MuximodConnection } from "@muximo/muximod-client";
 import {
-  authChallengeRequestSchema,
-  authChallengeResponseSchema,
-  authInfoSchema,
-  authSessionRequestSchema,
-  authSessionResponseSchema,
+  createMuximodClient,
+  createServeConnection,
+  type MuximodAuthProvider,
+  type MuximodConnection,
+} from "../api/muximod-client.js";
+import {
   decodePairingCode,
-  pairingClaimRequestSchema,
-  pairingClaimResponseSchema,
   pairingCodePayloadSchema,
-  pairingStatusSchema,
   type PairingCodePayload,
+  type PairingClaimRequest,
   type PublicKeyJwk,
-} from "@muximo/protocol";
+} from "@muximo/api";
 import {
   encodeJsonBase64Url,
   pairingClaimMessage,
@@ -20,7 +18,7 @@ import {
   sessionMessage,
   sha256Hex,
   signEcdsa,
-} from "@muximo/protocol";
+} from "@muximo/api";
 
 type StoredBrowserDevice = {
   serverId: string;
@@ -73,8 +71,9 @@ export async function pairBrowserFromQr(
   },
 ): Promise<BrowserPairingResult> {
   const payload = parsePairingQrPayload(value);
-  const endpoint = payload.muximodBaseUrl.replace(/\/$/, "");
-  const info = authInfoSchema.parse(await requestJson(`${endpoint}/auth/v1/info`));
+  const connection = createServeConnection(payload.muximodBaseUrl);
+  const client = createMuximodClient(connection);
+  const info = await client.authInfo();
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const parsedPublicKey = publicKeyJwk(publicKey);
@@ -90,24 +89,21 @@ export async function pairBrowserFromQr(
   });
 
   options.onProgress?.({ phase: "claiming" });
-  const claim = pairingClaimResponseSchema.parse(await requestJson(`${endpoint}/auth/v1/pairings/${encodeURIComponent(payload.pairingId)}/claim`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(pairingClaimRequestSchema.parse({
-      pairingSecret: payload.pairingSecret,
-      publicKey: parsedPublicKey,
-      deviceName: options.deviceName.trim() || defaultDeviceName(),
-      deviceType: "browser",
-      platform: typeof navigator === "undefined" ? undefined : navigator.platform,
-      clientVersion,
-      clientNonce,
-      signature: await signEcdsa(keyPair.privateKey, claimMessage),
-    })),
-  }));
+  const claimRequest: PairingClaimRequest = {
+    pairingSecret: payload.pairingSecret,
+    publicKey: parsedPublicKey,
+    deviceName: options.deviceName.trim() || defaultDeviceName(),
+    deviceType: "browser",
+    platform: typeof navigator === "undefined" ? undefined : navigator.platform,
+    clientVersion,
+    clientNonce,
+    signature: await signEcdsa(keyPair.privateKey, claimMessage),
+  };
+  const claim = await client.claimPairing(payload.pairingId, claimRequest);
   if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId) throw new Error("muximod returned an unexpected pairing identity");
   options.onProgress?.({ phase: "awaiting_approval", fingerprint: claim.keyFingerprint });
 
-  const status = await waitForPairingApproval(endpoint, payload.pairingId, claim.claimToken);
+  const status = await waitForPairingApproval(client, payload.pairingId, claim.claimToken);
   if (status.status !== "approved" || !status.deviceId) throw new Error(`Pairing was ${status.status}`);
   await saveBrowserDevice({
     serverId: info.serverId,
@@ -121,18 +117,16 @@ export async function pairBrowserFromQr(
 
 export function createBrowserMuximodAuth(connection: MuximodConnection): MuximodAuthProvider {
   let cached: CachedSession | undefined;
+  const publicClient = createMuximodClient({ ...connection, auth: undefined });
+  const authenticatedClient = createMuximodClient(connection);
   const provider: MuximodAuthProvider = {
     getAccessToken: async () => {
-      const info = authInfoSchema.parse(await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/info`));
+      const info = await publicClient.authInfo();
       if (cached && cached.serverId === info.serverId && cached.expiresAt > new Date(Date.now() + 30_000).toISOString()) return cached.accessToken;
 
       const device = await loadBrowserDevice(info.serverId);
       if (!device) throw new Error("This browser is not paired with muximod");
-      const challenge = authChallengeResponseSchema.parse(await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/challenges`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(authChallengeRequestSchema.parse({ deviceId: device.deviceId })),
-      }));
+      const challenge = await publicClient.createChallenge(device.deviceId);
       const signature = await signEcdsa(device.privateKey, sessionMessage({
         serverId: info.serverId,
         deviceId: device.deviceId,
@@ -140,50 +134,26 @@ export function createBrowserMuximodAuth(connection: MuximodConnection): Muximod
         challengeNonce: challenge.nonce,
         expiresAt: challenge.expiresAt,
       }));
-      const session = authSessionResponseSchema.parse(await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/sessions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(authSessionRequestSchema.parse({ deviceId: device.deviceId, challengeId: challenge.challengeId, signature })),
-      }));
+      const session = await publicClient.createAuthSession({ deviceId: device.deviceId, challengeId: challenge.challengeId, signature });
       if (session.serverId !== info.serverId || session.deviceId !== device.deviceId) throw new Error("muximod returned an unexpected session identity");
       cached = { serverId: session.serverId, deviceId: session.deviceId, accessToken: session.accessToken, expiresAt: session.expiresAt };
       return session.accessToken;
     },
     getWebSocketTicket: async (endpoint) => {
-      const accessToken = await provider.getAccessToken();
-      const response = await requestJson(`${connection.httpBaseUrl.replace(/\/$/, "")}/auth/v1/ws-tickets`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ endpoint }),
-      });
-      return (response as { ticket: string }).ticket;
+      return (await authenticatedClient.issueWebSocketTicket(endpoint)).ticket;
     },
   };
   return provider;
 }
 
-async function waitForPairingApproval(endpoint: string, pairingId: string, claimToken: string): Promise<{ status: "offered" | "awaiting_approval" | "approved" | "rejected" | "expired"; deviceId: string | null }> {
+async function waitForPairingApproval(client: ReturnType<typeof createMuximodClient>, pairingId: string, claimToken: string): Promise<{ status: "offered" | "awaiting_approval" | "approved" | "rejected" | "expired"; deviceId: string | null }> {
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
-    const status = pairingStatusSchema.parse(await requestJson(`${endpoint}/auth/v1/pairings/${encodeURIComponent(pairingId)}`, {
-      headers: { authorization: `Pairing ${claimToken}` },
-    }));
+    const status = await client.pairingStatus(pairingId, claimToken);
     if (status.status === "approved" || status.status === "rejected" || status.status === "expired") return status;
     await wait(1_000);
   }
   throw new Error("Pairing approval timed out");
-}
-
-async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
-      ? payload.message
-      : `muximod returned ${response.status}`;
-    throw new Error(message);
-  }
-  return payload;
 }
 
 function publicKeyJwk(value: JsonWebKey): PublicKeyJwk {

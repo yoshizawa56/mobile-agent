@@ -6,8 +6,8 @@ import {
   terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
-} from "@muximo/protocol";
-import type { MuximodConnection } from "@muximo/muximod-client";
+} from "@muximo/api";
+import type { MuximodConnection } from "../api/muximod-client.js";
 import { getMuximodWebSocketEndpoint, openMuximodTerminal } from "../api/muximod-api";
 import { isMockMode, mockTerminalOutputForTarget } from "../../mock/mock-data";
 import { muximoBridge } from "../../platform/muximo-bridge";

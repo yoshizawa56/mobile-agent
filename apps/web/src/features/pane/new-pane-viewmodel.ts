@@ -1,4 +1,4 @@
-import type { PanePlacement, PaneSummary } from "@muximo/protocol";
+import type { PanePlacement, PaneSummary } from "@muximo/api";
 import type { TerminalEndpoint, TmuxSession } from "../connection/connection-flow-viewmodel";
 import type { WorkspacePickerViewModel } from "../workspace/workspace-picker-viewmodel";
 

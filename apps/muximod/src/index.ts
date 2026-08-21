@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-import { errorMessage } from "@muximo/logging";
-import { runMuximodCommand, startMuximod } from "./daemon.js";
+import { errorMessage, runMuximodCommand, startMuximod } from "@muximo/infrastructure";
 
 const args = process.argv.slice(2);
 

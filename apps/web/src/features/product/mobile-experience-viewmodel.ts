@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@muximo/protocol";
+import type { PanePlacement, PaneSummary, TmuxSession, WorkspaceDirectory } from "@muximo/api";
 import { fetchPanes, fetchSessions, fetchTerminals, fetchWorkspaceDirectories, fetchWorkspaces, createPane, createSession, registerWorkspace } from "../api/muximod-api";
 import type { ConnectionFlowStage, ConnectionFlowViewModel, TerminalEndpoint } from "../connection/connection-flow-viewmodel";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";

@@ -1,14 +1,14 @@
 import {
   createMuximodClient,
   type MuximodConnection,
-} from "@muximo/muximod-client";
-import type { CreatePaneRequest, CreateSessionRequest, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@muximo/protocol";
+} from "./muximod-client.js";
+import type { CreatePaneRequest, CreateSessionRequest, MuximodEvent, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@muximo/api";
 
 export function getMuximodWebSocketEndpoint(connection: MuximodConnection): string {
   return connection.websocketUrl;
 }
 
-export function openMuximodEvents(connection: MuximodConnection): Promise<WebSocket> {
+export function openMuximodEvents(connection: MuximodConnection): Promise<AsyncIteratorObject<MuximodEvent>> {
   return muximodClient(connection).openEvents();
 }
 

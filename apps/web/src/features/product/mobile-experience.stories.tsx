@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/api";
 import { ConnectionSettingsView } from "../connection/connection-settings-view";
 import type { ConnectionSettingsViewModel } from "../connection/connection-settings-viewmodel";
 import { mockSessions, mockTerminals } from "../connection/connection-flow-mock-data";

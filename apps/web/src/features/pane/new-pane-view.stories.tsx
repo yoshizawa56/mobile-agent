@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useMemo, useState } from "react";
-import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/protocol";
+import type { PanePlacement, PaneSummary, WorkspaceDirectory } from "@muximo/api";
 import { NewPaneView } from "./new-pane-view";
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./new-pane-viewmodel";
 import type { WorkspaceSelectionMode } from "../workspace/workspace-picker-viewmodel";

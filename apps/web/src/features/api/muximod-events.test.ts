@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { muximodEventSchema } from "@muximo/protocol";
+import { muximodEventSchema } from "@muximo/api";
 import {
   noFixture,
   returns,
@@ -14,7 +14,6 @@ const connection = {
   route: "serve" as const,
   httpBaseUrl: "http://muximod.local",
   websocketUrl: "ws://muximod.local/terminal",
-  eventsWebsocketUrl: "ws://muximod.local/events",
 };
 
 type Input = { event: ReturnType<typeof muximodEventSchema.parse> };

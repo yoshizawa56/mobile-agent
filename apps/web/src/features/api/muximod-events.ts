@@ -1,7 +1,8 @@
 import { useEffect } from "react";
+import { consumeEventIterator } from "@orpc/client";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { MuximodConnection } from "@muximo/muximod-client";
-import { muximodEventSchema, type MuximodEvent } from "@muximo/protocol";
+import type { MuximodConnection } from "./muximod-client.js";
+import type { MuximodEvent } from "@muximo/api";
 import { isMockMode } from "../../mock/mock-data";
 import { openMuximodEvents } from "./muximod-api";
 import { paneQueryKey } from "../pane-board/pane-board-viewmodel";
@@ -34,7 +35,7 @@ export function useMuximodEvents(connection: MuximodConnection | undefined, conn
     if (isMockMode() || !connection?.auth) return;
 
     let disposed = false;
-    let socket: WebSocket | undefined;
+    let stopEvents: (() => Promise<void>) | undefined;
     let reconnectTimer: number | undefined;
     let retry = 0;
 
@@ -56,40 +57,27 @@ export function useMuximodEvents(connection: MuximodConnection | undefined, conn
     const connect = async () => {
       if (disposed) return;
       try {
-        socket = await openMuximodEvents(connection);
-      } catch {
-        scheduleReconnect();
-        return;
-      }
-      if (disposed) {
-        socket.close();
-        socket = undefined;
-        return;
-      }
-
-      const current = socket;
-      current.addEventListener("open", () => {
-        retry = 0;
-        invalidateAll();
-      });
-      current.addEventListener("message", (event) => {
-        if (typeof event.data !== "string") return;
-        let payload: unknown;
-        try {
-          payload = JSON.parse(event.data);
-        } catch {
+        const current = await openMuximodEvents(connection);
+        if (disposed) {
+          await current.return?.();
           return;
         }
-        const parsed = muximodEventSchema.safeParse(payload);
-        if (parsed.success) invalidateMuximodEvent(queryClient, connectionKey, connection, parsed.data);
-      });
-      current.addEventListener("close", () => {
-        if (socket === current) socket = undefined;
+        retry = 0;
+        invalidateAll();
+        stopEvents = consumeEventIterator(current, {
+          onEvent: (event) => invalidateMuximodEvent(queryClient, connectionKey, connection, event),
+          onError: () => {
+            stopEvents = undefined;
+            scheduleReconnect();
+          },
+          onSuccess: () => {
+            stopEvents = undefined;
+            scheduleReconnect();
+          },
+        });
+      } catch {
         scheduleReconnect();
-      });
-      current.addEventListener("error", () => {
-        current.close();
-      });
+      }
     };
 
     void connect();
@@ -98,8 +86,8 @@ export function useMuximodEvents(connection: MuximodConnection | undefined, conn
       disposed = true;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
-      socket?.close();
-      socket = undefined;
+      void stopEvents?.();
+      stopEvents = undefined;
     };
   }, [connection, connectionKey, queryClient]);
 }

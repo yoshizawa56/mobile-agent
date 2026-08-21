@@ -28,10 +28,11 @@
     "deps:check": "bun outdated",
     "dev": "bun scripts/dev.mjs",
     "audit:public": "bun scripts/audit-public-repo.mjs",
+    "check:architecture": "node scripts/check-architecture.mjs",
     "lint": "bunx --no-install turbo run lint",
     "test:table": "node scripts/check-table-tests.mjs",
-    "test": "bun run test:table && bun test scripts/dev.test.ts && bunx --no-install turbo run test",
-    "typecheck": "bunx --no-install turbo run typecheck"
+    "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts && bunx --no-install turbo run test",
+    "typecheck": "bun run check:architecture && bunx --no-install turbo run typecheck"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.8",

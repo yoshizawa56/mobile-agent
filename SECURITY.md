@@ -1,50 +1,17 @@
 # Security policy
 
-## Scope and status
+## Status and deployment boundary
 
-This project is pre-alpha. It controls terminals and agent processes, so a vulnerability may expose command execution, terminal output, credentials available to the host account, or local files. Treat the current deployment model as a security boundary with known limitations, not as a completed security product.
+Muximo is pre-alpha software. It can read and control the host user's tmux sessions and processes, and agent plugins run with the privileges of the `muximod` process. Do not use it with untrusted users or expose the muximod HTTP and WebSocket ports directly to the public internet.
 
-The supported public-reporting path is the repository's [private security advisory form](https://github.com/yoshizawa56/muximo/security/advisories/new). If private advisories are unavailable, contact the maintainer privately through GitHub before publishing details.
+Keep `muximod` on loopback and expose it through a trusted HTTPS route such as Tailscale Serve. Network reachability alone is not the application authorization boundary: clients must complete QR pairing, host approval, and device authentication before accessing protected API or WebSocket routes.
 
-## Current deployment boundary
+The browser stores its device private key in non-extractable browser key storage. The host stores the device public key and credential verifiers; access sessions and WebSocket connections are short-lived and bound to the authenticated device. Do not put private keys, pairing secrets, access tokens, passwords, API keys, or private terminal output in the repository, browser Web Storage, fixtures, screenshots, logs, telemetry, or issue reports.
 
-`muximod` is intended to bind to loopback and be reached through Tailscale Serve and its ACLs. Do not expose the HTTP or WebSocket port directly to the public internet.
-
-The current MVP does not yet provide application-level pairing or bearer-token authentication. Tailscale identity/ACLs are therefore part of the deployment boundary until that layer is implemented.
-
-The browser client stores only a non-secret Serve URL. SSH keys, passwords, Tailscale auth keys, API keys, and agent credentials must not be put in the repository, browser storage, fixtures, Storybook data, or issue reports. A future native SSH adapter must keep private material in the OS secure store.
-
-Known limitations in the current MVP:
-
-- application-level pairing and per-device authorization are not implemented;
-- identity headers from Tailscale Serve are not yet independently verified by muximod;
-- muximod can control the host user's tmux sessions and processes;
-- plugin code runs with the privileges of the muximod host process.
-
-## Supply-chain controls
-
-The repository applies two baseline controls to dependency and CI supply chains:
-
-- Bun will not install a newly published package until it is at least seven days old. The policy is strict and fails when no eligible version exists or registry publication-time metadata is missing.
-- GitHub Actions references are pinned to full commit SHAs rather than mutable version tags. The public-repository audit checks workflow files and fails if a future action reference is not SHA-pinned.
-
-These controls reduce exposure to short-lived malicious releases and moved action tags, but they do not replace review of dependency updates, lockfile changes, action provenance, or runner security.
-
-Do not use the MVP with untrusted tailnet users or with a public, unauthenticated proxy.
+Application-level authorization does not sandbox the host process or third-party plugins. Native secure key-store integration, server identity pinning, end-to-end encryption, and role-based access control are not part of the current release.
 
 ## Reporting a vulnerability
 
-Please use GitHub's private security advisory flow for this repository when it is enabled. Do not include credentials, private keys, terminal output, or personal data in a public issue.
+Please use the repository's [private security advisory form](https://github.com/yoshizawa56/muximo/security/advisories/new). If private advisories are unavailable, contact the maintainer privately through GitHub before publishing details.
 
-## Release checklist
-
-Before publishing a commit or release, run:
-
-```sh
-bun run audit:public
-bun run typecheck
-bun run test
-bun run build
-```
-
-Review the complete staged diff and the relevant Git history. If a secret has ever been committed, assume it is compromised: revoke or rotate it first, then remove it from history with an agreed repository-wide procedure.
+Do not include credentials, private keys, terminal output, or personal data in a public issue. If a secret has been committed, assume it is compromised and revoke or rotate it before investigating repository history.

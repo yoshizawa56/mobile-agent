@@ -84,6 +84,14 @@ type ParsedMuximodOptions = {
 
 const healthTimeoutMs = 500;
 const lifecycleTimeoutMs = 5_000;
+const healthLogScanLimit = 64;
+const healthDiagnosticLimit = 5;
+const healthDiagnosticMessageLimit = 512;
+
+type MuximodHealthFailureContext = {
+  startedAt: number;
+  pid?: number;
+};
 
 export async function runMuximodCommand(args: string[] = []): Promise<ReturnType<typeof createMuximodServer> | undefined> {
   const { command, rest } = normalizeCommand(args);
@@ -294,6 +302,7 @@ function parseMuximodOptions(args: string[]): ParsedMuximodOptions {
 }
 
 async function statusMuximod(options: MuximodCliOptions): Promise<number> {
+  const healthCheckStartedAt = Date.now();
   if (await isHealthy(options)) {
     const record = readPidRecord(options.pidFile);
     process.stdout.write(`muximod running${record ? ` (pid ${record.pid})` : ""} at http://${displayHost(options.host)}:${options.port}\n`);
@@ -302,7 +311,11 @@ async function statusMuximod(options: MuximodCliOptions): Promise<number> {
 
   const record = readPidRecord(options.pidFile);
   if (record && isProcessAlive(record.pid)) {
-    process.stderr.write(`muximod process ${record.pid} exists but is not healthy at http://${displayHost(options.host)}:${options.port}\n`);
+    process.stderr.write(`${formatMuximodHealthFailure(
+      `muximod process ${record.pid} exists but is not healthy at http://${displayHost(options.host)}:${options.port}`,
+      options,
+      { startedAt: healthCheckStartedAt, pid: record.pid },
+    )}\n`);
     return 1;
   }
 
@@ -312,6 +325,7 @@ async function statusMuximod(options: MuximodCliOptions): Promise<number> {
 }
 
 async function stopMuximod(options: MuximodCliOptions, quiet = false): Promise<number> {
+  const healthCheckStartedAt = Date.now();
   const record = readPidRecord(options.pidFile);
   if (!record) {
     if (await isHealthy(options)) {
@@ -329,7 +343,11 @@ async function stopMuximod(options: MuximodCliOptions, quiet = false): Promise<n
 
   const recordOptions = { ...options, host: record.host, port: record.port };
   if (!(await isHealthy(recordOptions))) {
-    throw new Error(`refusing to signal pid ${record.pid}; pid file does not point to a healthy muximod`);
+    throw new Error(formatMuximodHealthFailure(
+      `refusing to signal pid ${record.pid}; pid file does not point to a healthy muximod`,
+      options,
+      { startedAt: healthCheckStartedAt, pid: record.pid },
+    ));
   }
 
   process.kill(record.pid, "SIGTERM");
@@ -362,6 +380,7 @@ async function restartMuximod(options: MuximodCliOptions): Promise<number> {
     return 0;
   }
 
+  const startupStartedAt = Date.now();
   const child = spawnCurrentDaemon(options);
   if (!(await waitFor(() => isHealthy(options), lifecycleTimeoutMs))) {
     try {
@@ -369,13 +388,18 @@ async function restartMuximod(options: MuximodCliOptions): Promise<number> {
     } catch {
       // The child may have exited already; preserve the useful health error.
     }
-    throw new Error(`muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`);
+    throw new Error(formatMuximodHealthFailure(
+      `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
+      options,
+      { startedAt: startupStartedAt, pid: child.pid },
+    ));
   }
   process.stdout.write(`muximod restarted at http://${displayHost(options.host)}:${options.port}\n`);
   return 0;
 }
 
 async function ensureMuximod(options: MuximodCliOptions): Promise<number> {
+  const healthCheckStartedAt = Date.now();
   if (await isHealthy(options)) {
     process.stdout.write(`muximod already running at http://${displayHost(options.host)}:${options.port}\n`);
     return 0;
@@ -383,9 +407,14 @@ async function ensureMuximod(options: MuximodCliOptions): Promise<number> {
 
   const record = readPidRecord(options.pidFile);
   if (record && isProcessAlive(record.pid)) {
-    throw new Error(`muximod pid ${record.pid} exists but is not healthy; use 'muximo daemon restart'`);
+    throw new Error(formatMuximodHealthFailure(
+      `muximod pid ${record.pid} exists but is not healthy; use 'muximo daemon restart'`,
+      options,
+      { startedAt: healthCheckStartedAt, pid: record.pid },
+    ));
   }
 
+  const startupStartedAt = Date.now();
   const child = spawnCurrentDaemon(options);
   if (!(await waitFor(() => isHealthy(options), lifecycleTimeoutMs))) {
     try {
@@ -393,7 +422,11 @@ async function ensureMuximod(options: MuximodCliOptions): Promise<number> {
     } catch {
       // The child may have exited already; preserve the useful health error.
     }
-    throw new Error(`muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`);
+    throw new Error(formatMuximodHealthFailure(
+      `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
+      options,
+      { startedAt: startupStartedAt, pid: child.pid },
+    ));
   }
   process.stdout.write(`muximod started at http://${displayHost(options.host)}:${options.port}\n`);
   return 0;
@@ -407,6 +440,79 @@ export function buildDaemonSpawnArgs(options: MuximodCliOptions, entry = process
   if (options.muximodBaseUrl) args.push("--muximod-base-url", options.muximodBaseUrl);
   args.push("--log-level", options.logLevel ?? "info", "--log-file", options.logFile ?? defaultLogFile());
   return args;
+}
+
+export function formatMuximodHealthFailure(
+  message: string,
+  options: Pick<MuximodCliOptions, "logFile">,
+  context: MuximodHealthFailureContext,
+): string {
+  const logFile = resolve(options.logFile ?? defaultLogFile());
+  const diagnostics = readRecentMuximodDiagnostics(logFile, context);
+  const lines = [message, `muximod log: ${logFile}`];
+  if (diagnostics.length === 0) {
+    lines.push("muximod log: no recent warning or error records");
+  } else {
+    lines.push("muximod recent diagnostics:", ...diagnostics.map((diagnostic) => `  ${diagnostic}`));
+  }
+  return lines.join("\n");
+}
+
+function readRecentMuximodDiagnostics(logFile: string, context: MuximodHealthFailureContext): string[] {
+  let lines: string[];
+  try {
+    lines = readFileSync(logFile, "utf8").split(/\r?\n/).filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+
+  return lines
+    .slice(-healthLogScanLimit)
+    .map((line) => formatMuximodDiagnostic(line, context))
+    .filter((diagnostic): diagnostic is string => diagnostic !== undefined)
+    .slice(-healthDiagnosticLimit);
+}
+
+function formatMuximodDiagnostic(line: string, context: MuximodHealthFailureContext): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+
+  const record = asRecord(value);
+  if (!record || (record.level !== "warn" && record.level !== "error")) return undefined;
+  const timestamp = typeof record.timestamp === "string" ? Date.parse(record.timestamp) : Number.NaN;
+  if (!Number.isFinite(timestamp) || timestamp < context.startedAt) return undefined;
+  if (context.pid !== undefined && record.pid !== context.pid) return undefined;
+  const fields = asRecord(record.fields);
+  const error = asRecord(fields?.error);
+  const level = String(record.level).toUpperCase();
+  const event = typeof record.event === "string" ? record.event : "unknown";
+  const message = typeof fields?.message === "string"
+    ? fields.message
+    : typeof error?.message === "string"
+      ? error.message
+      : undefined;
+  const code = typeof error?.code === "string" || typeof error?.code === "number" ? String(error.code) : undefined;
+  const errorId = typeof fields?.errorId === "string" ? fields.errorId : undefined;
+  const detail = message ? `: ${truncateHealthDiagnostic(errorMessage(message))}` : "";
+  const codeDetail = code ? ` code=${code}` : "";
+  const idDetail = errorId ? ` errorId=${errorId}` : "";
+  return `${level} ${event}${detail}${codeDetail}${idDetail}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function truncateHealthDiagnostic(value: string): string {
+  return value.length <= healthDiagnosticMessageLimit
+    ? value
+    : `${value.slice(0, healthDiagnosticMessageLimit - 1)}…`;
 }
 
 function spawnCurrentDaemon(options: MuximodCliOptions) {

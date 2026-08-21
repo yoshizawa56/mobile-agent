@@ -1,11 +1,8 @@
-import { ConnectionFlowLayout, FlowIntro } from "../../features/connection/connection-flow-layout";
-import { ConnectionSettingsView } from "../../features/connection/connection-settings-view";
-import type { TerminalEndpoint } from "../../features/connection/connection-flow-viewmodel";
+import { ConnectionFlowLayout, FlowIntro } from "./-connection-flow-layout";
+import type { TerminalEndpoint } from "./-connection-flow-viewmodel";
 import type { TerminalsViewModel } from "./-terminals-viewmodel";
 
 export function TerminalsView({ viewModel }: { viewModel: TerminalsViewModel }) {
-  if (!viewModel.connectionSettings.hasSavedProfile) return <ConnectionSettingsView viewModel={viewModel.connectionSettings} />;
-
   return (
     <ConnectionFlowLayout>
       <div className="mx-auto w-full max-w-[570px] flex-1 px-6 py-[58px] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(32px+var(--safe-area-bottom))] max-[620px]:pt-8">

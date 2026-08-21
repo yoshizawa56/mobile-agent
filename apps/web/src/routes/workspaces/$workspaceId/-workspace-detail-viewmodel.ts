@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMobileExperience } from "../../../app/mobile-experience-context";
-import { deleteWorkspace, fetchWorkspaces, updateWorkspace } from "../../../features/api/muximod-api";
-import { connectionForProfile, readBrowserConnectionProfile } from "../../../features/connection/connection-profile-store";
-import { workspacesPath } from "../../../app/workspace-routes";
-import { parseWorktreeCopyPatterns, workspaceDetailCanSave } from "../../../features/workspace/workspaces-viewmodel";
-import type { WorkspaceDetailViewModel } from "../../../features/workspace/workspaces-viewmodel";
+import { deleteWorkspace, fetchWorkspaces, updateWorkspace } from "../../../app/api/muximod-api";
+import { useMuximodEvents } from "../../../app/api/muximod-events";
+import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
+import { parseWorktreeCopyPatterns, workspaceDetailCanSave, type WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
 
 export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetailViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const profile = readBrowserConnectionProfile();
-  const muximodConnection = connectionForProfile(profile);
-  const connectionKey = muximodConnection ? `${muximodConnection.route ?? "custom"}:${muximodConnection.httpBaseUrl}` : "unconfigured";
+  const { connection: muximodConnection, connectionKey } = useMuximodConnection();
+  useMuximodEvents(muximodConnection, connectionKey);
 
   const workspacesQuery = useQuery({
     queryKey: ["workspaces", connectionKey],
@@ -73,7 +70,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
         const list = Array.isArray(current) ? current : [];
         return (list as { id: string }[]).filter((w) => w.id !== workspaceId);
       });
-      void navigate({ to: workspacesPath() });
+      void navigate({ to: "/workspaces" });
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
   });
@@ -92,7 +89,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   }, [workspace, workspaceId, deleteMutation]);
 
   const onBack = useCallback(() => {
-    void navigate({ to: workspacesPath() });
+    void navigate({ to: "/workspaces" });
   }, [navigate]);
 
   return {

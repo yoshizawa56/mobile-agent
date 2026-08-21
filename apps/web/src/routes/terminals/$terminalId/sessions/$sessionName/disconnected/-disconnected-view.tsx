@@ -1,4 +1,4 @@
-import { ConnectionFlowLayout, FlowIntro } from "../../../../../../features/connection/connection-flow-layout";
+import { ConnectionFlowLayout, FlowIntro } from "../../../../-connection-flow-layout";
 import type { DisconnectedViewModel } from "./-disconnected-viewmodel";
 
 export function DisconnectedView({ viewModel }: { viewModel: DisconnectedViewModel }) {

@@ -52,16 +52,17 @@ try {
 }
 
 function releaseAsset() {
-  const target = `${platform()}-${arch()}`;
-  const supported = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]);
-  if (!supported.has(target)) throw new Error(`unsupported platform: ${target}`);
-  return `muximo-${target}`;
+  const sourceTarget = `${platform()}-${arch()}`;
+  const operatingSystem = { darwin: "macos", linux: "linux" }[platform()];
+  const architecture = { arm64: "arm64", x64: "x64" }[arch()];
+  if (!operatingSystem || !architecture) throw new Error(`unsupported platform: ${sourceTarget}`);
+  return `muximo-${operatingSystem}-${architecture}`;
 }
 
 function checksumFor(contents, filename) {
   for (const line of contents.split(/\r?\n/)) {
     const match = line.match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
-    if (match?.[2] === filename) return match[1].toLowerCase();
+    if (match && match[2].replace(/^.*\//, "") === filename) return match[1].toLowerCase();
   }
   throw new Error(`checksum for ${filename} was not found in SHA256SUMS.txt`);
 }

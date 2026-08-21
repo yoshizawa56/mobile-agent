@@ -67,7 +67,7 @@ type RunOptions = {
   cleanupHook?: string;
   setupHookExplicit: boolean;
   cleanupHookExplicit: boolean;
-  codexProfile: string;
+  codexProfile: string | null;
   backendArgs: string[];
 };
 
@@ -215,7 +215,6 @@ type WorkspaceDeleteOptions = {
 };
 
 const sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
-const defaultCodexProfile = "local-agent";
 const supportedCodexOriginators = new Set([
   "codex-tui",
   "codex_cli_rs",
@@ -388,7 +387,7 @@ export class MuximoCommand {
     let cleanupHook: string | undefined;
     let setupHookExplicit = false;
     let cleanupHookExplicit = false;
-    let codexProfile = this.env.MUXIMO_CODEX_PROFILE ?? defaultCodexProfile;
+    let codexProfile = this.env.MUXIMO_CODEX_PROFILE || null;
     const backendArgs: string[] = [];
 
     for (let index = 0; index < args.length; index += 1) {
@@ -979,7 +978,7 @@ export class MuximoCommand {
       executable: basename(backendBinary),
     });
     if (hasOption("--help", options.backendArgs) || hasOption("-h", options.backendArgs)) {
-      const helpArgs = backend === "codex" && !hasOption("--profile", options.backendArgs) && !hasOption("-p", options.backendArgs)
+      const helpArgs = backend === "codex" && options.codexProfile && !hasOption("--profile", options.backendArgs) && !hasOption("-p", options.backendArgs)
         ? ["--profile", options.codexProfile, ...options.backendArgs]
         : options.backendArgs;
       logger.debug("backend.help_started", { argumentCount: helpArgs.length });
@@ -1430,26 +1429,31 @@ export class MuximoCommand {
         status = 1;
       }
     }
-    const profilePath = join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), `${this.env.MUXIMO_CODEX_PROFILE ?? defaultCodexProfile}.config.toml`);
-    if (existsSync(profilePath)) {
-      this.write(`codex profile: ${profilePath}\n`);
-      const codex = commandPath("codex", this.env);
-      const validationStartedAt = Date.now();
-      const validation = codex
-        ? spawnSync(codex, ["--profile", this.env.MUXIMO_CODEX_PROFILE ?? defaultCodexProfile, "--strict-config", "--help"], { stdio: "ignore", env: this.env })
-        : undefined;
-      logger.debug("doctor.codex_profile_checked", {
-        available: Boolean(codex),
-        exitCode: validation?.status ?? null,
-        durationMs: Date.now() - validationStartedAt,
-      });
-      if (codex && validation?.status !== 0) {
-        this.write("codex profile validation: failed\n", true);
+    const configuredProfile = this.env.MUXIMO_CODEX_PROFILE || null;
+    if (configuredProfile) {
+      const profilePath = join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), `${configuredProfile}.config.toml`);
+      if (existsSync(profilePath)) {
+        this.write(`codex profile: ${profilePath}\n`);
+        const codex = commandPath("codex", this.env);
+        const validationStartedAt = Date.now();
+        const validation = codex
+          ? spawnSync(codex, ["--profile", configuredProfile, "--strict-config", "--help"], { stdio: "ignore", env: this.env })
+          : undefined;
+        logger.debug("doctor.codex_profile_checked", {
+          available: Boolean(codex),
+          exitCode: validation?.status ?? null,
+          durationMs: Date.now() - validationStartedAt,
+        });
+        if (codex && validation?.status !== 0) {
+          this.write("codex profile validation: failed\n", true);
+          status = 1;
+        } else this.write("codex profile validation: ok\n");
+      } else {
+        this.write(`codex profile: missing (${profilePath})\n`, true);
         status = 1;
-      } else this.write("codex profile validation: ok\n");
+      }
     } else {
-      this.write(`codex profile: missing (${profilePath})\n`, true);
-      status = 1;
+      this.write("codex profile: not configured\n");
     }
     const mise = commandPath("mise", this.env);
     this.write(mise ? `mise: ${mise}\n` : "mise: unavailable (not required for workspace hooks)\n");
@@ -2587,7 +2591,7 @@ Run options:
       --cleanup-hook PATH   Override the workspace cleanup hook.
       --no-setup-hook       Disable the workspace setup hook.
       --no-cleanup-hook     Disable the workspace cleanup hook.
-      --codex-profile NAME  Codex profile (default: ${defaultCodexProfile}).
+      --codex-profile NAME  Select a Codex profile for this session.
 `);
   }
 
@@ -2609,7 +2613,7 @@ export class MuximoCommandError extends Error {}
 export function buildRunCommand(session: AgentSessionRecord, backendArgs: string[], defaultRemote: string, backendBinary: string): string[] {
   if (session.backend === "codex") {
     const args = [backendBinary];
-    if (!hasOption("--profile", backendArgs) && !hasOption("-p", backendArgs)) args.push("--profile", session.codexProfile ?? defaultCodexProfile);
+    if (session.codexProfile && !hasOption("--profile", backendArgs) && !hasOption("-p", backendArgs)) args.push("--profile", session.codexProfile);
     const remote = codexRemoteEndpoint(backendArgs, defaultRemote);
     if (remote && !hasOption("--remote", backendArgs)) args.push("--remote", remote);
     const runDir = session.worktreePath ?? session.workspaceRoot;

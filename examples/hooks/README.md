@@ -55,7 +55,7 @@ If the base database does not exist, copying is skipped and muximod creates a ne
 
 Ports are derived from the combination of `MUXIMO_WORKSPACE` and `MUXIMO_NAME`. The CLI does not allow duplicate names within the same workspace, so ordinary worktrees receive different slots. If the name is generated automatically, recreating a worktree may result in a different port assignment.
 
-The current muximo startup path prepares the database schema with `ensureSchema`, and this repository does not yet define a fixed migration command. Once migrations are introduced, configure one as follows:
+Normal `muximo` and `muximod` startup apply the repository's Drizzle migrations automatically. The hook does not need to run a migration for the normal workflow. Use `MUXIMO_MIGRATION_COMMAND` only when an explicit administrative migration command is required:
 
 ```sh
 MUXIMO_MIGRATION_COMMAND='bun run db:migrate' \

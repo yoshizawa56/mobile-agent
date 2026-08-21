@@ -1,38 +1,139 @@
 # Muximo
 
-Muximo is a monorepo for operating tmux-hosted agents and shells one pane at a time from an iPhone.
+Muximo is a mobile control room for tmux-hosted agents and shells. It lets you inspect and operate work on a development host from an iPhone or browser while the real processes remain in tmux.
 
-> **Pre-alpha:** This project is in the early stages of public development. Configuration, APIs, and data formats may change. See [SECURITY.md](SECURITY.md) for the current security boundaries and limitations.
+> **Pre-alpha:** Muximo is still under active development. Configuration, APIs, and data formats may change.
 
 [![CI](https://github.com/yoshizawa56/muximo/actions/workflows/ci.yml/badge.svg)](https://github.com/yoshizawa56/muximo/actions/workflows/ci.yml)
 
-## OSS project files
+## What Muximo provides
 
-- [LICENSE](LICENSE): MIT License
-- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, testing, and pull request rules
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): community standards
-- [SECURITY.md](SECURITY.md): vulnerability reporting and current security boundaries
+- Browse registered host workspaces, tmux sessions, and panes from a mobile-sized UI.
+- Open one pane at a time as an interactive terminal with input, resize, scrolling, and selection.
+- Start and resume Codex, Claude Code, and OpenCode sessions, or create ordinary shell panes.
+- Track agent states such as running, waiting for input, waiting for approval, completed, and failed.
+- Create managed Git worktrees for agent sessions and keep their lifecycle state in SQLite.
+- Use the same host-side `muximo` CLI and `muximod` daemon for desktop and mobile workflows.
 
-Before publishing a branch or pull request, audit tracked and non-ignored files with:
+## How it works
 
-```sh
-bun run audit:public
+```text
+iPhone / browser
+  React + TypeScript + xterm.js
+          |
+          | HTTPS / WSS, normally through Tailscale Serve
+          v
+      muximod
+  Bun host-side daemon
+    | HTTP API and events
+    | PTY-backed terminal WebSocket
+    | SQLite and agent plugins
+          |
+          v
+  tmux sessions and panes
+  agents and shells
 ```
 
-## Smallest vertical slice under development
+`muximod` runs next to tmux on the development host. HTTP is used for workspaces, sessions, panes, and state; WebSockets carry terminal data and small invalidation events. tmux remains the owner of the real pane and process. When a mobile terminal is connected, Muximo temporarily manages the shared viewport and restores desktop ownership when desktop activity is detected.
 
-- `apps/muximod`: attaches to the target tmux pane with `active-pane`, manages the viewport lease, and relays terminal bytes over WebSocket
-- `apps/muximod`: a long-running Hono control-plane daemon
-- `apps/muximo-cli`: the `muximo` CLI, with agent lifecycle state managed by SQLite
-- `apps/web`: renders one pane with xterm.js and sends terminal size changes to muximod
-- `packages/muximod-client`: the TypeScript client for Hono RPC, Zod validation, and the muximod terminal WebSocket
-- `packages/muximod-http`: the Bun/Hono transport adapter, shared validation/error boundary, and typed HTTP/WebSocket app contract
-- `packages/cli-adapters`: CLI-side infrastructure adapters and composition factories
-- `packages/domain`: pane state, AgentSession lifecycle, and agent waiting-state rules
-- `packages/application`: use cases and ports shared by the CLI and WebSocket adapters
-- `packages/persistence`: Drizzle + SQLite persistence for panes, audits, registered workspaces, and AgentSession records; legacy run storage is removed by the post-refactor migration
-- `packages/agents`: the AgentPlugin API and built-in shell, Codex, and Claude plugins
-- `packages/protocol`: Zod definitions for WebSocket and Pane Board DTOs
+The web client does not contain a fixed host endpoint. `muximo pair` creates a short-lived QR pairing code, the client generates its device key locally, and the host explicitly approves the connection. Later HTTP requests use a short-lived authenticated session and terminal/event WebSockets use one-use tickets.
+
+## Install
+
+Install the latest stable release without requiring Bun or Node.js:
+
+```sh
+curl -fsSL https://github.com/yoshizawa56/muximo/releases/latest/download/install.sh | sh
+muximo --help
+```
+
+The shell installer detects the current OS and architecture, downloads the matching release asset, verifies `SHA256SUMS.txt`, and installs the binary under `~/.local/libexec/muximo` with a command link under `~/.local/bin`. It requires `curl` or `wget` and one of `sha256sum`, `shasum`, or `openssl`. Override the install paths with `MUXIMO_INSTALL_DIR` and `MUXIMO_BIN_DIR` when needed.
+
+Install a specific release by setting `MUXIMO_RELEASE_TAG`:
+
+```sh
+MUXIMO_RELEASE_TAG=v0.1.0 sh -c "$(curl -fsSL https://github.com/yoshizawa56/muximo/releases/download/v0.1.0/install.sh)"
+```
+
+Users who manage command-line tools with `mise` can install the same GitHub Release assets directly:
+
+```sh
+mise use -g github:yoshizawa56/muximo
+muximo --help
+```
+
+For a checkout-based installation, use the Bun installer:
+
+```sh
+bun run muximo:install
+muximo --help
+```
+
+The Bun installer also verifies the release checksum and supports `--tag`, `--from-build`, `MUXIMO_RELEASE_TAG`, `MUXIMO_INSTALL_DIR`, and `MUXIMO_BIN_DIR`. See `muximo --help` for the complete command and option list.
+
+## Start the host daemon
+
+The standalone command manages the long-running `muximod` process:
+
+```sh
+muximo daemon start
+muximo daemon status
+muximo daemon restart
+muximo daemon stop
+```
+
+Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` should remain bound to loopback and be exposed through a trusted HTTPS route such as Tailscale Serve.
+
+To configure a muximod-only Tailscale Serve route:
+
+```sh
+muximo serve tailscale
+```
+
+## Pair a device
+
+The default pairing flow starts or verifies the host route, displays a QR code, and waits for explicit host approval:
+
+```sh
+muximo pair
+```
+
+Scan the QR code inside the Muximo Web or iOS client. The QR code is an in-app pairing code, not a browser navigation URL. For a local endpoint or an explicitly supplied route:
+
+```sh
+muximo pair --without-serve
+muximo pair --muximod-base-url https://workstation.tailnet.ts.net:8449
+```
+
+## Common commands
+
+Start and manage agent sessions on the host:
+
+```sh
+muximo run codex --worktree review
+muximo run claude --no-worktree -n quick-fix
+muximo run opencode --worktree experiment
+muximo resume review
+muximo list --json
+muximo cleanup review
+```
+
+Manage workspaces and tmux sessions:
+
+```sh
+muximo workspace list
+muximo workspace add ~/work/project --name project
+muximo workspace update project --setup-hook ~/.config/muximo/setup
+muximo workspace delete project
+muximo tmux new-session -s project -c ~/work/project
+muximo doctor --verbose
+```
+
+The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
+
+## Development
+
+The repository uses `mise` for Bun, Node.js, and tmux versions:
 
 ```sh
 mise install
@@ -40,213 +141,31 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-`mise.toml` pins Bun, Node, and tmux. `bun run dev` uses an explicit local profile derived from the current linked worktree: muximod, the Web app, and the muximod instance directory each get worktree-specific runtime state and the muximod process is never shared across different worktrees. The tmux socket and sessions are intentionally shared with the normal user tmux server. The launcher prints the selected muximod and Web URLs. It starts a fresh muximod and Web process for the current profile; an occupied port is treated as an error rather than adopting another process. Services started by the command run in detached process groups, so Ctrl-C stops their descendants without leaving orphaned Bun or Vite processes.
-
-Before printing `ready`, the command checks muximod's unauthenticated `/health` endpoint. The Web process must also be listening on its configured port; protected API and WebSocket routes are left for an authenticated client to exercise. If an owned child exits, `bun run dev` reports the exit and stops the remaining owned process groups; it does not automatically restart a failed service. Readiness and failure output includes the endpoint, process owner, and a recovery command. If a port is occupied, inspect it with the command shown in the log or choose explicit free ports:
+`bun run dev` starts an isolated muximod and Web profile for the current linked worktree while continuing to use the normal user tmux server. To inspect the Web UI without a running muximod:
 
 ```sh
-MUXIMOD_PORT=4321 VITE_DEV_PORT=5228 bun run dev
-```
-
-`mise` pins Bun, Node.js, and tmux. Bun pins JavaScript dependencies through `bun.lock`.
-
-The dev profile is safe to start from multiple linked worktrees. Every worktree gets its own `MUXIMO_WORKTREE_ID`, muximod HTTP port, Web port, SQLite file, and muximod process. All of those muximod processes still use the same tmux socket and can reference the same tmux sessions. If a derived port is occupied, set `MUXIMOD_PORT` or `VITE_DEV_PORT` to a free port; the dev supervisor never attaches to an existing muximod or Web process.
-
-When adding or updating dependencies, verify the latest stable registry release and the project's official release information first. Use `bun run deps:check` for the repository's dependency checks. Alpha, beta, and release-candidate versions are not used by default.
-
-muximod exposes an HTTP API at `http://127.0.0.1:4317`, a terminal WebSocket at `ws://127.0.0.1:4317/terminal`, and an event WebSocket at `ws://127.0.0.1:4317/events`. Registered workspaces are listed through `GET /api/workspaces`; host directories can be browsed through `GET /api/workspace-directories` and registered with `POST /api/workspaces`, including optional host-side setup and cleanup script paths and one worktree copy pattern per line. Session and pane creation sends stable workspace IDs, which muximod resolves under its allowed-root policy. Session lists, pane lists, session creation, and pane creation use HTTP. Terminal input/output and resize use the terminal WebSocket. The event WebSocket sends only session invalidation notifications; clients refetch changed data through HTTP. muximod is the host-side control-plane daemon for tmux, agent plugins, and SQLite.
-
-The HTTP API is built from the dependency-injected Bun/Hono app in `packages/muximod-http`, returned by `createMuximodApp(deps)`. Its type, `ReturnType<typeof createMuximodApp>`, is shared with the TypeScript client as `MuximodApp`. `apps/muximod` is the composition root: it initializes SQLite, tmux, PTY, auth, and application adapters, then passes them into the app. HTTP validation and error conversion are centralized in the Hono boundary; terminal and event WebSockets use Hono's Bun upgrade helper and a transport-neutral socket contract. Tailscale Serve and SSH port forwarding are connection routes to the same muximod instance; the web client does not need to know which route established the connection.
-
-The Web build contains no muximod endpoint. It stores only the connection URL received from pairing (or entered manually), for example `https://workstation.tailnet.ts.net:8444`; the internal `MUXIMOD_PORT` is not a client setting. It does not store private keys or passwords. The first run shows the connection setup screen; there is no compiled-in or default connection. Storybook runs with mock data, while `mise run dev-serve` serves the Web UI and muximod independently.
-
-```sh
-bun run --filter @muximo/web dev
-# Use this mode to inspect the UI without muximod.
 VITE_MUXIMOD_MOCK_MODE=true bun run --filter @muximo/web dev
 ```
 
-The web dev server uses strict port binding. If `5227` is already occupied by another application, Vite exits instead of silently moving to a different port and showing the wrong app. Choose an explicit free port when needed, for example `VITE_DEV_PORT=5228 bun run --filter @muximo/web dev`.
-
-Tailscale Serve is opt-in. The CLI treats Serve as a persistent Tailscale configuration: it starts or verifies the local target, upserts the fixed external port, prints the URL, and exits its Serve setup step. It does not own, monitor, or remove the Serve route afterward.
+Useful repository checks are:
 
 ```sh
-muximo dev serve tailscale
+bun run typecheck
+bun run test
+bun run build
 ```
 
-`muximo dev serve tailscale` starts the current worktree's muximod and Web, then maps the Web server to HTTPS port `443` by default. The Web route is independent; the muximod route is configured separately by `muximo pair` or `muximo serve tailscale`. Override the external and local ports with `MUXIMO_DEV_SERVE_PORT`, `MUXIMOD_PORT`, and `VITE_DEV_PORT`.
+The iOS shell workflow is documented in [docs/mobile-capacitor.md](docs/mobile-capacitor.md). Worktree setup and cleanup examples are documented in [examples/hooks](examples/hooks/README.md).
 
-For a release or staging muximod that does not need an external Web server, use the muximod-only command:
+## Security status
 
-```sh
-muximo serve tailscale
-```
+Muximo is pre-alpha software with host-level capabilities. A connected client can read and control the host user's tmux sessions and processes, and agent plugins run with the privileges of the `muximod` process. Do not expose muximod directly to the public internet or use it with untrusted tailnet users.
 
-This uses `MUXIMO_SERVE_PORT` (default `8444`) for the external HTTPS port and `MUXIMOD_PORT` for the local muximod port. A staging main checkout can set `MUXIMO_SERVE_PORT=8443`; a release binary can use `MUXIMO_SERVE_PORT=8444`, or `443` when it runs on a separate Tailscale node. Neither command restores an earlier worktree or removes the route when the local process exits. To inspect the provider's current configuration, use `tailscale serve status`.
+For the vulnerability reporting path and the current deployment boundary, see [SECURITY.md](SECURITY.md).
 
-On macOS, `muximo serve tailscale` resolves a PATH executable first and automatically detects the App Store CLI at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (or the same path under `~/Applications`). If only an alias or shell function from `.zshrc` or `.bashrc` is available, it falls back to the user's interactive shell. To use the bundled CLI explicitly, set `TAILSCALE_BIN=/Applications/Tailscale.app/Contents/MacOS/Tailscale`; the CLI mode environment is enabled automatically.
+## Project files
 
-After exposing the host-side service, pair from the Web app's connection setup screen. The QR contains the muximod URL used for both enrollment and subsequent HTTP/WebSocket requests. SSH bastion routing is reserved as a future native adapter; the current Web bundle does not include SSH or private-key management.
-
-Create a pairing QR from the host. It configures muximod-only Tailscale Serve by
-default, or uses the local endpoint when `--without-serve` is specified:
-
-```sh
-muximo pair
-muximo pair --without-serve
-muximo pair --muximod-base-url https://workstation.tailnet.ts.net:8449
-```
-
-The QR payload is the runtime connection handoff. It is scanned and decoded
-inside the Web/native client; it is not a browser navigation URL and is not
-replaced by a build-time endpoint value or a localhost default.
-
-Storybook can be used to inspect individual screens. It listens on `0.0.0.0:6006`; after configuring Tailscale Serve, open it at `https://<this-Mac's-tailnet-hostname>:8448/`.
-
-```sh
-bun run --filter @muximo/web storybook
-TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8448 6006
-```
-
-To inspect the real app from the tailnet, add the tailnet hostname to Vite's host allow-list and expose a separate port. The existing Storybook Serve configuration can remain in place.
-
-```sh
-VITE_ALLOWED_HOSTS=<tailnet-hostname> \
-VITE_DEV_HOST=0.0.0.0 VITE_DEV_PORT=5227 \
-bun run --filter @muximo/web dev
-TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 5227
-```
-
-The web app uses clean client-side routes. Use Vite's dev or preview server when exposing it through Tailscale Serve; both are configured as SPA servers and fall back to `index.html` for a deep-link reload. Do not serve `apps/web/dist` with a raw static file server unless that server is configured with the same fallback.
-
-```sh
-bun run --filter @muximo/web build
-bun run --filter @muximo/web preview --host 0.0.0.0 --port 4173
-TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8449 4173
-```
-
-## Worktree hook examples
-
-Reusable setup / cleanup hook examples are available in [`examples/hooks`](examples/hooks/README.md). The generic pieces cover SQLite snapshots, deterministic per-worktree development port allocation, env-file updates, and optional SQLite migration commands. The `muximo` example combines them for isolated worktree development.
-
-## Muximo CLI
-
-The lifecycle previously implemented by `bin/muximo` in dotfiles has been migrated to TypeScript in this repository. SQLite is the canonical state source; the legacy `.state` format is intentionally not read.
-
-```sh
-muximo run codex --worktree review
-muximo run claude --no-worktree -n quick-fix
-muximo resume review
-muximo list --json
-muximo list --all --json
-muximo list --global
-muximo session list --global --json
-muximo cleanup review --force
-muximo workspace list
-muximo workspace add ~/work/project --name project
-muximo workspace update project --setup-hook ~/.config/muximo/setup
-muximo workspace delete project
-muximo doctor --verbose
-muximo tmux new-session -s project -c ~/work/project
-muximo tmux new-session -s project -c ~/work/project --detached
-muximo daemon start --host 127.0.0.1 --port 4317
-muximo daemon status
-muximo daemon restart
-```
-
-### Logging
-
-`-v` / `--verbose` controls detailed diagnostics written to the attached terminal. It does not change a background `muximod` process. Configure the daemon with `--log-level LEVEL` and `--log-file PATH`; background logs are JSONL and default to `~/.local/state/muximo/muximod.log` with bounded rotation. `MUXIMO_LOG_LEVEL` and `MUXIMO_LOG_FILE` provide the corresponding `muximod` environment defaults.
-
-The unified `muximo` binary includes the lifecycle CLI and the long-running `muximod` daemon. Build it with Bun's standalone executable target and run the daemon from the same file:
-
-```sh
-bun run build:muximo
-./dist/muximo daemon start --port 4317
-```
-
-With `--worktree`, the CLI creates a `muximo/<name>` branch, copies configured unmanaged files such as `.env` into the same relative paths, and then runs the registered workspace setup script when present. Copy patterns are relative and support `*` and `**`; missing matches are warnings. Cleanup scripts run before the worktree is removed. Script paths are host-side personal settings, so they do not need to exist in the repository or in the worktree; each script runs with the created worktree as its current directory. A worktree with changes is removed only after confirmation. When Codex Managed Remote Control is used, the CLI also manages thread naming and archiving.
-
-`muximo tmux new-session` creates a managed tmux session. Its initial pane and later panes created without an explicit command start through `muximo shell`, so a desktop-created shell and an app-created pane share the same wrapper context. Running `muximo run codex` or `muximo run claude` from that shell adopts the durable AgentSession into the current pane. Existing tmux sessions and panes created with an explicit command remain outside the wrapper, but an agent started or resumed from such an unmanaged shell is still adopted into SQLite while it runs. When the agent exits, the pane remains available as a shell for the next command.
-
-`build:muximo` compiles the muximo CLI directly from the workspace's TypeScript sources, so it also works from a clean checkout. `muximo serve tailscale` is available in the standalone binary and publishes only muximod. `muximo dev serve tailscale` is a source-checkout command: it delegates to the current checkout's Bun development supervisor, which is why it includes the Web server. For source-based local development, use `muximo dev` or `muximo dev serve tailscale`; `bun dev` remains a compatible direct entrypoint.
-
-`muximo workspace` manages registered workspace directories and their personal worktree hooks and copy patterns. `add` and `register` create a registration; `update` accepts a workspace ID, name, or registered directory; `delete` removes only the registration and never deletes the directory. A workspace directory is its path-derived identity, so changing it requires deleting and adding a new registration. `muximo session list|resume|cleanup` is the namespaced form of the lifecycle commands; the existing top-level `muximo list|resume|cleanup` forms remain supported.
-
-`muximo list` reports derived execution health and resume availability. It checks older worktree-backed records against the filesystem and Git worktree registry, hides exited or interrupted records whose worktrees are missing or unregistered, and includes them with `--all`. Running sessions older than 30 days are marked `long-running`; a running record whose execution process is no longer alive is marked `stale` for explicit recovery.
-
-`muximo cleanup` refuses a session whose recorded execution process is still alive. This prevents a long-running session from losing its worktree while it is active; stale sessions can still be resumed or cleaned up explicitly.
-
-### Running multiple muximod instances
-
-`muximo daemon start` starts muximod in a detached process, waits for its health endpoint, and returns to the shell. Use `muximo daemon status`, `muximo daemon restart`, and `muximo daemon stop` for its lifecycle. If launchd, systemd, or another process supervisor needs to own the foreground process directly, use `muximo daemon start --foreground` (or the `apps/muximod` package entrypoint). When multiple muximod processes share the normal tmux server, give every process a distinct `MUXIMOD_INSTANCE_DIR`, HTTP port, and `MUXIMO_WORKTREE_ID`. The instance directory contains the SQLite database, hook output, PID file, and control socket. The tmux socket itself should remain shared unless a separate tmux server is explicitly required.
-
-```sh
-# profile-a.env and profile-b.env are local files and are not committed.
-# Each file contains a unique MUXIMOD_INSTANCE_DIR, MUXIMOD_PORT, and
-# MUXIMO_WORKTREE_ID; leave MUXIMOD_TMUX_SOCKET unset to share tmux.
-set -a; . ./profile-a.env; set +a
-muximo daemon start
-```
-
-The daemon lifecycle commands use the same profile environment:
-
-```sh
-set -a; . ./profile-a.env; set +a
-muximo daemon status
-muximo daemon restart
-muximo daemon stop
-```
-
-`restart` stops the recorded healthy daemon and starts the current command path. If launchd or systemd restarts the service first, it reuses that service-managed process instead of starting a duplicate. There is no live code replacement inside an already-running muximod process, so restart is required after updating the runtime. A service manager with `KeepAlive`/`Restart=on-failure` should invoke the explicit `--foreground` mode for boot-time startup and crash recovery.
-
-### Releases
-
-The `TestFlight` workflow is started manually from GitHub Actions against the
-selected branch. It runs the repository checks and uploads the signed iOS
-build to TestFlight without creating a GitHub tag or Release. The workflow
-records the exact source SHA, derives the marketing version from
-`apps/web/package.json`, and generates a unique timestamp-based build number.
-After the build has been processed and validated, push a semantic version tag
-such as `v0.0.1` when you are ready for the separate `release` workflow. That
-workflow rebuilds the tagged commit, builds standalone executables for Linux
-x64, Linux ARM64, macOS ARM64, and macOS x64, and attaches the binaries and
-`SHA256SUMS.txt` to the GitHub Release.
-
-GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
-
-The unqualified `muximo` command is reserved for the production standalone binary. It never builds the current checkout or silently selects another source tree. `muximo dev` only delegates to a source checkout when one is available; the standalone binary itself does not bundle Web or Vite.
-
-Install the latest stable release and expose the production command through PATH:
-
-```sh
-bun run muximo:install
-muximo --help
-```
-
-`bun run muximo:install` downloads the latest stable GitHub Release for the current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at `~/.local/libexec/muximo/muximo`, and updates `~/.local/bin/muximo` to point directly to that binary. Override the install paths with `MUXIMO_INSTALL_DIR` and `MUXIMO_BIN_DIR` when needed.
-
-The default muximod instance directory is `~/.local/state/muximo`; it contains `muximod.sqlite`, `hooks/`, `muximod.sqlite.pid`, and the legacy `muximod.sqlite.control.sock`. Set `MUXIMOD_INSTANCE_DIR` to isolate another instance or worktree profile; configured instance directories use the shorter `muximod.sock` control socket. `MUXIMOD_DB_FILE`, `MUXIMO_HOOK_OUTPUT_DIR`, `MUXIMOD_PID_FILE`, and `MUXIMOD_CONTROL_SOCKET` remain available as legacy or service-manager overrides, but are not needed for normal use. Other overrides are `MUXIMOD_MIGRATIONS_DIR` and `MUXIMO_WORKTREE_ROOT`. Lifecycle state, registered workspace hook paths, and worktree copy patterns are stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
-
-With `--worktree`, the CLI creates a `muximo/<name>` branch by default. When `MUXIMO_WORKTREE_ID` is set, it uses an isolated worktree directory and `muximo/<worktree-id>/<name>` branch namespace, which avoids collisions when the same session name is used from multiple linked worktrees.
-
-`MUXIMOD_TMUX_SOCKET` is not automatically changed by the dev profile. Leaving it unset means that release and dev processes use the same default tmux server; setting it explicitly changes the tmux server and is an advanced isolation choice, not part of normal worktree separation. Each muximod has its own pane database and HTTP endpoint. Its tmux hooks use a process-specific registration and its pane metadata uses a worktree-specific namespace, so multiple muximod processes can observe the same tmux sessions without overwriting each other's records. Viewport control remains inherently global to a tmux window; two mobile clients should not try to control the same window concurrently.
-
-### Database migrations
-
-The runtime applies Drizzle migrations whenever `createAgentDatabase()` opens SQLite. Drizzle records applied migration hashes and timestamps in `__drizzle_migrations`, checks the generated journal, and applies only pending SQL in a transaction before repositories are constructed. The standalone `muximo` build copies the `packages/persistence/drizzle` directory next to the executable and bundles the generated migration files as a fallback, so the same flow works without a source checkout or adjacent migration files.
-
-When changing `packages/persistence/src/schema.ts`, generate and review the migration, then commit the SQL and metadata files:
-
-```sh
-bun run --filter @muximo/persistence db:generate
-bun run --filter @muximo/persistence db:check
-```
-
-`db:generate` also refreshes the generated embedded migration module; commit the SQL, journal, and generated module together. Normal `muximo` and `muximod` startup applies pending migrations automatically. `db:migrate` remains available for an explicit administrative migration run. Databases created by the previous `CREATE TABLE IF NOT EXISTS` implementation are detected once and baseline-registered as the initial migration; pending migrations preserve current pane, workspace, session, and audit data while removing the obsolete `runs` table and `panes.run_id` column. The cleanup is forward-only, so take a recoverable database backup before rollout if rollback to an older binary may be needed. A partial legacy schema fails closed instead of being guessed at.
-
-When publishing inside a tailnet, keep muximod bound to localhost and expose port 4317 through Tailscale Serve and ACLs. The current MVP uses Tailscale Serve/ACL as its authentication boundary. Identity-header verification and per-device pairing tokens are planned security improvements.
-
-For the MVP, the target window is resized to the mobile viewport and the target pane is zoomed only while a phone is connected. When desktop activity is detected, ownership returns to the desktop and its size and layout are restored. A fully independent twin session is a future extension.
-
-Pane Board loads `/api/panes` through TanStack Query and opens the one-pane control room after selection. The `+` action in the terminal header also creates a pane. The form supports a new window, a right split, or a bottom split, and lets the user choose the source pane. The session overview can create shell, Codex, or Claude panes; worktree creation delegates to the host-side `muximo run` command.
+- [LICENSE](LICENSE): MIT License
+- [SECURITY.md](SECURITY.md): vulnerability reporting and deployment warnings
+- [docs/mobile-capacitor.md](docs/mobile-capacitor.md): iOS development and release workflow
+- [examples/hooks](examples/hooks/README.md): reusable worktree hook examples

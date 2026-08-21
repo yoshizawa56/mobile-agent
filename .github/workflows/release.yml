@@ -45,7 +45,7 @@ jobs:
           fi
 
   build-muximo:
-    name: Build ${{ matrix.name }}
+    name: Build ${{ matrix.platform }}
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -53,14 +53,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x64
+          - platform: linux-x64
             target: bun-linux-x64
-          - name: linux-arm64
+            asset: muximo-linux-x64
+          - platform: linux-arm64
             target: bun-linux-arm64
-          - name: darwin-arm64
+            asset: muximo-linux-arm64
+          - platform: macos-arm64
             target: bun-darwin-arm64
-          - name: darwin-x64
+            asset: muximo-macos-arm64
+          - platform: macos-x64
             target: bun-darwin-x64
+            asset: muximo-macos-x64
 
     steps:
       - name: Check out repository
@@ -80,7 +84,7 @@ jobs:
       - name: Build standalone muximo executable
         env:
           MUXIMO_BUILD_TARGET: ${{ matrix.target }}
-          MUXIMO_BUILD_OUTPUT: dist/muximo-${{ matrix.name }}
+          MUXIMO_BUILD_OUTPUT: dist/${{ matrix.asset }}
         run: |
           mkdir -p dist
           bun run build:muximo
@@ -91,8 +95,8 @@ jobs:
       - name: Upload standalone muximo executable
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-muximo-${{ matrix.name }}
-          path: dist/muximo-${{ matrix.name }}
+          name: release-muximo-${{ matrix.platform }}
+          path: dist/${{ matrix.asset }}
           if-no-files-found: error
           retention-days: 1
 
@@ -130,6 +134,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -145,8 +152,8 @@ jobs:
           expected_assets=(
             muximo-linux-x64
             muximo-linux-arm64
-            muximo-darwin-arm64
-            muximo-darwin-x64
+            muximo-macos-arm64
+            muximo-macos-x64
           )
           for asset in "${expected_assets[@]}"; do
             test -s "dist/$asset"
@@ -163,12 +170,18 @@ jobs:
       - name: Generate checksums
         shell: bash
         run: |
-          sha256sum \
-            dist/muximo-linux-x64 \
-            dist/muximo-linux-arm64 \
-            dist/muximo-darwin-arm64 \
-            dist/muximo-darwin-x64 \
-            > dist/SHA256SUMS.txt
+          (
+            cd dist
+            sha256sum \
+              muximo-linux-x64 \
+              muximo-linux-arm64 \
+              muximo-macos-arm64 \
+              muximo-macos-x64
+          ) > dist/SHA256SUMS.txt
+
+      - name: Add shell installer
+        shell: bash
+        run: cp install.sh dist/install.sh
 
       - name: Create or validate draft GitHub Release
         env:
@@ -245,10 +258,11 @@ jobs:
 
           expected_assets=(
             SHA256SUMS.txt
+            install.sh
             muximo-linux-x64
             muximo-linux-arm64
-            muximo-darwin-arm64
-            muximo-darwin-x64
+            muximo-macos-arm64
+            muximo-macos-x64
           )
           expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | sort)"
           actual_asset_list="$(gh release view "$RELEASE_TAG" \

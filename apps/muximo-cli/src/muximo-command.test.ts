@@ -29,18 +29,19 @@ import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRep
 import { MuximoCommand, buildResumeCommand, buildRunCommand } from "./muximo-command.js";
 
 type EmptyContext = {};
-type BuildInput = { kind: "run" | "resume"; backend: "codex" | "claude" };
+type BuildInput = { kind: "run" | "resume"; backend: "codex" | "claude"; codexProfile?: string | null };
 const buildCases = [
-  { name: "injects Codex defaults", input: { kind: "run", backend: "codex" }, assert: [returns<EmptyContext, string[]>(["codex", "--profile", "local-agent", "--remote", "unix://", "--cd", "/workspace"])] },
+  { name: "leaves the Codex profile unselected by default", input: { kind: "run", backend: "codex" }, assert: [returns<EmptyContext, string[]>(["codex", "--remote", "unix://", "--cd", "/workspace"])] },
+  { name: "preserves an explicitly selected Codex profile", input: { kind: "run", backend: "codex", codexProfile: "review" }, assert: [returns<EmptyContext, string[]>(["codex", "--profile", "review", "--remote", "unix://", "--cd", "/workspace"])] },
   { name: "injects Claude lifecycle flags", input: { kind: "run", backend: "claude" }, assert: [returns<EmptyContext, string[]>(["claude", "--name", "review", "--session-id", "claude-session", "--permission-mode", "auto"])] },
-  { name: "places Codex resume before backend arguments", input: { kind: "resume", backend: "codex" }, assert: [returns<EmptyContext, string[]>(["codex", "--profile", "local-agent", "--remote", "unix://", "--cd", "/workspace", "resume", "codex-session", "--", "inspect"])] },
+  { name: "places Codex resume before backend arguments without a default profile", input: { kind: "resume", backend: "codex" }, assert: [returns<EmptyContext, string[]>(["codex", "--remote", "unix://", "--cd", "/workspace", "resume", "codex-session", "--", "inspect"])] },
 ] satisfies readonly OperationCase<"default", BuildInput, string[], EmptyContext>[];
 
 const buildTable: OperationTable<undefined, "default", BuildInput, string[], EmptyContext> = {
   defaultFixture: noFixture(),
   cases: buildCases,
   execute: (_fixture, input) => {
-    const session = sessionFixture(input.backend);
+    const session = sessionFixture(input.backend, input.codexProfile ?? null);
     return input.kind === "run" ? buildRunCommand(session, [], "unix://", input.backend) : buildResumeCommand(session, ["--", "inspect"], "unix://", input.backend);
   },
   observe: () => ({}),
@@ -944,6 +945,6 @@ class RecordingTmuxAdapter extends TmuxAdapter {
 }
 function captureOutput(): Writable & { value: () => string } { let value = ""; const output = new Writable({ write(chunk, _encoding, callback) { value += chunk.toString(); callback(); } }) as Writable & { value: () => string }; output.value = () => value; return output; }
 
-function sessionFixture(backend: "codex" | "claude"): AgentSessionRecord {
-  return { id: "session-id", name: "review", backend, status: "running", workspaceId: "workspace-id", workspaceRoot: "/workspace", workspaceName: "workspace", worktreeRoot: null, worktreePath: null, branch: null, baseCommit: null, useWorktree: false, setupHook: null, cleanupHook: null, setupOutputFile: null, cleanupOutputFile: null, backendSessionId: backend === "codex" ? "codex-session" : "claude-session", codexProfile: backend === "codex" ? "local-agent" : null, codexRemote: backend === "codex" ? "unix://" : null, setupRan: false, resuming: false, baselineStatus: null, codexSessionBaseline: null, lastExitStatus: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+function sessionFixture(backend: "codex" | "claude", codexProfile: string | null = null): AgentSessionRecord {
+  return { id: "session-id", name: "review", backend, status: "running", workspaceId: "workspace-id", workspaceRoot: "/workspace", workspaceName: "workspace", worktreeRoot: null, worktreePath: null, branch: null, baseCommit: null, useWorktree: false, setupHook: null, cleanupHook: null, setupOutputFile: null, cleanupOutputFile: null, backendSessionId: backend === "codex" ? "codex-session" : "claude-session", codexProfile: backend === "codex" ? codexProfile : null, codexRemote: backend === "codex" ? "unix://" : null, setupRan: false, resuming: false, baselineStatus: null, codexSessionBaseline: null, lastExitStatus: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
 }

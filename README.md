@@ -40,14 +40,36 @@ The web client does not contain a fixed host endpoint. `muximo pair` creates a s
 
 ## Install
 
-With Bun installed, run the installer from a Muximo checkout to download the latest stable standalone binary for the current OS and architecture:
+Install the latest stable release without requiring Bun or Node.js:
+
+```sh
+curl -fsSL https://github.com/yoshizawa56/muximo/releases/latest/download/install.sh | sh
+muximo --help
+```
+
+The shell installer detects the current OS and architecture, downloads the matching release asset, verifies `SHA256SUMS.txt`, and installs the binary under `~/.local/libexec/muximo` with a command link under `~/.local/bin`. It requires `curl` or `wget` and one of `sha256sum`, `shasum`, or `openssl`. Override the install paths with `MUXIMO_INSTALL_DIR` and `MUXIMO_BIN_DIR` when needed.
+
+Install a specific release by setting `MUXIMO_RELEASE_TAG`:
+
+```sh
+MUXIMO_RELEASE_TAG=v0.1.0 sh -c "$(curl -fsSL https://github.com/yoshizawa56/muximo/releases/download/v0.1.0/install.sh)"
+```
+
+Users who manage command-line tools with `mise` can install the same GitHub Release assets directly:
+
+```sh
+mise use -g github:yoshizawa56/muximo
+muximo --help
+```
+
+For a checkout-based installation, use the Bun installer:
 
 ```sh
 bun run muximo:install
 muximo --help
 ```
 
-The installer verifies the release checksum and places the binary under the user-local executable directories. See `muximo --help` for the complete command and option list.
+The Bun installer also verifies the release checksum and supports `--tag`, `--from-build`, `MUXIMO_RELEASE_TAG`, `MUXIMO_INSTALL_DIR`, and `MUXIMO_BIN_DIR`. See `muximo --help` for the complete command and option list.
 
 ## Start the host daemon
 

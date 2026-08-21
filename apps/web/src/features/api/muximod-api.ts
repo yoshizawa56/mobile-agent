@@ -2,7 +2,17 @@ import {
   createMuximodClient,
   type MuximodConnection,
 } from "./muximod-client.js";
-import type { CreatePaneRequest, CreateSessionRequest, MuximodEvent, PaneSummary, RegisterWorkspaceRequest, TmuxSession, TerminalEndpoint, WorkspaceDirectory } from "@muximo/api";
+import type {
+  CreatePaneRequest,
+  CreateSessionRequest,
+  MuximodEvent,
+  PaneSummary,
+  RegisterWorkspaceRequest,
+  TmuxSession,
+  TerminalEndpoint,
+  UpdateWorkspaceRequest,
+  WorkspaceDirectory,
+} from "@muximo/api";
 
 export function getMuximodWebSocketEndpoint(connection: MuximodConnection): string {
   return connection.websocketUrl;
@@ -34,6 +44,14 @@ export function fetchWorkspaceDirectories(path: string | undefined, connection: 
 
 export function registerWorkspace(input: RegisterWorkspaceRequest, connection: MuximodConnection): Promise<WorkspaceDirectory> {
   return muximodClient(connection).registerWorkspace(input);
+}
+
+export function updateWorkspace(workspaceId: string, input: UpdateWorkspaceRequest, connection: MuximodConnection): Promise<WorkspaceDirectory> {
+  return muximodClient(connection).updateWorkspace(workspaceId, input);
+}
+
+export function deleteWorkspace(workspaceId: string, connection: MuximodConnection): Promise<void> {
+  return muximodClient(connection).deleteWorkspace(workspaceId);
 }
 
 export function fetchSessions(connection: MuximodConnection): Promise<TmuxSession[]> {

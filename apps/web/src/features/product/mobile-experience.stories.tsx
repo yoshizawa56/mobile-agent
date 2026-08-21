@@ -153,6 +153,7 @@ function MobileExperience({ initialStage = "terminals", initialTerminalId = null
       setStage("terminals");
     },
     onOpenSettings: () => setStage("settings"),
+    onOpenWorkspaces: () => setStage("terminals"),
   }), [connectionStep, newSession, selectedSession, selectedTerminal, stage, terminalId]);
 
   const sessionOverviewViewModel = useMemo<SessionOverviewViewModel>(() => ({

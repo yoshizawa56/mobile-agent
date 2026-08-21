@@ -35,4 +35,5 @@ export type ConnectionFlowViewModel = {
   onReconnect: () => void;
   onChooseTerminal: () => void;
   onOpenSettings: () => void;
+  onOpenWorkspaces: () => void;
 };

@@ -13,6 +13,8 @@ import {
   parseWorkspaceRoute,
   sessionPath,
   sessionsPath,
+  workspaceDetailPath,
+  workspacesPath,
 } from "./workspace-routes";
 
 type Route = ReturnType<typeof parseWorkspaceRoute>;
@@ -29,14 +31,16 @@ const routeCase = (
 });
 
 const parseCases = [
-  routeCase("maps the root", "/", { stage: "terminals", terminalId: null, sessionName: null, paneId: null }),
-  routeCase("maps the terminals route", "/terminals", { stage: "terminals", terminalId: null, sessionName: null, paneId: null }),
-  routeCase("maps the settings route", "/settings", { stage: "settings", terminalId: null, sessionName: null, paneId: null }),
-  routeCase("maps the sessions route", "/terminals/macbook-air/sessions", { stage: "sessions", terminalId: "macbook-air", sessionName: null, paneId: null }),
-  routeCase("maps the session overview route", "/terminals/macbook-air/sessions/muximo", { stage: "session-overview", terminalId: "macbook-air", sessionName: "muximo", paneId: null }),
-  routeCase("maps the connecting route", "/terminals/macbook-air/sessions/muximo/connecting", { stage: "connecting", terminalId: "macbook-air", sessionName: "muximo", paneId: null }),
-  routeCase("maps the control room route", "/terminals/macbook-air/sessions/muximo/panes/pane-review", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "pane-review" }),
-  routeCase("decodes a legacy tmux pane route", "/terminals/macbook-air/sessions/muximo/panes/%250", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "%0" }),
+  routeCase("maps the root", "/", { stage: "terminals", terminalId: null, sessionName: null, paneId: null, workspaceId: null }),
+  routeCase("maps the terminals route", "/terminals", { stage: "terminals", terminalId: null, sessionName: null, paneId: null, workspaceId: null }),
+  routeCase("maps the settings route", "/settings", { stage: "settings", terminalId: null, sessionName: null, paneId: null, workspaceId: null }),
+  routeCase("maps the workspaces route", "/workspaces", { stage: "workspaces", terminalId: null, sessionName: null, paneId: null, workspaceId: null }),
+  routeCase("maps a workspace detail route", "/workspaces/workspace-muximo", { stage: "workspace-detail", terminalId: null, sessionName: null, paneId: null, workspaceId: "workspace-muximo" }),
+  routeCase("maps the sessions route", "/terminals/macbook-air/sessions", { stage: "sessions", terminalId: "macbook-air", sessionName: null, paneId: null, workspaceId: null }),
+  routeCase("maps the session overview route", "/terminals/macbook-air/sessions/muximo", { stage: "session-overview", terminalId: "macbook-air", sessionName: "muximo", paneId: null, workspaceId: null }),
+  routeCase("maps the connecting route", "/terminals/macbook-air/sessions/muximo/connecting", { stage: "connecting", terminalId: "macbook-air", sessionName: "muximo", paneId: null, workspaceId: null }),
+  routeCase("maps the control room route", "/terminals/macbook-air/sessions/muximo/panes/pane-review", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "pane-review", workspaceId: null }),
+  routeCase("decodes a legacy tmux pane route", "/terminals/macbook-air/sessions/muximo/panes/%250", { stage: "control-room", terminalId: "macbook-air", sessionName: "muximo", paneId: "%0", workspaceId: null }),
 ] satisfies readonly OperationCase<"default", { pathname: string }, Route, Context>[];
 
 const parseTable: OperationTable<undefined, "default", { pathname: string }, Route, Context> = {
@@ -90,10 +94,23 @@ const paneTable: OperationTable<undefined, "default", { terminalId: string; sess
   observe: () => ({}),
 };
 
+const workspaceCases = [
+  { name: "builds the workspace list path", input: undefined, assert: [returns<Context, string>("/workspaces")] },
+  { name: "builds an encoded workspace detail path", input: { workspaceId: "workspace muximo" }, assert: [returns<Context, string>("/workspaces/workspace%20muximo")] },
+] satisfies readonly OperationCase<"default", { workspaceId: string } | undefined, string, Context>[];
+
+const workspaceTable: OperationTable<undefined, "default", { workspaceId: string } | undefined, string, Context> = {
+  defaultFixture: noFixture(),
+  cases: workspaceCases,
+  execute: (_fixture, input) => input ? workspaceDetailPath(input.workspaceId) : workspacesPath(),
+  observe: () => ({}),
+};
+
 describe("workspace routes", () => {
   runOperationTable(it as unknown as TestRegistrar, parseTable);
   runOperationTable(it as unknown as TestRegistrar, sessionTable);
   runOperationTable(it as unknown as TestRegistrar, overviewTable);
   runOperationTable(it as unknown as TestRegistrar, connectingTable);
   runOperationTable(it as unknown as TestRegistrar, paneTable);
+  runOperationTable(it as unknown as TestRegistrar, workspaceTable);
 });

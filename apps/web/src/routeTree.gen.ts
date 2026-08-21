@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as TerminalsIndexRouteImport } from './routes/terminals/index'
+import { Route as WorkspacesIndexRouteImport } from './routes/workspaces/index'
+import { Route as WorkspacesWorkspaceIdIndexRouteImport } from './routes/workspaces/$workspaceId/index'
 import { Route as TerminalsTerminalIdSessionsIndexRouteImport } from './routes/terminals/$terminalId/sessions/index'
 import { Route as TerminalsTerminalIdSessionsSessionNameIndexRouteImport } from './routes/terminals/$terminalId/sessions/$sessionName/index'
 import { Route as TerminalsTerminalIdSessionsNewIndexRouteImport } from './routes/terminals/$terminalId/sessions/new/index'
@@ -36,6 +38,17 @@ const TerminalsIndexRoute = TerminalsIndexRouteImport.update({
   path: '/terminals/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkspacesIndexRoute = WorkspacesIndexRouteImport.update({
+  id: '/workspaces/',
+  path: '/workspaces/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspacesWorkspaceIdIndexRoute =
+  WorkspacesWorkspaceIdIndexRouteImport.update({
+    id: '/workspaces/$workspaceId/',
+    path: '/workspaces/$workspaceId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const TerminalsTerminalIdSessionsIndexRoute =
   TerminalsTerminalIdSessionsIndexRouteImport.update({
     id: '/terminals/$terminalId/sessions/',
@@ -89,6 +102,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
+  '/workspaces/': typeof WorkspacesIndexRoute
+  '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
   '/terminals/$terminalId/sessions/': typeof TerminalsTerminalIdSessionsIndexRoute
   '/terminals/$terminalId/sessions/$sessionName/': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
   '/terminals/$terminalId/sessions/new/': typeof TerminalsTerminalIdSessionsNewIndexRoute
@@ -102,6 +117,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings': typeof SettingsIndexRoute
   '/terminals': typeof TerminalsIndexRoute
+  '/workspaces': typeof WorkspacesIndexRoute
+  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdIndexRoute
   '/terminals/$terminalId/sessions': typeof TerminalsTerminalIdSessionsIndexRoute
   '/terminals/$terminalId/sessions/$sessionName': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
   '/terminals/$terminalId/sessions/new': typeof TerminalsTerminalIdSessionsNewIndexRoute
@@ -116,6 +133,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/terminals/': typeof TerminalsIndexRoute
+  '/workspaces/': typeof WorkspacesIndexRoute
+  '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
   '/terminals/$terminalId/sessions/': typeof TerminalsTerminalIdSessionsIndexRoute
   '/terminals/$terminalId/sessions/$sessionName/': typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
   '/terminals/$terminalId/sessions/new/': typeof TerminalsTerminalIdSessionsNewIndexRoute
@@ -131,6 +150,8 @@ export interface FileRouteTypes {
     | '/'
     | '/settings/'
     | '/terminals/'
+    | '/workspaces/'
+    | '/workspaces/$workspaceId/'
     | '/terminals/$terminalId/sessions/'
     | '/terminals/$terminalId/sessions/$sessionName/'
     | '/terminals/$terminalId/sessions/new/'
@@ -144,6 +165,8 @@ export interface FileRouteTypes {
     | '/'
     | '/settings'
     | '/terminals'
+    | '/workspaces'
+    | '/workspaces/$workspaceId'
     | '/terminals/$terminalId/sessions'
     | '/terminals/$terminalId/sessions/$sessionName'
     | '/terminals/$terminalId/sessions/new'
@@ -157,6 +180,8 @@ export interface FileRouteTypes {
     | '/'
     | '/settings/'
     | '/terminals/'
+    | '/workspaces/'
+    | '/workspaces/$workspaceId/'
     | '/terminals/$terminalId/sessions/'
     | '/terminals/$terminalId/sessions/$sessionName/'
     | '/terminals/$terminalId/sessions/new/'
@@ -171,6 +196,8 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   TerminalsIndexRoute: typeof TerminalsIndexRoute
+  WorkspacesIndexRoute: typeof WorkspacesIndexRoute
+  WorkspacesWorkspaceIdIndexRoute: typeof WorkspacesWorkspaceIdIndexRoute
   TerminalsTerminalIdSessionsIndexRoute: typeof TerminalsTerminalIdSessionsIndexRoute
   TerminalsTerminalIdSessionsSessionNameIndexRoute: typeof TerminalsTerminalIdSessionsSessionNameIndexRoute
   TerminalsTerminalIdSessionsNewIndexRoute: typeof TerminalsTerminalIdSessionsNewIndexRoute
@@ -202,6 +229,20 @@ declare module '@tanstack/react-router' {
       path: '/terminals'
       fullPath: '/terminals/'
       preLoaderRoute: typeof TerminalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspaces/': {
+      id: '/workspaces/'
+      path: '/workspaces'
+      fullPath: '/workspaces/'
+      preLoaderRoute: typeof WorkspacesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspaces/$workspaceId/': {
+      id: '/workspaces/$workspaceId/'
+      path: '/workspaces/$workspaceId'
+      fullPath: '/workspaces/$workspaceId/'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/terminals/$terminalId/sessions/': {
@@ -267,6 +308,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   TerminalsIndexRoute: TerminalsIndexRoute,
+  WorkspacesIndexRoute: WorkspacesIndexRoute,
+  WorkspacesWorkspaceIdIndexRoute: WorkspacesWorkspaceIdIndexRoute,
   TerminalsTerminalIdSessionsIndexRoute: TerminalsTerminalIdSessionsIndexRoute,
   TerminalsTerminalIdSessionsSessionNameIndexRoute:
     TerminalsTerminalIdSessionsSessionNameIndexRoute,

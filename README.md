@@ -210,21 +210,59 @@ records the exact source SHA, derives the marketing version from
 After the build has been processed and validated, push a semantic version tag
 such as `v0.0.1` when you are ready for the separate `release` workflow. That
 workflow rebuilds the tagged commit, builds standalone executables for Linux
-x64, Linux ARM64, macOS ARM64, and macOS x64, and attaches the binaries and
-`SHA256SUMS.txt` to the GitHub Release.
+x64, Linux ARM64, macOS ARM64, and macOS x64, and attaches the binaries,
+`install.sh`, and `SHA256SUMS.txt` to the GitHub Release. The public binary asset
+names are `muximo-linux-x64`, `muximo-linux-arm64`, `muximo-macos-arm64`, and
+`muximo-macos-x64`; the Bun build targets remain implementation details of the
+release workflow.
 
 GitHub generates the Release notes from merged pull requests, contributors, and the full changelog link. Keep pull request titles user-facing so the generated notes remain useful. Tags containing a prerelease suffix such as `-beta.1` are published as prereleases.
 
 The unqualified `muximo` command is reserved for the production standalone binary. It never builds the current checkout or silently selects another source tree. `muximo dev` only delegates to a source checkout when one is available; the standalone binary itself does not bundle Web or Vite.
 
-Install the latest stable release and expose the production command through PATH:
+Install the latest stable release without requiring Bun or Node.js:
+
+```sh
+curl -fsSL https://github.com/yoshizawa56/muximo/releases/latest/download/install.sh | sh
+muximo --help
+```
+
+The shell installer detects the current OS and architecture, downloads the
+matching release asset, verifies `SHA256SUMS.txt`, stores the binary at
+`~/.local/libexec/muximo/muximo`, and updates `~/.local/bin/muximo` atomically.
+It requires `curl` or `wget` and one of `sha256sum`, `shasum`, or `openssl`.
+Override the install paths with `MUXIMO_INSTALL_DIR` and `MUXIMO_BIN_DIR` when
+needed. Set `MUXIMO_RELEASE_TAG` to install a specific release, for example:
+
+```sh
+MUXIMO_RELEASE_TAG=v0.1.0 sh -c "$(curl -fsSL https://github.com/yoshizawa56/muximo/releases/download/v0.1.0/install.sh)"
+```
+
+Users who already manage command-line tools with `mise` can install the same
+GitHub Release assets directly:
+
+```sh
+mise use -g github:yoshizawa56/muximo
+muximo --help
+```
+
+Update a mise-managed installation with `mise upgrade --bump
+github:yoshizawa56/muximo`. Re-run the shell installer to update an installation
+created by `install.sh`.
+
+The Bun-based installer remains available for local production builds and
+environments that already use the repository toolchain:
 
 ```sh
 bun run muximo:install
 muximo --help
 ```
 
-`bun run muximo:install` downloads the latest stable GitHub Release for the current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at `~/.local/libexec/muximo/muximo`, and updates `~/.local/bin/muximo` to point directly to that binary. Override the install paths with `MUXIMO_INSTALL_DIR` and `MUXIMO_BIN_DIR` when needed.
+`bun run muximo:install` downloads the latest stable GitHub Release for the
+current OS/architecture, verifies `SHA256SUMS.txt`, stores the binary at
+`~/.local/libexec/muximo/muximo`, and updates `~/.local/bin/muximo` to point
+directly to that binary. It also supports `--tag`, `--from-build`,
+`MUXIMO_RELEASE_TAG`, `MUXIMO_INSTALL_DIR`, and `MUXIMO_BIN_DIR`.
 
 The default muximod instance directory is `~/.local/state/muximo`; it contains `muximod.sqlite`, `hooks/`, `muximod.sqlite.pid`, and the legacy `muximod.sqlite.control.sock`. Set `MUXIMOD_INSTANCE_DIR` to isolate another instance or worktree profile; configured instance directories use the shorter `muximod.sock` control socket. `MUXIMOD_DB_FILE`, `MUXIMO_HOOK_OUTPUT_DIR`, `MUXIMOD_PID_FILE`, and `MUXIMOD_CONTROL_SOCKET` remain available as legacy or service-manager overrides, but are not needed for normal use. Other overrides are `MUXIMOD_MIGRATIONS_DIR` and `MUXIMO_WORKTREE_ROOT`. Lifecycle state, registered workspace hook paths, and worktree copy patterns are stored only in SQLite; the legacy `.state` file is not read. Hook stdout logs are temporary execution artifacts separate from database state and are deleted after successful session cleanup.
 

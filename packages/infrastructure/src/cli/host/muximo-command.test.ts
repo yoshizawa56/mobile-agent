@@ -23,7 +23,14 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { AgentSessionRecord } from "@muximo/domain";
+import {
+  AgentSession,
+  AgentSessionId,
+  clearPatch,
+  Workspace,
+  WorkspaceId,
+  type AgentSessionRecord,
+} from "@muximo/domain";
 import { createLogger, type LogRecord } from "../../logging/index.js";
 import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "../../persistence/index.js";
 import { MuximoCommand, buildResumeCommand, buildRunCommand } from "./muximo-command.js";
@@ -408,9 +415,9 @@ const extendedFixtureFactories: Readonly<Record<ExtendedFixtureKey, () => Promis
     fixture.shellWorktree = realpathSync(worktreePath);
     writeExecutable(child, "#!/bin/sh\nexit 0\n");
     writeExecutable(shell, "#!/bin/sh\nprintf 'shell cwd=%s session=%s\\n' \"$PWD\" \"${MUXIMOD_WORKTREE_SESSION_NAME:-}\" >>\"$TEST_AGENT_LOG\"\nexit 0\n");
-    await insertSession(fixture, {
+    await insertSession(fixture, AgentSession.create({
       ...sessionFixture("claude"),
-      id: "worktree-session-id",
+      id: AgentSessionId.create("worktree-session-id"),
       name: "review",
       workspaceId: workspaceIdFor(fixture),
       workspaceRoot: realpathSync(fixture.workspace),
@@ -419,7 +426,7 @@ const extendedFixtureFactories: Readonly<Record<ExtendedFixtureKey, () => Promis
       worktreePath: fixture.shellWorktree,
       branch: "muximo/review",
       useWorktree: true,
-    });
+    }));
     fixture.env = { ...fixture.env, MUXIMOD_WORKTREE_SESSION_NAME: "review" };
     fixture.env.MUXIMO_CLAUDE_BIN = child;
     fixture.env.MUXIMOD_SHELL_BIN = shell;
@@ -687,7 +694,7 @@ async function executeRemote(fixture: AgentFixture): Promise<AgentResult> {
   const workspaceId = workspaceIdFor(fixture);
   const stored = await sessions.findByName(workspaceId, "remote");
   if (!stored) throw new Error("test session was not persisted");
-  await sessions.update({ ...stored, backendSessionId: null });
+  await sessions.update(AgentSession.update(stored, { backendSessionId: clearPatch }));
   database.close();
   const resumed = await runCommand(fixture, ["resume", "remote"]);
   fixture.resumeOutput = resumed.output;
@@ -775,7 +782,7 @@ async function runCommand(fixture: AgentFixture, args: string[], environment = f
 
 async function addWorkspaceRecord(fixture: AgentFixture): Promise<void> {
   const database = createAgentDatabase(fixture.database);
-  await new DrizzleWorkspaceRepository(database.db).upsert({ id: workspaceIdFor(fixture), rootPath: realpathSync(fixture.workspace), name: "workspace", isGit: true, setupScriptPath: fixture.setupHook, cleanupScriptPath: fixture.cleanupHook, worktreeCopyPatterns: [".env", "config/**/*.local.json"], createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" });
+  await new DrizzleWorkspaceRepository(database.db).upsert(Workspace.create({ id: workspaceIdFor(fixture), rootPath: realpathSync(fixture.workspace), name: "workspace", isGit: true, setupScriptPath: fixture.setupHook, cleanupScriptPath: fixture.cleanupHook, worktreeCopyPatterns: [".env", "config/**/*.local.json"], createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }));
   database.close();
 }
 
@@ -786,7 +793,7 @@ async function addDiagnosticRollouts(fixture: AgentFixture): Promise<void> {
   fixture.env = { ...fixture.env, CODEX_HOME: codexHome };
   const workspaceRoot = realpathSync(fixture.workspace);
   const createdAt = new Date(Date.now() - 60_000).toISOString();
-  await insertSession(fixture, { ...sessionFixture("codex"), id: "diagnostic-id", name: "diagnostic", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: null, codexRemote: "", codexSessionBaseline: JSON.stringify({ codexSessions: ["baseline-session"] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() });
+  await insertSession(fixture, AgentSession.create({ ...sessionFixture("codex"), id: AgentSessionId.create("diagnostic-id"), name: "diagnostic", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: undefined, codexRemote: undefined, codexSessionBaseline: JSON.stringify({ codexSessions: ["baseline-session"] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() }));
   writeFileSync(join(sessionRoot, "invalid.jsonl"), "not-json\n");
   writeFileSync(join(sessionRoot, "event.jsonl"), `${JSON.stringify({ type: "event" })}\n`);
   writeFileSync(join(sessionRoot, "missing-id.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
@@ -803,7 +810,7 @@ async function addCleanupRollout(fixture: AgentFixture): Promise<void> {
   fixture.env = { ...fixture.env, CODEX_HOME: codexHome };
   const workspaceRoot = realpathSync(fixture.workspace);
   const createdAt = new Date(Date.now() - 60_000).toISOString();
-  await insertSession(fixture, { ...sessionFixture("codex"), id: "cleanup-id", name: "cleanup", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: null, codexRemote: "unix://", codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() });
+  await insertSession(fixture, AgentSession.create({ ...sessionFixture("codex"), id: AgentSessionId.create("cleanup-id"), name: "cleanup", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: undefined, codexRemote: "unix://", codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() }));
   writeFileSync(join(sessionRoot, "rollout.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "cleanup-session", session_id: "cleanup-session", cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
 }
 
@@ -817,7 +824,7 @@ async function addMultipleRollouts(fixture: AgentFixture): Promise<void> {
   const database = createAgentDatabase(fixture.database);
   const sessions = new DrizzleAgentSessionRepository(database.db);
   for (const name of ["first", "second"]) {
-    await sessions.insert({ ...sessionFixture("codex"), id: `${name}-id`, name, workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", useWorktree: false, worktreeRoot: null, worktreePath: null, branch: null, baseCommit: null, setupHook: null, cleanupHook: null, setupOutputFile: null, cleanupOutputFile: null, backendSessionId: null, codexRemote: "", codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() });
+    await sessions.insert(AgentSession.create({ ...sessionFixture("codex"), id: AgentSessionId.create(`${name}-id`), name, workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", useWorktree: false, worktreeRoot: undefined, worktreePath: undefined, branch: undefined, baseCommit: undefined, setupHook: undefined, cleanupHook: undefined, setupOutputFile: undefined, cleanupOutputFile: undefined, backendSessionId: undefined, codexRemote: undefined, codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() }));
     writeFileSync(join(sessionRoot, `${name}.jsonl`), `${JSON.stringify({ type: "session_meta", payload: { id: `${name}-id`, session_id: `${name}-id`, cwd: workspaceRoot, originator: "codex_chatgpt_ios_remote", thread_source: "user" } })}\n`);
   }
   database.close();
@@ -830,8 +837,8 @@ async function addCompetingRollout(fixture: AgentFixture): Promise<void> {
   fixture.env = { ...fixture.env, CODEX_HOME: codexHome };
   const workspaceRoot = realpathSync(fixture.workspace);
   const createdAt = new Date(Date.now() - 60_000).toISOString();
-  await insertSession(fixture, { ...sessionFixture("codex"), id: "target-id", name: "target", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: null, codexRemote: "", codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() });
-  await insertSession(fixture, { ...sessionFixture("codex"), id: "competing-id", name: "competing", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: null, codexRemote: "", codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() });
+  await insertSession(fixture, AgentSession.create({ ...sessionFixture("codex"), id: AgentSessionId.create("target-id"), name: "target", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: undefined, codexRemote: undefined, codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() }));
+  await insertSession(fixture, AgentSession.create({ ...sessionFixture("codex"), id: AgentSessionId.create("competing-id"), name: "competing", workspaceId: workspaceIdFor(fixture), workspaceRoot, workspaceName: "workspace", backendSessionId: undefined, codexRemote: undefined, codexSessionBaseline: JSON.stringify({ codexSessions: [] }), createdAt, updatedAt: new Date(Date.now() + 5_000).toISOString() }));
   writeFileSync(join(sessionRoot, "rollout.jsonl"), `${JSON.stringify({ type: "session_meta", payload: { id: "competing-session", session_id: "competing-session", cwd: workspaceRoot, originator: "codex-tui", thread_source: "user" } })}\n`);
 }
 
@@ -846,20 +853,20 @@ async function seedSessionRecords(fixture: AgentFixture, names: readonly string[
   const database = createAgentDatabase(fixture.database);
   const sessions = new DrizzleAgentSessionRepository(database.db);
   for (const [index, name] of names.entries()) {
-    await sessions.insert({
+    await sessions.insert(AgentSession.validate({
       ...sessionFixture("claude"),
-      id: `legacy-session-${index}`,
+      id: AgentSessionId.create(`legacy-session-${index}`),
       name,
       workspaceId,
       workspaceRoot: realpathSync(fixture.workspace),
       workspaceName: "workspace",
-    });
+    }));
   }
   database.close();
   return workspaceId;
 }
 
-async function storedSessionNames(fixture: AgentFixture, workspaceId: string): Promise<string[]> {
+async function storedSessionNames(fixture: AgentFixture, workspaceId: WorkspaceId): Promise<string[]> {
   const database = createAgentDatabase(fixture.database);
   const sessions = await new DrizzleAgentSessionRepository(database.db).list(workspaceId);
   database.close();
@@ -873,7 +880,7 @@ async function readBackendSessionId(fixture: AgentFixture): Promise<string | nul
   return value?.backendSessionId ?? null;
 }
 
-function workspaceIdFor(fixture: AgentFixture): string { return createHash("sha256").update(realpathSync(fixture.workspace)).digest("hex").slice(0, 16); }
+function workspaceIdFor(fixture: AgentFixture): WorkspaceId { return WorkspaceId.create(createHash("sha256").update(realpathSync(fixture.workspace)).digest("hex").slice(0, 16)); }
 
 function createFixture(extraEnv: Record<string, string> = {}): AgentFixture {
   const root = mkdtempSync(join(tmpdir(), "muximo-cli-test-"));
@@ -946,5 +953,21 @@ class RecordingTmuxAdapter extends TmuxAdapter {
 function captureOutput(): Writable & { value: () => string } { let value = ""; const output = new Writable({ write(chunk, _encoding, callback) { value += chunk.toString(); callback(); } }) as Writable & { value: () => string }; output.value = () => value; return output; }
 
 function sessionFixture(backend: "codex" | "claude", codexProfile: string | null = null): AgentSessionRecord {
-  return { id: "session-id", name: "review", backend, status: "running", workspaceId: "workspace-id", workspaceRoot: "/workspace", workspaceName: "workspace", worktreeRoot: null, worktreePath: null, branch: null, baseCommit: null, useWorktree: false, setupHook: null, cleanupHook: null, setupOutputFile: null, cleanupOutputFile: null, backendSessionId: backend === "codex" ? "codex-session" : "claude-session", codexProfile: backend === "codex" ? codexProfile : null, codexRemote: backend === "codex" ? "unix://" : null, setupRan: false, resuming: false, baselineStatus: null, codexSessionBaseline: null, lastExitStatus: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+  return AgentSession.create({
+    id: AgentSessionId.create("session-id"),
+    name: "review",
+    backend,
+    status: "running",
+    workspaceId: WorkspaceId.create("workspace-id"),
+    workspaceRoot: "/workspace",
+    workspaceName: "workspace",
+    useWorktree: false,
+    backendSessionId: backend === "codex" ? "codex-session" : "claude-session",
+    ...(backend === "codex" && codexProfile !== null ? { codexProfile } : {}),
+    ...(backend === "codex" ? { codexRemote: "unix://" } : {}),
+    setupRan: false,
+    resuming: false,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
 }

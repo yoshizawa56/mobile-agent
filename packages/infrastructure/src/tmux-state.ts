@@ -1,3 +1,4 @@
+import type { PaneId } from "@muximo/domain";
 import type { TmuxLiveSnapshot, TmuxPane } from "./tmux.js";
 
 export type TmuxPaneChangeReason = "pane_created" | "pane_deleted" | "pane_changed";
@@ -8,7 +9,7 @@ export type TmuxPaneChange = {
 };
 
 export type TmuxSynchronization = {
-  activePaneIds: readonly string[];
+  activePaneIds: readonly PaneId[];
   /** Live state emitted by the provider while synchronizing the pane projection. */
   paneStates?: ReadonlyMap<string, string>;
   /** Live provider output tails used to invalidate clients when they change. */
@@ -17,8 +18,8 @@ export type TmuxSynchronization = {
 
 export type TmuxStateMonitorOptions = {
   readPanes: () => TmuxLiveSnapshot;
-  synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly string[] | TmuxSynchronization>;
-  cleanup?: (activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string) => Promise<void>;
+  synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly PaneId[] | TmuxSynchronization>;
+  cleanup?: (activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string) => Promise<void>;
   onChange: (changes: TmuxPaneChange[]) => void;
   intervalMs?: number;
   cleanupIntervalMs?: number;
@@ -101,7 +102,7 @@ export class TmuxStateMonitor {
     }
   }
 
-  private async cleanupIfDue(live: TmuxLiveSnapshot, activePaneIds: readonly string[]): Promise<void> {
+  private async cleanupIfDue(live: TmuxLiveSnapshot, activePaneIds: readonly PaneId[]): Promise<void> {
     if (!this.options.cleanup || !live.available || !live.tmuxServerId || !live.tmuxServerScope || live.panes.length === 0 || activePaneIds.length === 0) return;
 
     const now = this.now();

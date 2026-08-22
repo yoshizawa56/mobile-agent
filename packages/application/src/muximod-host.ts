@@ -1,4 +1,4 @@
-import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceRecord } from "@muximo/domain";
+import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
 import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "./muximod-models.js";
 import type { WorkspaceDirectoryPort } from "./workspace.js";
 
@@ -70,8 +70,8 @@ export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {
   toDirectoryOption(workspace: WorkspaceRecord): MuximodWorkspaceDirectory;
   browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
   resolveLegacyDirectory(directory: string): Promise<string>;
-  resolveWorkspaceDirectory(workspaceId: string, findWorkspace: (id: string) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
-  resolveSelection(selection: { workspaceId: string; mode: "workspace" | "worktree" }, findWorkspace: (id: string) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
+  resolveWorkspaceDirectory(workspaceId: WorkspaceId, findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
+  resolveSelection(selection: { workspaceId: WorkspaceId; mode: "workspace" | "worktree" }, findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
 }
 
 export type AgentExecutionObservation = Pick<AgentSessionRecord, "status" | "executionPid"> & {

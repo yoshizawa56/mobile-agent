@@ -25,7 +25,7 @@ for (const workspaceRoot of workspaceRoots) {
 }
 
 const packageRules = new Map([
-  ["@muximo/api", []],
+  ["@muximo/api", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
   ["@muximo/infrastructure", ["@muximo/api", "@muximo/application", "@muximo/domain"]],
@@ -38,7 +38,7 @@ const packageRules = new Map([
 const forbiddenImports = [
   {
     root: "packages/api/src",
-    packages: /^@muximo\//,
+    packages: /^@muximo\/(?:application|infrastructure|web)/,
     runtimes: /^(?:node|bun):/,
   },
   {

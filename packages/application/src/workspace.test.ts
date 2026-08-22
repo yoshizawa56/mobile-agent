@@ -1,3 +1,4 @@
+import { WorkspaceId } from "@muximo/domain";
 import type { WorkspaceRecord } from "@muximo/domain";
 import { describe, it } from "vitest";
 import {
@@ -138,7 +139,7 @@ class FakeWorkspaceRepository implements WorkspaceRepository {
 class FakeWorkspaceDirectory implements WorkspaceDirectoryPort {
   public resolveDirectory(directory: string) {
     return {
-      id: "workspace-1",
+      id: WorkspaceId.create("workspace-1"),
       rootPath: directory === "project" ? "/work/project" : directory,
       name: "project",
       isGit: true,

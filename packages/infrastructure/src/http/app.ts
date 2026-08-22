@@ -12,12 +12,14 @@ import type {
   UpdateWorkspaceCommand,
 } from "@muximo/application";
 import type { MuximodAuthContext } from "@muximo/application";
+import { clearPatch, type Patch } from "@muximo/domain";
 import {
   authInfoSchema,
   muximodCapabilitiesSchema,
   muximodHealthSchema,
   pairingClaimRequestSchema,
   pairingStatusSchema,
+  paneSummarySchema,
   type CreatePaneRequest,
   type RegisterWorkspaceRequest,
   type UpdateWorkspaceRequest,
@@ -379,8 +381,8 @@ function toApplicationRegisterWorkspace(input: RegisterWorkspaceRequest): Regist
   return {
     directory: input.directory,
     ...(input.name === undefined ? {} : { name: input.name }),
-    ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: input.setupScriptPath }),
-    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: input.cleanupScriptPath }),
+    ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: toApplicationPatch(input.setupScriptPath) }),
+    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
     ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
   };
 }
@@ -388,8 +390,8 @@ function toApplicationRegisterWorkspace(input: RegisterWorkspaceRequest): Regist
 function toApplicationUpdateWorkspace(input: UpdateWorkspaceRequest): UpdateWorkspaceCommand {
   return {
     ...(input.name === undefined ? {} : { name: input.name }),
-    ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: input.setupScriptPath }),
-    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: input.cleanupScriptPath }),
+    ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: toApplicationPatch(input.setupScriptPath) }),
+    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
     ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
     ...(input.appendWorktreeCopyPatterns === undefined ? {} : { appendWorktreeCopyPatterns: input.appendWorktreeCopyPatterns }),
     ...(input.clearWorktreeCopyPatterns === undefined ? {} : { clearWorktreeCopyPatterns: input.clearWorktreeCopyPatterns }),
@@ -409,7 +411,34 @@ function toProtocolSession(value: MuximodSessionSummary) {
 }
 
 function toProtocolPane(value: MuximodPaneSummary) {
-  return { ...value };
+  return paneSummarySchema.parse({
+    id: value.id,
+    tmuxPaneId: value.tmuxPaneId,
+    sessionName: value.sessionName,
+    windowId: value.windowId,
+    kind: value.kind,
+    name: value.name,
+    cwd: value.cwd,
+    workspaceId: value.workspaceId ?? null,
+    agentId: value.agentId ?? null,
+    state: value.state,
+    title: value.title ?? null,
+    ...(value.recentOutput === undefined ? {} : { recentOutput: value.recentOutput }),
+    lastSeenAt: value.lastSeenAt,
+    ...(value.windowName === undefined ? {} : { windowName: value.windowName }),
+    ...(value.windowIndex === undefined ? {} : { windowIndex: value.windowIndex }),
+    ...(value.paneIndex === undefined ? {} : { paneIndex: value.paneIndex }),
+    ...(value.left === undefined ? {} : { left: value.left }),
+    ...(value.top === undefined ? {} : { top: value.top }),
+    ...(value.width === undefined ? {} : { width: value.width }),
+    ...(value.height === undefined ? {} : { height: value.height }),
+    ...(value.windowWidth === undefined ? {} : { windowWidth: value.windowWidth }),
+    ...(value.windowHeight === undefined ? {} : { windowHeight: value.windowHeight }),
+  });
+}
+
+function toApplicationPatch(value: string | null | undefined): Patch<string> {
+  return value === null ? clearPatch : value;
 }
 
 function mapError(error: unknown): MuximodHttpError {

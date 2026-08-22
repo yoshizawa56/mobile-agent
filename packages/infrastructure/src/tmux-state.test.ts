@@ -1,4 +1,5 @@
 import { describe, it } from "vitest";
+import { PaneId } from "@muximo/domain";
 import {
   hasObserved,
   runScenarioTable,
@@ -72,7 +73,7 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
     const monitor = new TmuxStateMonitor({
       readPanes: () => fixture.available ? liveSnapshot(fixture.panes) : { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null },
       synchronize: async (snapshot) => ({
-        activePaneIds: snapshot.panes.map((pane) => pane.paneId),
+        activePaneIds: snapshot.panes.map((pane) => PaneId.create(pane.paneId)),
         paneStates: new Map(snapshot.panes.map((pane) => [pane.paneId, fixture.paneStates.get(pane.paneId) ?? "running"])),
         paneRecentOutputs: new Map(snapshot.panes.map((pane) => [pane.paneId, fixture.paneRecentOutputs.get(pane.paneId)])),
       }),

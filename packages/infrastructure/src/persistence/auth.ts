@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { AuthStoreError, type AuthDeviceRecord, type AuthPairingRecord, type AuthSessionRecord, type AuthStorePort, type AuthDeviceType, type ClaimPairingInput, type ClaimPairingResult, type CreatePairingInput, type CreatePairingResult, type AuthPairingStatus, type AuthDeviceStatus } from "@muximo/application";
+import { runSqliteTransaction } from "./transaction.js";
 
 export type {
   AuthDeviceRecord,
@@ -24,12 +25,12 @@ export class AuthStore implements AuthStorePort {
 
     const serverId = randomOpaque(16);
     const now = timestamp();
-    this.sqlite.transaction(() => {
+    runSqliteTransaction(this.sqlite, () => {
       const current = this.sqlite.prepare("SELECT server_id AS serverId FROM auth_metadata WHERE id = 1").get() as { serverId?: string } | null;
       if (!current?.serverId) {
         this.sqlite.prepare("INSERT INTO auth_metadata (id, server_id, created_at) VALUES (1, ?, ?)").run(serverId, now);
       }
-    }).immediate();
+    });
 
     const row = this.sqlite.prepare("SELECT server_id AS serverId FROM auth_metadata WHERE id = 1").get() as { serverId?: string } | null;
     if (!row?.serverId) throw new AuthStoreError("auth_metadata_missing", "muximod authentication metadata could not be initialized");
@@ -80,7 +81,7 @@ export class AuthStore implements AuthStorePort {
   }
 
   public claimPairing(input: ClaimPairingInput): ClaimPairingResult {
-    const claim = this.sqlite.transaction(() => {
+    const claim = runSqliteTransaction(this.sqlite, () => {
       const row = this.sqlite.prepare("SELECT * FROM auth_pairings WHERE pairing_id = ?").get(input.pairingId) as AuthPairingRow | null;
       if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
       const pairing = toPairingRecord(row);
@@ -115,7 +116,7 @@ export class AuthStore implements AuthStorePort {
       const updated = this.sqlite.prepare("SELECT * FROM auth_pairings WHERE pairing_id = ?").get(input.pairingId) as AuthPairingRow | null;
       if (!updated || updated.status !== "awaiting_approval") throw new AuthStoreError("pairing_race", "pairing was claimed by another client");
       return toPairingRecord(updated);
-    }).immediate();
+    });
 
     return { pairing: claim, claimToken: input.claimToken };
   }
@@ -132,7 +133,7 @@ export class AuthStore implements AuthStorePort {
   }
 
   public approvePairing(pairingId: string): AuthDeviceRecord {
-    const device = this.sqlite.transaction(() => {
+    const device = runSqliteTransaction(this.sqlite, () => {
       const row = this.sqlite.prepare("SELECT * FROM auth_pairings WHERE pairing_id = ?").get(pairingId) as AuthPairingRow | null;
       if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
       const pairing = toPairingRecord(row);
@@ -167,7 +168,7 @@ export class AuthStore implements AuthStorePort {
       const inserted = this.sqlite.prepare("SELECT * FROM auth_devices WHERE device_id = ?").get(deviceId) as AuthDeviceRow | null;
       if (!inserted) throw new AuthStoreError("device_registration_failed", "device registration failed");
       return toDeviceRecord(inserted);
-    }).immediate();
+    });
     return device;
   }
 
@@ -241,10 +242,10 @@ export class AuthStore implements AuthStorePort {
 
   public revokeDevice(deviceId: string): void {
     const now = timestamp();
-    this.sqlite.transaction(() => {
+    runSqliteTransaction(this.sqlite, () => {
       this.sqlite.prepare("UPDATE auth_devices SET status = 'revoked', revoked_at = ? WHERE device_id = ? AND status = 'active'").run(now, deviceId);
       this.sqlite.prepare("UPDATE auth_sessions SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL").run(now, deviceId);
-    }).immediate();
+    });
   }
 
   public listDevices(): AuthDeviceRecord[] {

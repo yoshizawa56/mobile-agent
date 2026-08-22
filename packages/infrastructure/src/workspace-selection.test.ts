@@ -18,7 +18,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { WorkspaceRecord } from "@muximo/domain";
+import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
 import { AllowedRootPolicy, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./workspace-selection.js";
 
 type EmptyContext = {};
@@ -158,21 +158,20 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
       }
       if (step.type === "register") {
         const resolved = fixture.catalog.resolveDirectory(fixture.repository);
-        fixture.registered = {
+        fixture.registered = Workspace.create({
           ...resolved,
           setupScriptPath: fixture.catalog.resolveHook(fixture.setup, resolved.rootPath),
-          cleanupScriptPath: null,
           worktreeCopyPatterns: [".env", "config/**/*.local.json"],
           createdAt: "2026-08-10T00:00:00.000Z",
           updatedAt: "2026-08-10T00:00:00.000Z",
-        };
+        });
       }
       if (step.type === "resolve") {
         const registered = fixture.registered!;
         const resolved = await fixture.catalog.resolveSelection({ workspaceId: registered.id, mode: "worktree" }, async () => registered);
         fixture.resolvedId = resolved.id === registered.id ? "registered" : resolved.id;
       }
-      if (step.type === "resolve-missing") await fixture.catalog.resolveSelection({ workspaceId: "missing", mode: "workspace" }, async () => undefined);
+      if (step.type === "resolve-missing") await fixture.catalog.resolveSelection({ workspaceId: WorkspaceId.create("missing"), mode: "workspace" }, async () => undefined);
       if (step.type === "invalid-hook") {
         const hook = join(fixture.root, "not-executable");
         writeFileSync(hook, "#!/bin/sh\n");
@@ -190,15 +189,13 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
 
 function createRecord(fixture: CatalogFixture, overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
   const resolved = fixture.catalog.resolveDirectory(fixture.repository);
-  return {
+  return Workspace.create({
     ...resolved,
-    setupScriptPath: null,
-    cleanupScriptPath: null,
     worktreeCopyPatterns: [],
     createdAt: "2026-08-10T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
     ...overrides,
-  };
+  });
 }
 
 describe("workspace selection", () => {

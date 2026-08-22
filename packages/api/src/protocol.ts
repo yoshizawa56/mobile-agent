@@ -1,4 +1,13 @@
 import { z } from "zod";
+import {
+  Pane,
+  PaneId,
+  Workspace,
+  WorkspaceId,
+  agentBackendSchema,
+  paneKindSchema,
+  paneStateSchema,
+} from "@muximo/domain";
 
 export const protocolVersion = 1 as const;
 export const terminalProtocolVersion = protocolVersion;
@@ -251,14 +260,22 @@ export type MuximodEvent = z.infer<typeof muximodEventSchema>;
 export const workspaceSelectionModeSchema = z.enum(["workspace", "worktree"]);
 export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema>;
 
+const workspaceScriptPathSchema = Workspace.schema.shape.setupScriptPath.unwrap();
+const workspaceScriptPatchSchema = workspaceScriptPathSchema.trim().min(1).max(4_096).nullable().optional();
+const workspaceNameInputSchema = Workspace.schema.shape.name.trim().min(1).optional();
+const worktreeCopyPatternSchema = Workspace.schema.shape.worktreeCopyPatterns.element;
+const worktreeCopyPatternsInputSchema = z.array(worktreeCopyPatternSchema).max(100).optional();
+const workspaceIdWireSchema = WorkspaceId.valueSchema;
+const paneIdWireSchema = PaneId.valueSchema;
+
 export const workspaceDirectorySchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  directory: z.string().min(1),
-  isGit: z.boolean(),
-  setupScriptPath: z.string().min(1).nullable(),
-  cleanupScriptPath: z.string().min(1).nullable(),
-  worktreeCopyPatterns: z.array(z.string().min(1).max(4_096)).max(100).default([]),
+  id: workspaceIdWireSchema,
+  name: Workspace.schema.shape.name,
+  directory: Workspace.schema.shape.rootPath,
+  isGit: Workspace.schema.shape.isGit,
+  setupScriptPath: workspaceScriptPathSchema.nullable(),
+  cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().nullable(),
+  worktreeCopyPatterns: Workspace.schema.shape.worktreeCopyPatterns,
 });
 export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
 
@@ -268,19 +285,19 @@ export const workspaceBrowseResponseSchema = z.object({ directories: z.array(wor
 
 export const registerWorkspaceRequestSchema = z.object({
   directory: z.string().trim().min(1).max(4_096),
-  name: z.string().trim().min(1).max(120).optional(),
-  setupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
-  cleanupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
-  worktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
+  name: workspaceNameInputSchema,
+  setupScriptPath: workspaceScriptPatchSchema,
+  cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
+  worktreeCopyPatterns: worktreeCopyPatternsInputSchema,
 });
 export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
 
 export const updateWorkspaceRequestSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  setupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
-  cleanupScriptPath: z.string().trim().min(1).max(4_096).nullable().optional(),
-  worktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
-  appendWorktreeCopyPatterns: z.array(z.string().trim().min(1).max(4_096)).max(100).optional(),
+  name: workspaceNameInputSchema,
+  setupScriptPath: workspaceScriptPatchSchema,
+  cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
+  worktreeCopyPatterns: worktreeCopyPatternsInputSchema,
+  appendWorktreeCopyPatterns: worktreeCopyPatternsInputSchema,
   clearWorktreeCopyPatterns: z.boolean().optional(),
 }).strict();
 export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema>;
@@ -288,7 +305,7 @@ export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema
 export const workspaceResponseSchema = z.object({ workspace: workspaceDirectorySchema });
 
 export const workspaceSelectionSchema = z.object({
-  workspaceId: z.string().trim().min(1).max(256),
+  workspaceId: workspaceIdWireSchema,
   mode: workspaceSelectionModeSchema,
 });
 export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
@@ -353,34 +370,34 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
 export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
 
 export const paneSummarySchema = z.object({
-  id: z.string(),
-  tmuxPaneId: z.string(),
-  sessionName: z.string(),
-  windowId: z.string(),
-  kind: z.enum(["agent", "shell", "unknown"]),
-  name: z.string(),
-  cwd: z.string(),
-  workspaceId: z.string().nullable(),
-  agentId: z.string().nullable(),
-  state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
-  title: z.string().nullable(),
+  id: paneIdWireSchema,
+  tmuxPaneId: Pane.schema.shape.tmuxPaneId,
+  sessionName: Pane.schema.shape.sessionName,
+  windowId: Pane.schema.shape.windowId,
+  kind: paneKindSchema,
+  name: Pane.schema.shape.name,
+  cwd: Pane.schema.shape.cwd,
+  workspaceId: workspaceIdWireSchema.nullable(),
+  agentId: Pane.schema.shape.agentId.unwrap().nullable(),
+  state: paneStateSchema,
+  title: Pane.schema.shape.title.unwrap().nullable(),
   // Live-only output tail. It is intentionally bounded and omitted from
   // persisted pane rows so the pane list remains a small status projection.
-  recentOutput: z.string().max(2_000).optional(),
-  lastSeenAt: z.string(),
+  recentOutput: Pane.schema.shape.recentOutput.unwrap().max(2_000).optional(),
+  lastSeenAt: Pane.schema.shape.lastSeenAt,
   // Present for live tmux snapshots. Older persisted rows may omit geometry;
   // the client falls back to a readable stacked layout in that case.
-  windowName: z.string().optional(),
-  windowIndex: z.number().int().min(0).optional(),
+  windowName: Pane.schema.shape.windowName,
+  windowIndex: Pane.schema.shape.windowIndex,
   // Pane indexes are scoped to a tmux window and are distinct from tmuxPaneId
   // (the server-wide target such as %32).
-  paneIndex: z.number().int().min(0).optional(),
-  left: z.number().int().min(0).optional(),
-  top: z.number().int().min(0).optional(),
-  width: z.number().int().min(1).optional(),
-  height: z.number().int().min(1).optional(),
-  windowWidth: z.number().int().min(1).optional(),
-  windowHeight: z.number().int().min(1).optional(),
+  paneIndex: Pane.schema.shape.paneIndex,
+  left: Pane.schema.shape.left,
+  top: Pane.schema.shape.top,
+  width: Pane.schema.shape.width,
+  height: Pane.schema.shape.height,
+  windowWidth: Pane.schema.shape.windowWidth,
+  windowHeight: Pane.schema.shape.windowHeight,
 });
 
 export const paneListResponseSchema = z.object({ panes: z.array(paneSummarySchema) });
@@ -396,8 +413,8 @@ export const createPaneRequestSchema = z.object({
   // cwd remains readable for older clients and is used only as a new-window
   // initial directory. Split panes always inherit the target pane cwd.
   cwd: z.string().trim().min(1).max(4_096).optional(),
-  workspaceId: z.string().trim().min(1).max(256).optional(),
-  agentId: z.enum(["codex", "claude", "opencode"]).nullable(),
+  workspaceId: workspaceIdWireSchema.optional(),
+  agentId: agentBackendSchema.nullable(),
   useWorktree: z.boolean(),
   placement: panePlacementSchema,
   targetPaneId: z.string().trim().min(1).max(64).nullable(),
@@ -456,7 +473,7 @@ export const createSessionRequestSchema = z.object({
   // cwd is accepted only as a compatibility input. The web flow always sends
   // workspaceId, which is resolved on the host before tmux is touched.
   cwd: z.string().trim().min(1).max(4_096).optional(),
-  workspaceId: z.string().trim().min(1).max(256).optional(),
+  workspaceId: workspaceIdWireSchema.optional(),
 }).superRefine((value, context) => {
   if (!value.cwd && !value.workspaceId) {
     context.addIssue({ code: "custom", path: ["workspaceId"], message: "workspaceId or cwd is required" });

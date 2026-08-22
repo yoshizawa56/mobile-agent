@@ -81,6 +81,7 @@
       "name": "@muximo/api",
       "version": "0.1.0",
       "dependencies": {
+        "@muximo/domain": "workspace:*",
         "@orpc/contract": "^1.15.0",
         "zod": "^4.4.3",
       },
@@ -105,6 +106,9 @@
     "packages/domain": {
       "name": "@muximo/domain",
       "version": "0.1.0",
+      "dependencies": {
+        "zod": "^4.4.3",
+      },
       "devDependencies": {
         "@muximo/test-support": "workspace:*",
         "typescript": "^7.0.2",

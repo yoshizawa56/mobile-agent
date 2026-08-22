@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import type { MuximodApplication } from "@muximo/application";
 import { createHttpTestClient } from "./test-client.js";
 import {
@@ -47,6 +48,15 @@ const workspace = {
   cleanupScriptPath: null,
   worktreeCopyPatterns: [],
 };
+const workspaceRecord = Workspace.create({
+  id: WorkspaceId.create(workspace.id),
+  rootPath: workspace.directory,
+  name: workspace.name,
+  isGit: workspace.isGit,
+  worktreeCopyPatterns: workspace.worktreeCopyPatterns,
+  createdAt: "2026-08-15T00:00:00.000Z",
+  updatedAt: "2026-08-15T00:00:00.000Z",
+});
 const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
 
 type AppFixture = {
@@ -237,8 +247,8 @@ function createTestApplication(events: Array<{ event: string; client: string }>)
       register: async () => workspace,
       update: async () => workspace,
       delete: async () => undefined,
-      resolveDirectory: async () => ({ id: workspace.id, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z" }),
-      resolveSelection: async () => ({ id: workspace.id, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-15T00:00:00.000Z", updatedAt: "2026-08-15T00:00:00.000Z" }),
+      resolveDirectory: async () => workspaceRecord,
+      resolveSelection: async () => workspaceRecord,
     },
     sessions: { list: async () => [session], create: async () => session },
     panes: { list: async () => [], create: async () => { throw new Error("not used"); } },

@@ -1,8 +1,10 @@
 import type {
+  AgentSessionId,
   AgentSessionRecord,
   PaneId,
   PaneRecord,
   PaneState,
+  WorkspaceId,
   WorkspaceRecord,
 } from "@muximo/domain";
 
@@ -103,6 +105,7 @@ export {
   type WorkspaceDirectoryInfo,
   type WorkspaceDirectoryPort,
 } from "./workspace.js";
+export type { TransactionManager } from "./transactions.js";
 
 export type PaneFilter = {
   state?: PaneState;
@@ -120,22 +123,22 @@ export interface PaneRepository {
 }
 
 export interface WorkspaceRepository {
-  findById(id: string): Promise<WorkspaceRecord | undefined>;
+  findById(id: WorkspaceId): Promise<WorkspaceRecord | undefined>;
   list(): Promise<WorkspaceRecord[]>;
   insert(record: WorkspaceRecord): Promise<boolean>;
   upsert(record: WorkspaceRecord): Promise<void>;
-  delete(id: string): Promise<void>;
+  delete(id: WorkspaceId): Promise<void>;
 }
 
 export interface AgentSessionRepository {
-  findById(id: string): Promise<AgentSessionRecord | undefined>;
-  findByName(workspaceId: string, name: string): Promise<AgentSessionRecord | undefined>;
-  list(workspaceId?: string): Promise<AgentSessionRecord[]>;
+  findById(id: AgentSessionId): Promise<AgentSessionRecord | undefined>;
+  findByName(workspaceId: WorkspaceId, name: string): Promise<AgentSessionRecord | undefined>;
+  list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]>;
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
-  claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean>;
-  setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean>;
-  delete(id: string): Promise<void>;
+  claimExecution(id: AgentSessionId, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean>;
+  setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean>;
+  delete(id: AgentSessionId): Promise<void>;
 }
 
 export interface PaneGateway {

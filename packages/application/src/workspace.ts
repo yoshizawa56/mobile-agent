@@ -1,9 +1,16 @@
-import type { WorkspaceRecord } from "@muximo/domain";
-import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, worktreeCopyPatternLimits } from "@muximo/domain";
+import {
+  clearPatch,
+  Workspace,
+  WorkspaceUpdateEmptyError,
+  type Patch,
+  type WorkspaceRecord,
+} from "@muximo/domain";
+import type { WorkspaceId as WorkspaceIdType } from "@muximo/domain";
 import type { WorkspaceRepository } from "./index.js";
+import type { TransactionManager } from "./transactions.js";
 
 export type WorkspaceDirectoryInfo = {
-  id: string;
+  id: WorkspaceIdType;
   rootPath: string;
   name: string;
   isGit: boolean;
@@ -26,15 +33,15 @@ export interface WorkspaceAuditPort {
 export type RegisterWorkspaceInput = {
   directory: string;
   name?: string;
-  setupHook?: string | null;
-  cleanupHook?: string | null;
+  setupHook?: Patch<string>;
+  cleanupHook?: Patch<string>;
   worktreeCopyPatterns?: readonly string[];
 };
 
 export type UpdateWorkspaceInput = {
   name?: string;
-  setupHook?: string | null;
-  cleanupHook?: string | null;
+  setupHook?: Patch<string>;
+  cleanupHook?: Patch<string>;
   worktreeCopyPatterns?: readonly string[];
   appendCopyPatterns?: readonly string[];
   clearCopyPatterns?: boolean;
@@ -69,26 +76,7 @@ export class WorkspaceNotFoundError extends WorkspaceUseCaseError {
   }
 }
 
-export class WorkspaceUpdateEmptyError extends WorkspaceUseCaseError {
-  public constructor() {
-    super("workspace_update_empty", "workspace update requires at least one field to change");
-    this.name = "WorkspaceUpdateEmptyError";
-  }
-}
-
-export class InvalidWorkspaceNameError extends WorkspaceUseCaseError {
-  public constructor(name: string) {
-    super("invalid_workspace_name", invalidWorkspaceNameMessage(name), { name });
-    this.name = "InvalidWorkspaceNameError";
-  }
-}
-
-export class InvalidWorkspaceCopyPatternError extends WorkspaceUseCaseError {
-  public constructor(pattern: string) {
-    super("invalid_copy_pattern", `invalid worktree copy pattern: ${pattern}`, { pattern });
-    this.name = "InvalidWorkspaceCopyPatternError";
-  }
-}
+export { InvalidWorkspaceCopyPatternError, InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 
 export class WorkspaceRecordFactory {
   public constructor(
@@ -99,53 +87,44 @@ export class WorkspaceRecordFactory {
   public async create(input: RegisterWorkspaceInput, existing?: WorkspaceRecord): Promise<WorkspaceRecord> {
     const directory = await this.directories.resolveDirectory(input.directory);
     const now = this.now();
-    const setupScriptPath = input.setupHook === undefined
-      ? existing?.setupScriptPath ?? null
-      : input.setupHook === null ? null : await this.directories.resolveHook(input.setupHook, directory.rootPath);
-    const cleanupScriptPath = input.cleanupHook === undefined
-      ? existing?.cleanupScriptPath ?? null
-      : input.cleanupHook === null ? null : await this.directories.resolveHook(input.cleanupHook, directory.rootPath);
-
-    return {
+    const setupScriptPath = await this.resolveCreateHook(input.setupHook, directory.rootPath);
+    const cleanupScriptPath = await this.resolveCreateHook(input.cleanupHook, directory.rootPath);
+    return Workspace.create({
       id: directory.id,
       rootPath: directory.rootPath,
-      name: input.name === undefined ? existing?.name ?? directory.name : validateWorkspaceName(input.name),
+      name: input.name ?? existing?.name ?? directory.name,
       isGit: directory.isGit,
-      setupScriptPath,
-      cleanupScriptPath,
-      worktreeCopyPatterns: validateWorktreeCopyPatterns(input.worktreeCopyPatterns ?? existing?.worktreeCopyPatterns ?? []),
+      ...(setupScriptPath !== undefined ? { setupScriptPath } : {}),
+      ...(cleanupScriptPath !== undefined ? { cleanupScriptPath } : {}),
+      worktreeCopyPatterns: input.worktreeCopyPatterns ?? existing?.worktreeCopyPatterns ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    };
+    });
   }
 
   public async update(existing: WorkspaceRecord, input: UpdateWorkspaceInput): Promise<WorkspaceRecord> {
-    const setupScriptPath = input.setupHook === undefined
-      ? existing.setupScriptPath
-      : input.setupHook === null ? null : await this.directories.resolveHook(input.setupHook, existing.rootPath);
-    const cleanupScriptPath = input.cleanupHook === undefined
-      ? existing.cleanupScriptPath
-      : input.cleanupHook === null ? null : await this.directories.resolveHook(input.cleanupHook, existing.rootPath);
+    const setupHook = await this.resolveHookPatch(input.setupHook, existing.rootPath);
+    const cleanupHook = await this.resolveHookPatch(input.cleanupHook, existing.rootPath);
+    return Workspace.update(existing, {
+      name: input.name,
+      setupScriptPath: setupHook,
+      cleanupScriptPath: cleanupHook,
+      worktreeCopyPatterns: input.worktreeCopyPatterns,
+      appendWorktreeCopyPatterns: input.appendCopyPatterns,
+      clearWorktreeCopyPatterns: input.clearCopyPatterns,
+    });
+  }
 
-    let patterns = input.worktreeCopyPatterns === undefined
-      ? [...existing.worktreeCopyPatterns]
-      : [...input.worktreeCopyPatterns];
-    if (input.clearCopyPatterns) {
-      if (input.worktreeCopyPatterns !== undefined) {
-        throw new WorkspaceUseCaseError("workspace_copy_pattern_conflict", "cannot clear and replace worktree copy patterns in the same update");
-      }
-      patterns = [];
-    }
-    patterns = normalizeWorktreeCopyPatterns([...patterns, ...(input.appendCopyPatterns ?? [])]);
+  private async resolveCreateHook(input: Patch<string>, rootPath: string): Promise<string | undefined> {
+    if (typeof input !== "string") return undefined;
+    return this.directories.resolveHook(input, rootPath);
+  }
 
-    return {
-      ...existing,
-      name: input.name === undefined ? existing.name : validateWorkspaceName(input.name),
-      setupScriptPath,
-      cleanupScriptPath,
-      worktreeCopyPatterns: validateWorktreeCopyPatterns(patterns),
-      updatedAt: this.now(),
-    };
+  private async resolveHookPatch(input: Patch<string>, rootPath: string): Promise<Patch<string>> {
+    if (input === undefined) return undefined;
+    if (input === clearPatch) return clearPatch;
+    if (typeof input === "string") return this.directories.resolveHook(input, rootPath);
+    return undefined;
   }
 }
 
@@ -162,24 +141,27 @@ export class RegisterWorkspace {
     private readonly workspaces: WorkspaceRepository,
     private readonly factory: WorkspaceRecordFactory,
     private readonly audit?: WorkspaceAuditPort,
+    private readonly transactionManager?: TransactionManager,
   ) {}
 
   public async execute(input: RegisterWorkspaceInput): Promise<WorkspaceRecord> {
     const candidate = await this.factory.create(input);
-    if (!(await this.workspaces.insert(candidate))) {
-      throw new WorkspaceAlreadyRegisteredError({
-        id: candidate.id,
-        rootPath: candidate.rootPath,
+    return withTransaction(this.transactionManager, async () => {
+      if (!(await this.workspaces.insert(candidate))) {
+        throw new WorkspaceAlreadyRegisteredError({
+          id: candidate.id,
+          rootPath: candidate.rootPath,
+          name: candidate.name,
+          isGit: candidate.isGit,
+        });
+      }
+      await this.workspaces.upsert(candidate);
+      await this.audit?.record("workspace.created", candidate.id, {
         name: candidate.name,
-        isGit: candidate.isGit,
+        directory: candidate.rootPath,
       });
-    }
-    await this.workspaces.upsert(candidate);
-    await this.audit?.record("workspace.created", candidate.id, {
-      name: candidate.name,
-      directory: candidate.rootPath,
+      return candidate;
     });
-    return candidate;
   }
 }
 
@@ -189,18 +171,21 @@ export class UpdateWorkspace {
     private readonly directories: WorkspaceDirectoryPort,
     private readonly factory: WorkspaceRecordFactory,
     private readonly audit?: WorkspaceAuditPort,
+    private readonly transactionManager?: TransactionManager,
   ) {}
 
   public async execute(selector: string, input: UpdateWorkspaceInput): Promise<WorkspaceRecord> {
     if (!hasWorkspaceUpdate(input)) throw new WorkspaceUpdateEmptyError();
     const existing = await findWorkspace(this.workspaces, this.directories, selector);
     const workspace = await this.factory.update(existing, input);
-    await this.workspaces.upsert(workspace);
-    await this.audit?.record("workspace.updated", workspace.id, {
-      name: workspace.name,
-      directory: workspace.rootPath,
+    return withTransaction(this.transactionManager, async () => {
+      await this.workspaces.upsert(workspace);
+      await this.audit?.record("workspace.updated", workspace.id, {
+        name: workspace.name,
+        directory: workspace.rootPath,
+      });
+      return workspace;
     });
-    return workspace;
   }
 }
 
@@ -209,16 +194,19 @@ export class DeleteWorkspace {
     private readonly workspaces: WorkspaceRepository,
     private readonly directories: WorkspaceDirectoryPort,
     private readonly audit?: WorkspaceAuditPort,
+    private readonly transactionManager?: TransactionManager,
   ) {}
 
   public async execute(selector: string): Promise<WorkspaceRecord> {
     const workspace = await findWorkspace(this.workspaces, this.directories, selector);
-    await this.workspaces.delete(workspace.id);
-    await this.audit?.record("workspace.deleted", workspace.id, {
-      name: workspace.name,
-      directory: workspace.rootPath,
+    return withTransaction(this.transactionManager, async () => {
+      await this.workspaces.delete(workspace.id);
+      await this.audit?.record("workspace.deleted", workspace.id, {
+        name: workspace.name,
+        directory: workspace.rootPath,
+      });
+      return workspace;
     });
-    return workspace;
   }
 }
 
@@ -231,31 +219,21 @@ export class WorkspaceCrud {
   public constructor(
     workspaces: WorkspaceRepository,
     directories: WorkspaceDirectoryPort,
-    options: { audit?: WorkspaceAuditPort; now?: () => string } = {},
+    options: { audit?: WorkspaceAuditPort; now?: () => string; transactionManager?: TransactionManager } = {},
   ) {
     const factory = new WorkspaceRecordFactory(directories, options.now);
     this.list = new ListWorkspaces(workspaces);
-    this.register = new RegisterWorkspace(workspaces, factory, options.audit);
-    this.update = new UpdateWorkspace(workspaces, directories, factory, options.audit);
-    this.delete = new DeleteWorkspace(workspaces, directories, options.audit);
+    this.register = new RegisterWorkspace(workspaces, factory, options.audit, options.transactionManager);
+    this.update = new UpdateWorkspace(workspaces, directories, factory, options.audit, options.transactionManager);
+    this.delete = new DeleteWorkspace(workspaces, directories, options.audit, options.transactionManager);
   }
 }
 
-function validateWorkspaceName(value: string): string {
-  const name = value.trim();
-  if (!name || name.length > 120 || /[\u0000\r\n\t]/.test(name)) throw new InvalidWorkspaceNameError(value);
-  return name;
-}
-
-function validateWorktreeCopyPatterns(values: readonly string[]): string[] {
-  const normalized = normalizeWorktreeCopyPatterns(values);
-  if (normalized.length > worktreeCopyPatternLimits.maxPatterns) {
-    throw new InvalidWorkspaceCopyPatternError(`too many patterns (maximum ${worktreeCopyPatternLimits.maxPatterns})`);
-  }
-  for (const pattern of normalized) {
-    if (!isValidWorktreeCopyPattern(pattern)) throw new InvalidWorkspaceCopyPatternError(pattern);
-  }
-  return normalized;
+function withTransaction<Result>(
+  transactionManager: TransactionManager | undefined,
+  operation: () => Promise<Result>,
+): Promise<Result> {
+  return transactionManager ? transactionManager.run(operation) : operation();
 }
 
 function hasWorkspaceUpdate(input: UpdateWorkspaceInput): boolean {
@@ -296,11 +274,4 @@ async function findWorkspace(
     throw new WorkspaceUseCaseError("workspace_name_ambiguous", `workspace name is ambiguous; use its ID: ${reference}`, { selector: reference });
   }
   throw new WorkspaceNotFoundError(reference);
-}
-
-function invalidWorkspaceNameMessage(value: string): string {
-  const name = value.trim();
-  if (!name) return "workspace name cannot be empty";
-  if (name.length > 120) return "workspace name cannot exceed 120 characters";
-  return "workspace name cannot contain control characters";
 }

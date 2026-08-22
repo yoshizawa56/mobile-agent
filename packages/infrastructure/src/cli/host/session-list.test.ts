@@ -7,7 +7,7 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { AgentSessionRecord, AgentSessionState } from "@muximo/domain";
+import { AgentSession, AgentSessionId, WorkspaceId, type AgentSessionRecord, type AgentSessionState } from "@muximo/domain";
 import {
   projectAgentSession,
   sessionListPolicy,
@@ -65,7 +65,7 @@ const projectionCases = [
   },
   {
     name: "keeps stale Codex execution recovery uncertain when discovery is required",
-    input: { session: { backend: "codex", backendSessionId: null, status: "running", executionStartedAt: old, updatedAt: old, executionPid: null }, observation: { now, processAlive: undefined, worktreeState: "not_applicable" } },
+    input: { session: { backend: "codex", backendSessionId: undefined, status: "running", executionStartedAt: old, updatedAt: old, executionPid: undefined }, observation: { now, processAlive: undefined, worktreeState: "not_applicable" } },
     assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "stale", resume: "unknown", resumeReason: "backend_session_discovery_required", worktreeState: "not_applicable", visibleByDefault: true })],
   },
   {
@@ -134,12 +134,12 @@ describe("muximo session list projection", () => {
 });
 
 function sessionFixture(): AgentSessionRecord {
-  return {
-    id: "session-id",
+  return AgentSession.create({
+    id: AgentSessionId.create("session-id"),
     name: "review",
     backend: "claude",
     status: "exited",
-    workspaceId: "workspace-id",
+    workspaceId: WorkspaceId.create("workspace-id"),
     workspaceRoot: "/workspace",
     workspaceName: "workspace",
     worktreeRoot: "/worktrees",
@@ -147,22 +147,11 @@ function sessionFixture(): AgentSessionRecord {
     branch: "muximo/review",
     baseCommit: "base-commit",
     useWorktree: true,
-    setupHook: null,
-    cleanupHook: null,
-    setupOutputFile: null,
-    cleanupOutputFile: null,
     backendSessionId: "backend-session-id",
-    codexProfile: null,
-    codexRemote: null,
     setupRan: false,
     resuming: false,
-    baselineStatus: null,
-    codexSessionBaseline: null,
     lastExitStatus: 0,
-    executionId: null,
-    executionPid: null,
-    executionStartedAt: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: recent,
-  } satisfies AgentSessionRecord;
+  });
 }

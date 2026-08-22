@@ -16,6 +16,7 @@
     "test": "bun test src"
   },
   "dependencies": {
+    "@muximo/domain": "workspace:*",
     "@orpc/contract": "^1.15.0",
     "zod": "^4.4.3"
   },

@@ -1,4 +1,4 @@
-import type { WorkspaceRecord, WorkspaceSelection } from "@muximo/domain";
+import type { WorkspaceRecord } from "@muximo/domain";
 import type {
   CreatePaneInput,
   CreateSessionInput,
@@ -44,7 +44,7 @@ export type MuximodApplication = {
     update(workspaceId: string, input: UpdateWorkspaceCommand): Promise<MuximodWorkspaceDirectory>;
     delete(workspaceId: string): Promise<void>;
     resolveDirectory(workspaceId: string): Promise<WorkspaceRecord>;
-    resolveSelection(selection: WorkspaceSelection): Promise<WorkspaceRecord>;
+    resolveSelection(selection: { workspaceId: string; mode: "workspace" | "worktree" }): Promise<WorkspaceRecord>;
   };
   sessions: {
     list(): Promise<MuximodSessionSummary[]>;

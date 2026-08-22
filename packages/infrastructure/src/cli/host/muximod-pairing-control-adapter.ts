@@ -1,5 +1,6 @@
 import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
+import { existsSync } from "node:fs";
 import {
   muximodControlRequestSchema,
   muximodControlResponseSchema,
@@ -158,6 +159,10 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
 function connectControlSocket(path: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
+    if (!existsSync(path)) {
+      reject(new PairingControlError(`muximod control socket does not exist: ${path}`, "control_socket_missing"));
+      return;
+    }
     const socket = createConnection(path);
     const onError = (error: Error) => reject(new PairingControlError(`could not connect to muximod control socket: ${error.message}`, "control_socket_connect_failed"));
     socket.once("connect", () => {

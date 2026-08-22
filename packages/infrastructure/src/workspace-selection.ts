@@ -4,8 +4,15 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
 import type { MuximodWorkspaceDirectory, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@muximo/application";
-import type { WorkspaceDirectoryOption, WorkspaceRecord, WorkspaceSelection } from "@muximo/domain";
-import { isValidWorktreeCopyPattern, normalizeWorktreeCopyPatterns, validateWorkspaceSelection, worktreeCopyPatternLimits } from "@muximo/domain";
+import {
+  Workspace,
+  WorkspaceId,
+  validateWorktreeCopyPatterns as validateDomainWorktreeCopyPatterns,
+  validateWorkspaceSelection,
+  type WorkspaceDirectoryOption,
+  type WorkspaceRecord,
+  type WorkspaceSelection,
+} from "@muximo/domain";
 
 export type InvalidDirectoryReason = "not_found" | "not_directory" | "outside_allowed_root" | "unknown_workspace";
 export type InvalidHookReason = "not_found" | "not_file" | "not_executable";
@@ -37,19 +44,6 @@ export class InvalidWorkspaceHookError extends Error {
 
   public get details(): Record<string, unknown> {
     return { path: this.path, reason: this.reason };
-  }
-}
-
-export class InvalidWorkspaceCopyPatternError extends Error {
-  public readonly code = "invalid_copy_pattern" as const;
-
-  public constructor(public readonly pattern: string) {
-    super(`Invalid worktree copy pattern: ${pattern}`);
-    this.name = "InvalidWorkspaceCopyPatternError";
-  }
-
-  public get details(): Record<string, unknown> {
-    return { pattern: this.pattern };
   }
 }
 
@@ -132,8 +126,8 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
   }
 
   public async resolveWorkspaceDirectory(
-    workspaceId: string,
-    reader: (id: string) => Promise<WorkspaceRecord | undefined>,
+    workspaceId: WorkspaceId,
+    reader: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
   ): Promise<WorkspaceRecord> {
     const workspace = await reader(workspaceId);
     if (!workspace) throw new InvalidWorkspaceDirectoryError(workspaceId, "unknown_workspace", this.policy.roots);
@@ -146,7 +140,7 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 
   public async resolveSelection(
     selection: WorkspaceSelection,
-    reader: (id: string) => Promise<WorkspaceRecord | undefined>,
+    reader: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
   ): Promise<WorkspaceRecord> {
     const workspace = await this.resolveWorkspaceDirectory(selection.workspaceId, reader);
     const option: WorkspaceDirectoryOption = {
@@ -164,14 +158,14 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 
   private resolveRegisteredWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
     const rootPath = this.policy.assertDirectory(workspace.rootPath);
-    return {
+    return Workspace.validate({
       ...workspace,
       rootPath,
       isGit: isGitWorkspace(rootPath),
-      setupScriptPath: workspace.setupScriptPath ? validateHookPath(workspace.setupScriptPath, rootPath) : null,
-      cleanupScriptPath: workspace.cleanupScriptPath ? validateHookPath(workspace.cleanupScriptPath, rootPath) : null,
+      ...(workspace.setupScriptPath ? { setupScriptPath: validateHookPath(workspace.setupScriptPath, rootPath) } : {}),
+      ...(workspace.cleanupScriptPath ? { cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath, rootPath) } : {}),
       worktreeCopyPatterns: validateWorktreeCopyPatterns(workspace.worktreeCopyPatterns),
-    };
+    });
   }
 
   private toDirectoryCandidate(directory: string): MuximodWorkspaceDirectory {
@@ -205,18 +199,11 @@ function validateHookPath(path: string, workspaceRoot: string): string {
 }
 
 function validateWorktreeCopyPatterns(values: readonly string[] | undefined): string[] {
-  const normalized = normalizeWorktreeCopyPatterns(values ?? []);
-  if (normalized.length > worktreeCopyPatternLimits.maxPatterns) {
-    throw new InvalidWorkspaceCopyPatternError(`too many patterns (maximum ${worktreeCopyPatternLimits.maxPatterns})`);
-  }
-  for (const pattern of normalized) {
-    if (!isValidWorktreeCopyPattern(pattern)) throw new InvalidWorkspaceCopyPatternError(pattern);
-  }
-  return normalized;
+  return validateDomainWorktreeCopyPatterns(values ?? []);
 }
 
-export function workspaceIdForPath(path: string): string {
-  return createHash("sha256").update(path).digest("hex").slice(0, 16);
+export function workspaceIdForPath(path: string): WorkspaceId {
+  return WorkspaceId.create(createHash("sha256").update(path).digest("hex").slice(0, 16));
 }
 
 function expandPath(path: string, basePath = process.cwd()): string {

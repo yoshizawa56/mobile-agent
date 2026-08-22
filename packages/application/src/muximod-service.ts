@@ -9,9 +9,9 @@ import {
   type PaneRepository,
   type WorkspaceRepository,
 } from "./index.js";
+import { AgentSessionId, clearPatch, Pane, PaneId, WorkspaceId, normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type PaneState, type WorkspaceRecord } from "@muximo/domain";
 import { ApplicationError } from "./muximod.js";
 import { WorkspaceCrud } from "./workspace.js";
-import { normalizeAgentSessionName, paneKindForCommand, type AgentSessionRecord, type PaneRecord, type PaneState, type WorkspaceRecord } from "@muximo/domain";
 import type {
   CreatePaneInput,
   MuximodPaneSummary,
@@ -67,8 +67,11 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
       delete: async (workspaceId) => {
         await workspaceCrud.delete.execute(workspaceId);
       },
-      resolveDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(workspaceId, (id) => workspaceRepository.findById(id)),
-      resolveSelection: (selection) => workspaceCatalog.resolveSelection(selection, (id) => workspaceRepository.findById(id)),
+      resolveDirectory: (workspaceId) => workspaceCatalog.resolveWorkspaceDirectory(WorkspaceId.create(workspaceId), (id) => workspaceRepository.findById(id)),
+      resolveSelection: (selection) => workspaceCatalog.resolveSelection(
+        { workspaceId: WorkspaceId.create(selection.workspaceId), mode: selection.mode },
+        (id) => workspaceRepository.findById(id),
+      ),
     },
     sessions: {
       list: () => listSessions(host, paneRepository, agentSessionRepository, agentStatus),
@@ -116,24 +119,20 @@ async function createSession(
     const panes = await syncPanes(host, paneRepository, agentSessionRepository, undefined, agentStatus);
     const initialPane = panes.find((pane) => pane.sessionName === input.name);
     if (initialPane) {
-      const shellPane: PaneRecord = {
-        ...initialPane,
+      const shellPane: PaneRecord = Pane.update(initialPane, {
         kind: "shell",
-        agentId: null,
+        agentId: clearPatch,
         state: "running",
-      };
+      });
       await paneRepository.upsert(shellPane);
       host.setAgentPaneMetadata(initialPane.tmuxPaneId, "kind", "shell");
       host.setAgentPaneMetadata(initialPane.tmuxPaneId, "agent_id", "");
       host.setAgentPaneMetadata(initialPane.tmuxPaneId, "managed_session_id", managedSessionId);
     }
     const currentPanes = initialPane
-      ? panes.map((pane) => pane.id === initialPane.id ? {
-          ...pane,
-          kind: "shell" as const,
-          agentId: null,
-          state: "running" as const,
-        } : pane)
+      ? panes.map((pane) => pane.id === initialPane.id
+        ? Pane.update(pane, { kind: "shell", agentId: clearPatch, state: "running" })
+        : pane)
       : panes;
     const session = summarizeSessions(currentPanes.filter((pane) => pane.sessionName === input.name)).find((candidate) => candidate.name === input.name);
     if (!session || !currentPanes.some((pane) => pane.sessionName === input.name)) {
@@ -204,14 +203,15 @@ async function createPane(
     throw new ApplicationError("pane_not_visible", "tmux created the pane but muximod could not read it");
   }
 
-  const record: MuximodPaneSummary = {
+  const workspaceId = input.workspaceId === undefined ? current.workspaceId : WorkspaceId.create(input.workspaceId);
+  const record: MuximodPaneSummary = Pane.create({
     ...current,
     kind: input.kind,
     name: paneName,
-    workspaceId: input.workspaceId ?? current.workspaceId,
-    agentId: input.agentId,
+    workspaceId,
+    agentId: input.agentId ?? undefined,
     state: input.kind === "agent" ? "starting" : "running",
-  };
+  });
   await repository.upsert(record);
   host.setAgentPaneMetadata(tmuxPaneId, "pane_id", record.id);
   host.setAgentPaneMetadata(tmuxPaneId, "pane_name", paneName);
@@ -235,7 +235,9 @@ async function syncPanes(
   for (const tmuxPane of live.panes) {
     const paneServerId = tmuxPane.tmuxServerId ?? tmuxServerId;
     const existing = await repository.findByTmuxPaneIdentity(paneServerId, tmuxPane.paneId);
-    const sessionCandidate = tmuxPane.muximodSessionId ? await agentSessionRepository.findById(tmuxPane.muximodSessionId) : undefined;
+    const sessionCandidate = tmuxPane.muximodSessionId
+      ? await agentSessionRepository.findById(AgentSessionId.create(tmuxPane.muximodSessionId))
+      : undefined;
     const adoptedSession = sessionCandidate
       && tmuxPane.muximodExecutionId === sessionCandidate.executionId
       && isLiveAgentExecution(host, sessionCandidate)
@@ -257,12 +259,13 @@ async function syncPanes(
       }
     }
     const metadataId = tmuxPane.muximodPaneId;
-    const conflictingId = !existing && metadataId ? await repository.findById(metadataId) : undefined;
-    const reusableMetadataId = metadataId && (!conflictingId || (conflictingId.tmuxServerId === paneServerId && conflictingId.tmuxPaneId === tmuxPane.paneId))
-      ? metadataId
+    const metadataPaneId = metadataId ? PaneId.create(metadataId) : undefined;
+    const conflictingId = !existing && metadataPaneId ? await repository.findById(metadataPaneId) : undefined;
+    const reusableMetadataId = metadataPaneId && (!conflictingId || (conflictingId.tmuxServerId === paneServerId && conflictingId.tmuxPaneId === tmuxPane.paneId))
+      ? metadataPaneId
       : undefined;
     const kind = resolvePaneKind(tmuxPane, existing, adoptedSession !== undefined, staleAgentMetadata);
-    const agentId = kind === "agent" ? tmuxPane.muximodAgentId ?? adoptedSession?.backend ?? executableName(tmuxPane.command) ?? existing?.agentId ?? "agent" : null;
+    const agentId = kind === "agent" ? tmuxPane.muximodAgentId ?? adoptedSession?.backend ?? executableName(tmuxPane.command) ?? existing?.agentId ?? "agent" : undefined;
     const observation: AgentStatusObservation = kind !== "agent"
       ? { state: "running" as const }
       : adoptedSession?.executionId
@@ -271,21 +274,21 @@ async function syncPanes(
     const name = staleAgentMetadata
       ? tmuxPane.title || tmuxPane.command || tmuxPane.paneId
       : tmuxPane.muximodName ?? adoptedSession?.name ?? (existing?.name && existing.name !== tmuxPane.paneId ? existing.name : tmuxPane.title || tmuxPane.command || tmuxPane.paneId);
-    const record: PaneRecord = {
-      id: existing?.id ?? reusableMetadataId ?? `pane-${host.newId()}`,
+    const record: PaneRecord = Pane.create({
+      id: existing?.id ?? reusableMetadataId ?? PaneId.create(`pane-${host.newId()}`),
       tmuxPaneId: tmuxPane.paneId,
       tmuxServerId: paneServerId,
-      agentSessionId: adoptedSession?.id ?? null,
-      agentExecutionId: adoptedSession ? tmuxPane.muximodExecutionId : null,
+      ...(adoptedSession?.id ? { agentSessionId: adoptedSession.id } : {}),
+      ...(adoptedSession?.id && tmuxPane.muximodExecutionId ? { agentExecutionId: tmuxPane.muximodExecutionId } : {}),
       sessionName: tmuxPane.sessionName,
       windowId: tmuxPane.windowId,
       kind,
       name,
       cwd: tmuxPane.cwd,
-      workspaceId: existing?.workspaceId ?? adoptedSession?.workspaceId ?? null,
+      ...(existing?.workspaceId ?? adoptedSession?.workspaceId ? { workspaceId: existing?.workspaceId ?? adoptedSession?.workspaceId } : {}),
       agentId,
       state: observation.state,
-      title: tmuxPane.title || null,
+      ...(tmuxPane.title ? { title: tmuxPane.title } : {}),
       ...(observation.recentOutput ? { recentOutput: observation.recentOutput } : {}),
       lastSeenAt: now,
       windowName: tmuxPane.windowName,
@@ -297,7 +300,7 @@ async function syncPanes(
       height: tmuxPane.height,
       windowWidth: tmuxPane.windowWidth,
       windowHeight: tmuxPane.windowHeight,
-    };
+    });
     await repository.upsert(record);
     // Geometry and pane indexes are live tmux state rather than durable
     // identity. Return the live record so the API/UI never loses it during
@@ -315,7 +318,7 @@ async function adoptAgentSession(
   agentStatus: AgentStatusStore,
   request: { agentSessionId: string; tmuxPaneId: string; executionId: string },
 ): Promise<void> {
-  const session = await agentSessionRepository.findById(request.agentSessionId);
+  const session = await agentSessionRepository.findById(AgentSessionId.create(request.agentSessionId));
   if (!session) throw controlFailure("agent_session_not_found", `agent session not found: ${request.agentSessionId}`);
   if (session.executionId !== request.executionId) throw controlFailure("agent_execution_mismatch", "agent execution is no longer current");
   const live = host.listPanesSnapshot();
@@ -333,7 +336,7 @@ async function observeAgentSession(
   agentStatus: AgentStatusStore,
   request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: PaneState; recentOutput?: string },
 ): Promise<void> {
-  const session = await agentSessionRepository.findById(request.agentSessionId);
+  const session = await agentSessionRepository.findById(AgentSessionId.create(request.agentSessionId));
   if (!session) throw controlFailure("agent_session_not_found", `agent session not found: ${request.agentSessionId}`);
   if (session.executionId !== request.executionId) throw controlFailure("agent_execution_mismatch", "agent execution is no longer current");
   const live = host.listPanesSnapshot();
@@ -421,6 +424,6 @@ function executableName(command: string): string | null {
 
 function isLiveAgentExecution(host: MuximodHostPort, session: Pick<AgentSessionRecord, "status" | "executionPid">): boolean {
   if (session.status !== "running" && session.status !== "resuming") return false;
-  if (session.executionPid === null || session.executionPid === undefined) return false;
+  if (session.executionPid === undefined) return false;
   return host.isProcessAlive(session.executionPid);
 }

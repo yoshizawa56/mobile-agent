@@ -17,7 +17,7 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { AgentSessionRecord } from "@muximo/domain";
+import { AgentSession, AgentSessionId, Workspace, WorkspaceId, type AgentSessionRecord } from "@muximo/domain";
 import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "../../persistence/index.js";
 import { MuximoCommand } from "./muximo-command.js";
 
@@ -155,21 +155,18 @@ async function createListFixture(registerCleanup?: CleanupRegistrar): Promise<Fi
   const old = new Date(now - 31 * 24 * 60 * 60 * 1_000).toISOString();
   const databaseHandle = createAgentDatabase(database);
   const workspaceId = workspaceIdForPath(workspaceRoot);
-  await new DrizzleWorkspaceRepository(databaseHandle.db).upsert({
+  await new DrizzleWorkspaceRepository(databaseHandle.db).upsert(Workspace.create({
     id: workspaceId,
     rootPath: workspaceRoot,
     name: "workspace",
     isGit: true,
-    setupScriptPath: null,
-    cleanupScriptPath: null,
     worktreeCopyPatterns: [],
     createdAt: old,
     updatedAt: old,
-  });
+  }));
   const sessions = new DrizzleAgentSessionRepository(databaseHandle.db);
-  await sessions.insert({
-    ...sessionFixture(),
-    id: "missing-id",
+  await sessions.insert(sessionFixture({
+    id: AgentSessionId.create("missing-id"),
     name: "missing",
     status: "exited",
     workspaceId,
@@ -177,28 +174,26 @@ async function createListFixture(registerCleanup?: CleanupRegistrar): Promise<Fi
     worktreePath: join(root, "deleted-worktree"),
     updatedAt: old,
     createdAt: old,
-  });
-  await sessions.insert({
-    ...sessionFixture(),
-    id: "long-running-id",
+  }));
+  await sessions.insert(sessionFixture({
+    id: AgentSessionId.create("long-running-id"),
     name: "long-running",
     status: "running",
     workspaceId,
     workspaceRoot,
     useWorktree: false,
-    worktreeRoot: null,
-    worktreePath: null,
-    branch: null,
-    baseCommit: null,
+    worktreeRoot: undefined,
+    worktreePath: undefined,
+    branch: undefined,
+    baseCommit: undefined,
     executionId: "long-running-execution",
     executionPid: process.pid,
     executionStartedAt: old,
     updatedAt: old,
     createdAt: old,
-  });
-  await sessions.insert({
-    ...sessionFixture(),
-    id: "unregistered-id",
+  }));
+  await sessions.insert(sessionFixture({
+    id: AgentSessionId.create("unregistered-id"),
     name: "unregistered",
     status: "exited",
     workspaceId,
@@ -206,7 +201,7 @@ async function createListFixture(registerCleanup?: CleanupRegistrar): Promise<Fi
     worktreePath: unregisteredWorktree,
     updatedAt: old,
     createdAt: old,
-  });
+  }));
   databaseHandle.sqlite.prepare("UPDATE agent_sessions SET updated_at = ? WHERE id IN (?, ?, ?)").run(old, "missing-id", "unregistered-id", "long-running-id");
   databaseHandle.close();
 
@@ -219,13 +214,13 @@ async function createListFixture(registerCleanup?: CleanupRegistrar): Promise<Fi
   return { fixture, cleanup };
 }
 
-function sessionFixture(): AgentSessionRecord {
-  return {
-    id: "session-id",
+function sessionFixture(overrides: Partial<AgentSessionRecord> = {}): AgentSessionRecord {
+  return AgentSession.create({
+    id: AgentSessionId.create("session-id"),
     name: "session",
     backend: "claude",
     status: "exited",
-    workspaceId: "workspace-id",
+    workspaceId: WorkspaceId.create("workspace-id"),
     workspaceRoot: "/workspace",
     workspaceName: "workspace",
     worktreeRoot: "/worktrees",
@@ -233,24 +228,14 @@ function sessionFixture(): AgentSessionRecord {
     branch: "muximo/session",
     baseCommit: "base-commit",
     useWorktree: true,
-    setupHook: null,
-    cleanupHook: null,
-    setupOutputFile: null,
-    cleanupOutputFile: null,
     backendSessionId: "backend-session-id",
-    codexProfile: null,
-    codexRemote: null,
     setupRan: false,
     resuming: false,
-    baselineStatus: null,
-    codexSessionBaseline: null,
     lastExitStatus: 0,
-    executionId: null,
-    executionPid: null,
-    executionStartedAt: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
-  };
+    ...overrides,
+  });
 }
 
 function captureOutput(): Writable & { value: () => string } {

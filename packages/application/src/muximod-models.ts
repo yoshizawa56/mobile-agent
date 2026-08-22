@@ -1,4 +1,4 @@
-import type { AgentBackend, PaneRecord } from "@muximo/domain";
+import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
 
 export type MuximodPanePlacement = "window" | "right" | "bottom";
 
@@ -32,15 +32,15 @@ export type MuximodWorkspaceDirectory = {
 export type RegisterWorkspaceCommand = {
   directory: string;
   name?: string;
-  setupScriptPath?: string | null;
-  cleanupScriptPath?: string | null;
+  setupScriptPath?: Patch<string>;
+  cleanupScriptPath?: Patch<string>;
   worktreeCopyPatterns?: readonly string[];
 };
 
 export type UpdateWorkspaceCommand = {
   name?: string;
-  setupScriptPath?: string | null;
-  cleanupScriptPath?: string | null;
+  setupScriptPath?: Patch<string>;
+  cleanupScriptPath?: Patch<string>;
   worktreeCopyPatterns?: readonly string[];
   appendWorktreeCopyPatterns?: readonly string[];
   clearWorktreeCopyPatterns?: boolean;

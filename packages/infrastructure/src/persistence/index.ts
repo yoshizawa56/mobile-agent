@@ -9,17 +9,27 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveMuximodPaths } from "./paths.js";
+import type { AgentDrizzleDatabase } from "./database-types.js";
+import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
+import { DrizzleRepositoryBase } from "./repository-base.js";
+import { ambientDatabase } from "./transaction-context.js";
+import {
+  AgentSession,
+  AgentSessionId,
+  Pane,
+  PaneId,
+  Workspace,
+  WorkspaceId,
+  type AgentSessionRecord,
+  type PaneRecord,
+  type WorkspaceRecord,
+} from "@muximo/domain";
 import type {
   AgentSessionRepository,
   PaneFilter,
   PaneRepository,
   WorkspaceRepository,
 } from "@muximo/application";
-import type {
-  AgentSessionRecord,
-  PaneRecord,
-  WorkspaceRecord,
-} from "@muximo/domain";
 import {
   agentSessions,
   auditEvents,
@@ -32,6 +42,9 @@ import {
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 
 export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
+export { DrizzleRepositoryBase } from "./repository-base.js";
+export { SqliteTransactionManager, isRetryableSqliteBusy, runSqliteTransaction } from "./transaction.js";
+export type { SqliteRetryOptions } from "./transaction.js";
 export { muximodControlSocketMaxBytes, defaultMuximodInstanceDirectory, resolveMuximodPaths, validateMuximodControlSocketPath } from "./paths.js";
 export type { MuximodInstancePaths, MuximodPathOverrides } from "./paths.js";
 export { AuthStore } from "./auth.js";
@@ -50,14 +63,17 @@ export type {
 } from "./auth.js";
 
 export type AgentDatabase = {
-  db: ReturnType<typeof drizzle>;
+  databaseFile: string;
+  db: AgentDrizzleDatabase;
   sqlite: Database;
+  openConnection: () => Database;
   close: () => void;
 };
 
 export type AgentDatabaseOptions = {
   migrationsFolder?: string;
   instanceDirectory?: string;
+  busyTimeoutMs?: number;
 };
 
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -79,9 +95,9 @@ export function createAgentDatabase(file: string | undefined = undefined, option
     }
     mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
   }
-  const sqlite = new Database(databasePath);
+  const busyTimeoutMs = options.busyTimeoutMs ?? defaultSqliteBusyTimeoutMs;
+  const sqlite = openConfiguredConnection(databasePath, busyTimeoutMs);
   secureDatabaseFiles(databasePath);
-  sqlite.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
   baselineLegacyDatabase(sqlite, migrationsFolder);
   const db = drizzle({ client: sqlite });
@@ -95,10 +111,16 @@ export function createAgentDatabase(file: string | undefined = undefined, option
   secureDatabaseFiles(databasePath);
 
   return {
+    databaseFile: databasePath,
     db,
     sqlite,
+    openConnection: () => openConfiguredConnection(databasePath, busyTimeoutMs),
     close: () => sqlite.close(),
   };
+}
+
+function openConfiguredConnection(databasePath: string, busyTimeoutMs: number): Database {
+  return configureSqliteConnection(new Database(databasePath), busyTimeoutMs);
 }
 
 function secureDatabaseFiles(databasePath: string): void {
@@ -161,8 +183,10 @@ function materializeEmbeddedMigrations(): string {
   return migrationsFolder;
 }
 
-export class DrizzlePaneRepository implements PaneRepository {
-  public constructor(private readonly database: AgentDatabase["db"]) {}
+export class DrizzlePaneRepository extends DrizzleRepositoryBase implements PaneRepository {
+  public constructor(database: AgentDatabase["db"]) {
+    super(database);
+  }
 
   public async list(filter?: PaneFilter): Promise<PaneRecord[]> {
     const conditions = [];
@@ -171,18 +195,18 @@ export class DrizzlePaneRepository implements PaneRepository {
     if (filter?.sessionName) conditions.push(eq(panes.sessionName, filter.sessionName));
 
     const rows = conditions.length
-      ? this.database.select().from(panes).where(and(...conditions)).all()
-      : this.database.select().from(panes).all();
+      ? this.db().select().from(panes).where(and(...conditions)).all()
+      : this.db().select().from(panes).all();
     return rows.map(toPaneRecord);
   }
 
-  public async findById(id: string): Promise<PaneRecord | undefined> {
-    const row = this.database.select().from(panes).where(eq(panes.id, id)).get();
+  public async findById(id: PaneId): Promise<PaneRecord | undefined> {
+    const row = this.db().select().from(panes).where(eq(panes.id, id)).get();
     return row ? toPaneRecord(row) : undefined;
   }
 
   public async findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined> {
-    const row = this.database
+    const row = this.db()
       .select()
       .from(panes)
       .where(eq(panes.tmuxPaneId, tmuxPaneId))
@@ -192,7 +216,7 @@ export class DrizzlePaneRepository implements PaneRepository {
   }
 
   public async findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined> {
-    const row = this.database
+    const row = this.db()
       .select()
       .from(panes)
       .where(and(eq(panes.tmuxServerId, tmuxServerId), eq(panes.tmuxPaneId, tmuxPaneId)))
@@ -203,7 +227,7 @@ export class DrizzlePaneRepository implements PaneRepository {
   public async upsert(record: PaneRecord): Promise<void> {
     const now = new Date().toISOString();
     const row = toPaneRow(record, now);
-    this.database
+    this.db()
       .insert(panes)
       .values(row)
       .onConflictDoUpdate({
@@ -229,7 +253,7 @@ export class DrizzlePaneRepository implements PaneRepository {
       .run();
   }
 
-  public async pruneStalePanes(activePaneIds: readonly string[], olderThan: string, tmuxServerScope: string): Promise<number> {
+  public async pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string): Promise<number> {
     // An empty live set is deliberately not treated as authoritative. tmux
     // exits its server after the last session disappears, so deleting all old
     // rows here would turn a temporary tmux outage into data loss.
@@ -240,26 +264,28 @@ export class DrizzlePaneRepository implements PaneRepository {
       notInArray(panes.id, [...activePaneIds]),
       or(eq(panes.tmuxServerId, "legacy"), like(panes.tmuxServerId, `${tmuxServerScope}:%`)),
     );
-    const candidates = this.database.select({ id: panes.id }).from(panes).where(condition).all();
-    this.database.delete(panes).where(condition).run();
+    const candidates = this.db().select({ id: panes.id }).from(panes).where(condition).all();
+    this.db().delete(panes).where(condition).run();
     return candidates.length;
   }
 }
 
-export class DrizzleWorkspaceRepository implements WorkspaceRepository {
-  public constructor(private readonly database: AgentDatabase["db"]) {}
+export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements WorkspaceRepository {
+  public constructor(database: AgentDatabase["db"]) {
+    super(database);
+  }
 
-  public async findById(id: string): Promise<WorkspaceRecord | undefined> {
-    const row = this.database.select().from(workspaces).where(eq(workspaces.id, id)).get();
+  public async findById(id: WorkspaceId): Promise<WorkspaceRecord | undefined> {
+    const row = this.db().select().from(workspaces).where(eq(workspaces.id, id)).get();
     return row ? toWorkspaceRecord(row) : undefined;
   }
 
   public async list(): Promise<WorkspaceRecord[]> {
-    return this.database.select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspaceRecord);
+    return this.db().select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspaceRecord);
   }
 
   public async insert(record: WorkspaceRecord): Promise<boolean> {
-    const inserted = this.database
+    const inserted = this.db()
       .insert(workspaces)
       .values(toWorkspaceRow(record, new Date().toISOString()))
       .onConflictDoNothing({ target: workspaces.id })
@@ -270,39 +296,42 @@ export class DrizzleWorkspaceRepository implements WorkspaceRepository {
 
   public async upsert(record: WorkspaceRecord): Promise<void> {
     const now = new Date().toISOString();
-    this.database
+    const row = toWorkspaceRow(record, now);
+    this.db()
       .insert(workspaces)
-      .values(toWorkspaceRow(record, now))
+      .values(row)
       .onConflictDoUpdate({
         target: workspaces.id,
         set: {
-          rootPath: record.rootPath,
-          name: record.name,
-          isGit: record.isGit,
-          setupScriptPath: record.setupScriptPath,
-          cleanupScriptPath: record.cleanupScriptPath,
-          worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
+          rootPath: row.rootPath,
+          name: row.name,
+          isGit: row.isGit,
+          setupScriptPath: row.setupScriptPath,
+          cleanupScriptPath: row.cleanupScriptPath,
+          worktreeCopyPatterns: row.worktreeCopyPatterns,
           updatedAt: now,
         },
       })
       .run();
   }
 
-  public async delete(id: string): Promise<void> {
-    this.database.delete(workspaces).where(eq(workspaces.id, id)).run();
+  public async delete(id: WorkspaceId): Promise<void> {
+    this.db().delete(workspaces).where(eq(workspaces.id, id)).run();
   }
 }
 
-export class DrizzleAgentSessionRepository implements AgentSessionRepository {
-  public constructor(private readonly database: AgentDatabase["db"]) {}
+export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase implements AgentSessionRepository {
+  public constructor(database: AgentDatabase["db"]) {
+    super(database);
+  }
 
-  public async findById(id: string): Promise<AgentSessionRecord | undefined> {
-    const row = this.database.select().from(agentSessions).where(eq(agentSessions.id, id)).get();
+  public async findById(id: AgentSessionId): Promise<AgentSessionRecord | undefined> {
+    const row = this.db().select().from(agentSessions).where(eq(agentSessions.id, id)).get();
     return row ? toAgentSessionRecord(row) : undefined;
   }
 
-  public async findByName(workspaceId: string, name: string): Promise<AgentSessionRecord | undefined> {
-    const row = this.database
+  public async findByName(workspaceId: WorkspaceId, name: string): Promise<AgentSessionRecord | undefined> {
+    const row = this.db()
       .select()
       .from(agentSessions)
       .where(and(eq(agentSessions.workspaceId, workspaceId), eq(agentSessions.name, name)))
@@ -310,60 +339,33 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
     return row ? toAgentSessionRecord(row) : undefined;
   }
 
-  public async list(workspaceId?: string): Promise<AgentSessionRecord[]> {
+  public async list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]> {
     const rows = workspaceId
-      ? this.database.select().from(agentSessions).where(eq(agentSessions.workspaceId, workspaceId)).orderBy(asc(agentSessions.name)).all()
-      : this.database.select().from(agentSessions).orderBy(asc(agentSessions.workspaceName), asc(agentSessions.name)).all();
+      ? this.db().select().from(agentSessions).where(eq(agentSessions.workspaceId, workspaceId)).orderBy(asc(agentSessions.name)).all()
+      : this.db().select().from(agentSessions).orderBy(asc(agentSessions.workspaceName), asc(agentSessions.name)).all();
     return rows.map(toAgentSessionRecord);
   }
 
   public async insert(record: AgentSessionRecord): Promise<void> {
     const now = new Date().toISOString();
-    this.database.insert(agentSessions).values(toAgentSessionRow(record, now)).run();
+    this.db().insert(agentSessions).values(toAgentSessionRow(record, now)).run();
   }
 
   public async update(record: AgentSessionRecord): Promise<void> {
     const now = new Date().toISOString();
-    this.database
+    const row = toAgentSessionRow(record, now);
+    this.db()
       .update(agentSessions)
-      .set({
-        name: record.name,
-        backend: record.backend,
-        status: record.status,
-        workspaceId: record.workspaceId,
-        workspaceRoot: record.workspaceRoot,
-        workspaceName: record.workspaceName,
-        worktreeRoot: record.worktreeRoot,
-        worktreePath: record.worktreePath,
-        branch: record.branch,
-        baseCommit: record.baseCommit,
-        useWorktree: record.useWorktree,
-        setupHook: record.setupHook,
-        cleanupHook: record.cleanupHook,
-        setupOutputFile: record.setupOutputFile,
-        cleanupOutputFile: record.cleanupOutputFile,
-        backendSessionId: record.backendSessionId,
-        codexProfile: record.codexProfile,
-        codexRemote: record.codexRemote,
-        setupRan: record.setupRan,
-        resuming: record.resuming,
-        baselineStatus: record.baselineStatus,
-        codexSessionBaseline: record.codexSessionBaseline,
-        lastExitStatus: record.lastExitStatus,
-        executionId: record.executionId ?? null,
-        executionPid: record.executionPid ?? null,
-        executionStartedAt: record.executionStartedAt ?? null,
-        updatedAt: now,
-      })
+      .set(row)
       .where(eq(agentSessions.id, record.id))
       .run();
   }
 
-  public async claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean> {
+  public async claimExecution(id: AgentSessionId, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean> {
     const predicate = expectedExecutionPid === null
       ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
       : and(eq(agentSessions.id, id), eq(agentSessions.executionPid, expectedExecutionPid));
-    const result = this.database
+    const result = this.db()
       .update(agentSessions)
       .set({ executionId, executionPid, executionStartedAt, status: "resuming", resuming: true, updatedAt: new Date().toISOString() })
       .where(predicate)
@@ -372,8 +374,8 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
     return result.length > 0;
   }
 
-  public async setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean> {
-    const result = this.database
+  public async setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean> {
+    const result = this.db()
       .update(agentSessions)
       .set({ backendSessionId, updatedAt: new Date().toISOString() })
       .where(and(eq(agentSessions.id, id), isNull(agentSessions.backendSessionId)))
@@ -382,8 +384,8 @@ export class DrizzleAgentSessionRepository implements AgentSessionRepository {
     return result.length > 0;
   }
 
-  public async delete(id: string): Promise<void> {
-    this.database.delete(agentSessions).where(eq(agentSessions.id, id)).run();
+  public async delete(id: AgentSessionId): Promise<void> {
+    this.db().delete(agentSessions).where(eq(agentSessions.id, id)).run();
   }
 }
 
@@ -391,7 +393,7 @@ export function recordAuditEvent(
   database: AgentDatabase["db"],
   event: { eventType: string; entityId: string; payload: unknown; occurredAt?: string },
 ): void {
-  database
+  ambientDatabase(database)
     .insert(auditEvents)
     .values({
       eventType: event.eventType,
@@ -499,73 +501,75 @@ function ensureColumn(sqlite: Database, table: string, column: string, definitio
 }
 
 function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
+  const pane = Pane.validate(record);
   return {
-    id: record.id,
-    tmuxPaneId: record.tmuxPaneId,
-    tmuxServerId: record.tmuxServerId ?? "legacy",
-    agentSessionId: record.agentSessionId ?? null,
-    agentExecutionId: record.agentExecutionId ?? null,
-    sessionName: record.sessionName,
-    windowId: record.windowId,
-    kind: record.kind,
-    name: record.name,
-    cwd: record.cwd,
-    workspaceId: record.workspaceId,
-    agentId: record.agentId,
-    state: record.state,
-    title: record.title,
-    lastSeenAt: record.lastSeenAt,
+    id: pane.id,
+    tmuxPaneId: pane.tmuxPaneId,
+    tmuxServerId: pane.tmuxServerId ?? "legacy",
+    agentSessionId: pane.agentSessionId ?? null,
+    agentExecutionId: pane.agentExecutionId ?? null,
+    sessionName: pane.sessionName,
+    windowId: pane.windowId,
+    kind: pane.kind,
+    name: pane.name,
+    cwd: pane.cwd,
+    workspaceId: pane.workspaceId ?? null,
+    agentId: pane.agentId ?? null,
+    state: pane.state,
+    title: pane.title ?? null,
+    lastSeenAt: pane.lastSeenAt,
     createdAt: now,
     updatedAt: now,
   };
 }
 
 function toPaneRecord(row: PaneRow): PaneRecord {
-  return {
-    id: row.id,
+  return Pane.validate({
+    id: PaneId.create(row.id),
     tmuxPaneId: row.tmuxPaneId,
     ...(row.tmuxServerId === "legacy" ? {} : { tmuxServerId: row.tmuxServerId }),
-    ...(row.agentSessionId ? { agentSessionId: row.agentSessionId } : {}),
+    ...(row.agentSessionId ? { agentSessionId: AgentSessionId.create(row.agentSessionId) } : {}),
     ...(row.agentExecutionId ? { agentExecutionId: row.agentExecutionId } : {}),
     sessionName: row.sessionName,
     windowId: row.windowId,
     kind: row.kind,
     name: row.name,
     cwd: row.cwd,
-    workspaceId: row.workspaceId,
-    agentId: row.agentId,
+    ...(row.workspaceId ? { workspaceId: WorkspaceId.create(row.workspaceId) } : {}),
+    ...(row.agentId ? { agentId: row.agentId } : {}),
     state: row.state,
-    title: row.title,
+    ...(row.title !== null ? { title: row.title } : {}),
     lastSeenAt: row.lastSeenAt,
-  };
+  });
 }
 
 function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces.$inferInsert {
+  const workspace = Workspace.validate(record);
   return {
-    id: record.id,
-    rootPath: record.rootPath,
-    name: record.name,
-    isGit: record.isGit,
-    setupScriptPath: record.setupScriptPath,
-    cleanupScriptPath: record.cleanupScriptPath,
-    worktreeCopyPatterns: JSON.stringify(record.worktreeCopyPatterns),
-    createdAt: record.createdAt || now,
+    id: workspace.id,
+    rootPath: workspace.rootPath,
+    name: workspace.name,
+    isGit: workspace.isGit,
+    setupScriptPath: workspace.setupScriptPath ?? null,
+    cleanupScriptPath: workspace.cleanupScriptPath ?? null,
+    worktreeCopyPatterns: JSON.stringify(workspace.worktreeCopyPatterns),
+    createdAt: workspace.createdAt || now,
     updatedAt: now,
   };
 }
 
 function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
-  return {
-    id: row.id,
+  return Workspace.validate({
+    id: WorkspaceId.create(row.id),
     rootPath: row.rootPath,
     name: row.name,
     isGit: row.isGit,
-    setupScriptPath: row.setupScriptPath,
-    cleanupScriptPath: row.cleanupScriptPath,
+    ...(row.setupScriptPath !== null ? { setupScriptPath: row.setupScriptPath } : {}),
+    ...(row.cleanupScriptPath !== null ? { cleanupScriptPath: row.cleanupScriptPath } : {}),
     worktreeCopyPatterns: parseWorktreeCopyPatterns(row.worktreeCopyPatterns),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-  };
+  });
 }
 
 function parseWorktreeCopyPatterns(value: string): string[] {
@@ -578,69 +582,70 @@ function parseWorktreeCopyPatterns(value: string): string[] {
 }
 
 function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agentSessions.$inferInsert {
+  const session = AgentSession.validate(record);
   return {
-    id: record.id,
-    name: record.name,
-    backend: record.backend,
-    status: record.status,
-    workspaceId: record.workspaceId,
-    workspaceRoot: record.workspaceRoot,
-    workspaceName: record.workspaceName,
-    worktreeRoot: record.worktreeRoot,
-    worktreePath: record.worktreePath,
-    branch: record.branch,
-    baseCommit: record.baseCommit,
-    useWorktree: record.useWorktree,
-    setupHook: record.setupHook,
-    cleanupHook: record.cleanupHook,
-    setupOutputFile: record.setupOutputFile,
-    cleanupOutputFile: record.cleanupOutputFile,
-    backendSessionId: record.backendSessionId,
-    codexProfile: record.codexProfile,
-    codexRemote: record.codexRemote,
-    setupRan: record.setupRan,
-    resuming: record.resuming,
-    baselineStatus: record.baselineStatus,
-    codexSessionBaseline: record.codexSessionBaseline,
-    lastExitStatus: record.lastExitStatus,
-    executionId: record.executionId ?? null,
-    executionPid: record.executionPid ?? null,
-    executionStartedAt: record.executionStartedAt ?? null,
-    createdAt: record.createdAt || now,
+    id: session.id,
+    name: session.name,
+    backend: session.backend,
+    status: session.status,
+    workspaceId: session.workspaceId,
+    workspaceRoot: session.workspaceRoot,
+    workspaceName: session.workspaceName,
+    worktreeRoot: session.worktreeRoot ?? null,
+    worktreePath: session.worktreePath ?? null,
+    branch: session.branch ?? null,
+    baseCommit: session.baseCommit ?? null,
+    useWorktree: session.useWorktree,
+    setupHook: session.setupHook ?? null,
+    cleanupHook: session.cleanupHook ?? null,
+    setupOutputFile: session.setupOutputFile ?? null,
+    cleanupOutputFile: session.cleanupOutputFile ?? null,
+    backendSessionId: session.backendSessionId ?? null,
+    codexProfile: session.codexProfile ?? null,
+    codexRemote: session.codexRemote ?? null,
+    setupRan: session.setupRan,
+    resuming: session.resuming,
+    baselineStatus: session.baselineStatus ?? null,
+    codexSessionBaseline: session.codexSessionBaseline ?? null,
+    lastExitStatus: session.lastExitStatus ?? null,
+    executionId: session.executionId ?? null,
+    executionPid: session.executionPid ?? null,
+    executionStartedAt: session.executionStartedAt ?? null,
+    createdAt: session.createdAt || now,
     updatedAt: now,
   };
 }
 
 function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
-  return {
-    id: row.id,
+  return AgentSession.validate({
+    id: AgentSessionId.create(row.id),
     name: row.name,
     backend: row.backend,
     status: row.status,
-    workspaceId: row.workspaceId,
+    workspaceId: WorkspaceId.create(row.workspaceId),
     workspaceRoot: row.workspaceRoot,
     workspaceName: row.workspaceName,
-    worktreeRoot: row.worktreeRoot,
-    worktreePath: row.worktreePath,
-    branch: row.branch,
-    baseCommit: row.baseCommit,
+    ...(row.worktreeRoot !== null ? { worktreeRoot: row.worktreeRoot } : {}),
+    ...(row.worktreePath !== null ? { worktreePath: row.worktreePath } : {}),
+    ...(row.branch !== null ? { branch: row.branch } : {}),
+    ...(row.baseCommit !== null ? { baseCommit: row.baseCommit } : {}),
     useWorktree: row.useWorktree,
-    setupHook: row.setupHook,
-    cleanupHook: row.cleanupHook,
-    setupOutputFile: row.setupOutputFile,
-    cleanupOutputFile: row.cleanupOutputFile,
-    backendSessionId: row.backendSessionId,
-    codexProfile: row.codexProfile,
-    codexRemote: row.codexRemote,
+    ...(row.setupHook !== null ? { setupHook: row.setupHook } : {}),
+    ...(row.cleanupHook !== null ? { cleanupHook: row.cleanupHook } : {}),
+    ...(row.setupOutputFile !== null ? { setupOutputFile: row.setupOutputFile } : {}),
+    ...(row.cleanupOutputFile !== null ? { cleanupOutputFile: row.cleanupOutputFile } : {}),
+    ...(row.backendSessionId !== null ? { backendSessionId: row.backendSessionId } : {}),
+    ...(row.codexProfile !== null ? { codexProfile: row.codexProfile } : {}),
+    ...(row.codexRemote !== null ? { codexRemote: row.codexRemote } : {}),
     setupRan: row.setupRan,
     resuming: row.resuming,
-    baselineStatus: row.baselineStatus,
-    codexSessionBaseline: row.codexSessionBaseline,
-    lastExitStatus: row.lastExitStatus,
+    ...(row.baselineStatus !== null ? { baselineStatus: row.baselineStatus } : {}),
+    ...(row.codexSessionBaseline !== null ? { codexSessionBaseline: row.codexSessionBaseline } : {}),
+    ...(row.lastExitStatus !== null ? { lastExitStatus: row.lastExitStatus } : {}),
     ...(row.executionId ? { executionId: row.executionId } : {}),
-    ...(row.executionPid === null ? {} : { executionPid: row.executionPid }),
+    ...(row.executionPid !== null ? { executionPid: row.executionPid } : {}),
     ...(row.executionStartedAt ? { executionStartedAt: row.executionStartedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-  };
+  });
 }

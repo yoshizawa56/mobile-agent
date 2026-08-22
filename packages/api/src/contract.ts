@@ -27,10 +27,11 @@ import {
   wsTicketResponseSchema,
 } from "./protocol.js";
 import { z } from "zod";
+import { WorkspaceId } from "@muximo/domain";
 
 const emptyInput = z.object({}).strict();
 const pairingIdInput = z.object({ pairingId: z.string().trim().min(1).max(256) }).strict();
-const workspaceIdInput = z.object({ workspaceId: z.string().trim().min(1).max(256) }).strict();
+const workspaceIdInput = z.object({ workspaceId: WorkspaceId.valueSchema }).strict();
 const workspaceBrowseInput = z.object({ path: z.string().trim().max(4_096).optional() }).strict();
 const paneListInput = z.object({ session: z.string().trim().min(1).max(64).optional() }).strict();
 const pairingClaimInput = z.object({

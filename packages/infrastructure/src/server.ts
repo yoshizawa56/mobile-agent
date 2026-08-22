@@ -5,7 +5,7 @@ import { hostname, platform } from "node:os";
 import { createMuximodApp, type MuximodApp, type MuximodSocket } from "./http/index.js";
 import { createMuximodApplication, WorkspaceCrud, type MuximodTerminalEndpoint } from "@muximo/application";
 import { createLogger, errorFields, type Logger, type LogLevel } from "./logging/index.js";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveMuximodPaths } from "./persistence/index.js";
+import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveMuximodPaths, SqliteTransactionManager } from "./persistence/index.js";
 import { buildTailscaleInvocation } from "./tailscale/index.js";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
@@ -69,14 +69,16 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const database = createAgentDatabase(databaseFile, {
     instanceDirectory: databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
   });
+  const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
   const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
-    audit: {
-      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
-    },
+      audit: {
+        record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+      },
+      transactionManager,
   });
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
@@ -216,6 +218,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       controlServer.stop();
       httpServer?.stop(true);
       httpServer = undefined;
+      transactionManager?.close();
       database.close();
       if (ownsLogger) logger.close();
     },

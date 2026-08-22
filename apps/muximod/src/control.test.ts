@@ -7,9 +7,8 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { createAgentDatabase, AuthStore } from "./persistence/index.js";
+import { createAgentDatabase, AuthService, AuthStore } from "@muximo/infrastructure";
 import { MuximodControlServer } from "./control.js";
-import { AuthService } from "./auth-service.js";
 
 type ControlRequest = { agentSessionId: string; tmuxPaneId: string; executionId: string };
 type ControlStep = { type: "adopt" | "observe" | "release" };

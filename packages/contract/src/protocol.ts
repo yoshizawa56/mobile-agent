@@ -114,6 +114,18 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
 ]);
 export type MuximodControlRequest = z.infer<typeof muximodControlRequestSchema>;
 
+export type ControlFrameDecode<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: "invalid_json" | "invalid_shape"; message: string };
+
+export function decodeMuximodControlRequest(data: string | Uint8Array): ControlFrameDecode<MuximodControlRequest> {
+  return decodeControlFrame(data, muximodControlRequestSchema);
+}
+
+export function encodeMuximodControlRequest(request: MuximodControlRequest): string {
+  return JSON.stringify(muximodControlRequestSchema.parse(request));
+}
+
 export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("pairing_created"),
@@ -157,6 +169,14 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
+
+export function decodeMuximodControlResponse(data: string | Uint8Array): ControlFrameDecode<MuximodControlResponse> {
+  return decodeControlFrame(data, muximodControlResponseSchema);
+}
+
+export function encodeMuximodControlResponse(response: MuximodControlResponse): string {
+  return JSON.stringify(muximodControlResponseSchema.parse(response));
+}
 
 export const authInfoSchema = z.object({
   protocolVersion: z.literal(protocolVersion),
@@ -369,6 +389,29 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
 
 export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
 
+export type ClientControlFrameDecode =
+  | { ok: true; message: ClientControlMessage }
+  | { ok: false; code: "invalid_json" | "unsupported_version" | "invalid_message"; message: string };
+
+/** Decodes and validates a text WebSocket control frame at the protocol boundary. */
+export function decodeClientControlFrame(data: string | Uint8Array): ClientControlFrameDecode {
+  let input: unknown;
+  try {
+    input = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data)) as unknown;
+  } catch {
+    return { ok: false, code: "invalid_json", message: "Invalid JSON control frame" };
+  }
+
+  if (isRecord(input) && "version" in input && input.version !== terminalProtocolVersion) {
+    return { ok: false, code: "unsupported_version", message: `Unsupported terminal protocol version: ${String(input.version)}` };
+  }
+
+  const parsed = clientControlMessageSchema.safeParse(input);
+  return parsed.success
+    ? { ok: true, message: parsed.data }
+    : { ok: false, code: "invalid_message", message: parsed.error.message };
+}
+
 export const paneSummarySchema = z.object({
   id: paneIdWireSchema,
   tmuxPaneId: Pane.schema.shape.tmuxPaneId,
@@ -523,5 +566,40 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export type ServerControlMessage = z.infer<typeof serverControlMessageSchema>;
+
+/** Validates and encodes a server control message for a text WebSocket frame. */
+export function encodeServerControlFrame(message: ServerControlMessage): string {
+  return JSON.stringify(serverControlMessageSchema.parse(message));
+}
+
+/** Decodes standard (non-URL) base64 payloads used by image paste frames. */
+export function decodeBase64(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 === 1) {
+    throw new Error("Invalid base64 payload");
+  }
+  const binary = atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function decodeControlFrame<T>(data: string | Uint8Array, schema: { safeParse: (input: unknown) => unknown }): ControlFrameDecode<T> {
+  let input: unknown;
+  try {
+    input = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data)) as unknown;
+  } catch {
+    return { ok: false, code: "invalid_json", message: "control frame must be valid JSON" };
+  }
+
+  const parsed = schema.safeParse(input) as {
+    success: boolean;
+    data?: T;
+  };
+  return parsed.success
+    ? { ok: true, value: parsed.data as T }
+    : { ok: false, code: "invalid_shape", message: "control frame has an invalid shape" };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 export * from "./auth-crypto.js";

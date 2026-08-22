@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
-import type { PaneSummary as ProtocolPaneSummary } from "@muximo/api";
+import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract";
 import { fetchPanes } from "../../../../../../../app/api/muximod-api";
 import { paneQueryKey } from "../../../../../../../app/api/muximod-query-keys";
 import { isMockMode } from "../../../../../../../mock/mock-data";

@@ -2,11 +2,11 @@ import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
 import { existsSync } from "node:fs";
 import {
-  muximodControlRequestSchema,
-  muximodControlResponseSchema,
+  decodeMuximodControlResponse,
+  encodeMuximodControlRequest,
   type MuximodControlRequest,
   type MuximodControlResponse,
-} from "@muximo/api";
+} from "@muximo/contract";
 import type {
   ApprovedDevice,
   PairDeviceInput,
@@ -128,7 +128,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
   }
 
   private async request(request: MuximodControlRequest): Promise<MuximodControlResponse> {
-    this.socket.write(`${JSON.stringify(muximodControlRequestSchema.parse(request))}\n`);
+    this.socket.write(`${encodeMuximodControlRequest(request)}\n`);
     const response = await this.nextResponse();
     if (response.type === "error") throw controlError(response);
     return response;
@@ -145,15 +145,9 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     if (this.socketError) throw this.socketError;
     if (next.done) throw new PairingControlError("muximod control socket closed before pairing completed", "control_socket_closed");
 
-    let raw: unknown;
-    try {
-      raw = JSON.parse(next.value) as unknown;
-    } catch {
-      throw new PairingControlError("muximod control socket returned invalid JSON", "invalid_control_response");
-    }
-    const parsed = muximodControlResponseSchema.safeParse(raw);
-    if (!parsed.success) throw new PairingControlError("muximod control socket returned an invalid response", "invalid_control_response");
-    return parsed.data;
+    const parsed = decodeMuximodControlResponse(next.value);
+    if (!parsed.ok) throw new PairingControlError(`muximod control socket returned ${parsed.message}`, "invalid_control_response");
+    return parsed.value;
   }
 }
 

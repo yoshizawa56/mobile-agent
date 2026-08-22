@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { PanePlacement, PaneSummary } from "@muximo/api";
+import type { PanePlacement, PaneSummary } from "@muximo/contract";
 import { createPane, fetchPanes } from "../../../../../../../app/api/muximod-api";
 import { paneQueryKey } from "../../../../../../../app/api/muximod-query-keys";
 import { useMuximodConnection } from "../../../../../../../app/api/use-muximod-connection";

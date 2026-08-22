@@ -1,7 +1,7 @@
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import { muximodContract } from "@muximo/api";
+import { muximodContract } from "@muximo/contract";
 
 type TestConnection = {
   httpBaseUrl: string;

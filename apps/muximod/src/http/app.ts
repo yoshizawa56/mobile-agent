@@ -1,6 +1,6 @@
 import { ORPCError, implement } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import { muximodContract } from "@muximo/api";
+import { muximodContract } from "@muximo/contract";
 import type {
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CreatePaneInput,
@@ -23,9 +23,9 @@ import {
   type CreatePaneRequest,
   type RegisterWorkspaceRequest,
   type UpdateWorkspaceRequest,
-} from "@muximo/api";
+} from "@muximo/contract";
 import { z } from "zod";
-import { BunSocketAdapter } from "./socket.js";
+import { BunSocketAdapter } from "@muximo/infrastructure";
 import type {
   MuximodAuthContext as HttpAuthContext,
   MuximodHttpDependencies,
@@ -104,8 +104,8 @@ export function createMuximodApp(deps: MuximodHttpDependencies): MuximodFetchApp
 
 export type MuximodApp = ReturnType<typeof createMuximodApp>;
 export type { MuximodAuthContext, MuximodAuthPort, MuximodHttpDependencies, MuximodHttpStatus, MuximodHookEvent } from "./types.js";
-export { muximodSocketReadyState, BunSocketAdapter } from "./socket.js";
-export type { MuximodSocket, MuximodSocketData } from "./socket.js";
+export { muximodSocketReadyState, BunSocketAdapter } from "@muximo/infrastructure";
+export type { MuximodSocket, MuximodSocketData } from "@muximo/application";
 
 async function handleRequest(
   request: Request,

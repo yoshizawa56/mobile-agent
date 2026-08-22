@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { errorFields, type Logger } from "../../logging/index.js";
+import { errorFields, type Logger } from "@muximo/infrastructure";
 
 export type DevCommandOptions = {
   verbose?: boolean;

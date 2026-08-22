@@ -6,7 +6,7 @@ import type {
   MuximodHookEvent as ApplicationHookEvent,
   MuximodSocket,
 } from "@muximo/application";
-import type { MuximodEvent } from "@muximo/api";
+import type { MuximodEvent } from "@muximo/contract";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
 

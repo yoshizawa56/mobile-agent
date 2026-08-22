@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import type { PanePlacement } from "@muximo/api";
+import type { MuximodPanePlacement } from "@muximo/application";
 
 type AgentRuntime = {
   argv: readonly string[];
@@ -223,7 +223,7 @@ export class TmuxAdapter {
 
   public splitWindow(
     command: string | undefined,
-    placement: Exclude<PanePlacement, "window">,
+    placement: Exclude<MuximodPanePlacement, "window">,
     targetPaneId: string,
     keepZoomed = false,
   ): string {

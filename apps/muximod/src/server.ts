@@ -2,25 +2,40 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { isIP } from "node:net";
 import { hostname, platform } from "node:os";
-import { createMuximodApp, type MuximodApp, type MuximodSocket } from "./http/index.js";
+import { createMuximodApp, type MuximodApp } from "./http/app.js";
 import { createMuximodApplication, WorkspaceCrud, type MuximodTerminalEndpoint } from "@muximo/application";
-import { createLogger, errorFields, type Logger, type LogLevel } from "./logging/index.js";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveMuximodPaths, SqliteTransactionManager } from "./persistence/index.js";
-import { buildTailscaleInvocation } from "./tailscale/index.js";
+import {
+  AuthService,
+  AuthStore,
+  allowedRootsFromEnvironment,
+  buildMuximoShellCommand,
+  buildTailscaleInvocation,
+  configureManagedTmuxSession,
+  createAgentDatabase,
+  createImagePaster,
+  createLogger,
+  defaultPaneCleanupIntervalMs,
+  defaultPaneRetentionMs,
+  defaultTmuxPollIntervalMs,
+  DrizzleAgentSessionRepository,
+  DrizzlePaneRepository,
+  DrizzleWorkspaceRepository,
+  errorFields,
+  recordAuditEvent,
+  resolveMuximodPaths,
+  SqliteTransactionManager,
+  TmuxAdapter,
+  TmuxMuximodHostAdapter,
+  TmuxStateMonitor,
+  TmuxViewportManager,
+  WorkspaceSelectionCatalog,
+  type Logger,
+  type LogLevel,
+  type MuximodSocket,
+} from "@muximo/infrastructure";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
-import { AuthService } from "./auth-service.js";
-import { createImagePaster } from "./image-paste.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
-import {
-  TmuxAdapter,
-  buildMuximoShellCommand,
-  configureManagedTmuxSession,
-} from "./tmux.js";
-import { TmuxMuximodHostAdapter } from "./muximod-host.js";
-import { defaultPaneCleanupIntervalMs, defaultPaneRetentionMs, defaultTmuxPollIntervalMs, TmuxStateMonitor } from "./tmux-state.js";
-import { TmuxViewportManager } from "./viewport-manager.js";
-import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
 
 export type MuximodOptions = {
   host: string;
@@ -37,8 +52,8 @@ export type MuximodOptions = {
   logFile?: string;
 };
 
-export type { MuximodApp } from "./http/index.js";
-export { MuximodHttpError, createMuximodApp } from "./http/index.js";
+export type { MuximodApp } from "./http/app.js";
+export { MuximodHttpError, createMuximodApp } from "./http/app.js";
 
 export type MuximodServer = {
   app: MuximodApp;

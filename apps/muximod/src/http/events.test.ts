@@ -10,7 +10,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { MuximodEvent } from "@muximo/api";
+import type { MuximodEvent } from "@muximo/contract";
 import { createMuximodApp } from "./app.js";
 
 const event: MuximodEvent = {

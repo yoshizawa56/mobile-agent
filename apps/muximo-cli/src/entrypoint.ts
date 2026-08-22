@@ -1,11 +1,11 @@
 import { PairDevice } from "@muximo/application";
-import { createDefaultAgentPluginRegistry } from "../agents/index.js";
+import { createDefaultAgentPluginRegistry, errorFields, errorMessage, resolveMuximodPaths, validateMuximodControlSocketPath, type Logger } from "@muximo/infrastructure";
 import {
   MuximoCommand,
   MuximoCommandError,
   MuximodPairingControlAdapter,
   resolvePairMuximodBaseUrl,
-} from "./host/index.js";
+} from "./cli/host/index.js";
 import {
   BrowserPairingPresenter,
   PairCommand,
@@ -14,13 +14,7 @@ import {
   type PairCommandIo,
   type PairDeviceRuntime,
   type ResolvedPairCommandOptions,
-} from "./adapters/index.js";
-import {
-  errorFields,
-  errorMessage,
-  type Logger,
-} from "../logging/index.js";
-import { resolveMuximodPaths, validateMuximodControlSocketPath } from "../persistence/paths.js";
+} from "./cli/adapters/index.js";
 
 export async function runMuximoCli(args: string[], logger: Logger): Promise<void> {
   const commandName = args[0] ?? "help";
@@ -31,7 +25,7 @@ export async function runMuximoCli(args: string[], logger: Logger): Promise<void
       const daemonStartedAt = Date.now();
       logger.debug("daemon.command_started", { argumentCount: args.length - 1 });
       try {
-        const { runMuximodCommand } = await import("../daemon.js");
+        const { runMuximodCommand } = await import("@muximo/muximod/runtime");
         await runMuximodCommand(args.slice(1));
         logger.debug("daemon.command_finished", { durationMs: Date.now() - daemonStartedAt });
       } catch (error) {
@@ -58,14 +52,14 @@ export async function runMuximoCli(args: string[], logger: Logger): Promise<void
       }
     } else if (args[0] === "serve") {
       try {
-        const { runServeCommand } = await import("./host/serve-command.js");
+        const { runServeCommand } = await import("./cli/host/serve-command.js");
         process.exitCode = await runServeCommand(args.slice(1), { logger });
       } catch (error) {
         reportError(logger, "muximo serve", error, 2, false);
       }
     } else if (args[0] === "dev") {
       try {
-        const { runDevCommand } = await import("./host/dev-command.js");
+        const { runDevCommand } = await import("./cli/host/dev-command.js");
         process.exitCode = await runDevCommand(args.slice(1), process.env, {
           verbose: logger.isEnabled("debug"),
           logger,

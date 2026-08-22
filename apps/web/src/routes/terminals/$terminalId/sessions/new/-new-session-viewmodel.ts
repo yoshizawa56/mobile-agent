@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { TmuxSession } from "@muximo/api";
+import type { TmuxSession } from "@muximo/contract";
 import { createSession } from "../../../../../app/api/muximod-api";
 import { useMuximodConnection } from "../../../../../app/api/use-muximod-connection";
 import type { TerminalEndpoint } from "../../../-connection-flow-viewmodel";

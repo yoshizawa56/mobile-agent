@@ -1,9 +1,9 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { runMuximodCommand } from "../../daemon.js";
-import { errorFields, errorMessage, parseLogLevel, type Logger, type LogLevel } from "../../logging/index.js";
-import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "../../tailscale/index.js";
+import { runMuximodCommand } from "@muximo/muximod/runtime";
+import { errorFields, errorMessage, parseLogLevel, type Logger, type LogLevel } from "@muximo/infrastructure";
+import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "@muximo/infrastructure";
 
 const execFile = promisify(execFileCallback);
 const tailscaleCommandTimeoutMs = 15_000;

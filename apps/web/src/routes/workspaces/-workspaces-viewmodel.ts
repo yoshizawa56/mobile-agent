@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { WorkspaceDirectory } from "@muximo/api";
+import type { WorkspaceDirectory } from "@muximo/contract";
 import { fetchWorkspaces, registerWorkspace } from "../../app/api/muximod-api";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { consumeEventIterator } from "@orpc/client";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { MuximodConnection } from "./muximod-client.js";
-import type { MuximodEvent } from "@muximo/api";
+import type { MuximodEvent } from "@muximo/contract";
 import { isMockMode } from "../../mock/mock-data";
 import { openMuximodEvents } from "./muximod-api";
 import { paneQueryKey } from "./muximod-query-keys";

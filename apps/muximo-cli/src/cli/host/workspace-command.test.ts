@@ -14,7 +14,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { createAgentDatabase, DrizzleWorkspaceRepository } from "../../persistence/index.js";
+import { createAgentDatabase, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
 import { MuximoCommand } from "./muximo-command.js";
 
 type WorkspaceStep = {

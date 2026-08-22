@@ -10,7 +10,7 @@ import {
   type PairingCodePayload,
   type PairingClaimRequest,
   type PublicKeyJwk,
-} from "@muximo/api";
+} from "@muximo/contract";
 import {
   encodeJsonBase64Url,
   pairingClaimMessage,
@@ -18,7 +18,7 @@ import {
   sessionMessage,
   sha256Hex,
   signEcdsa,
-} from "@muximo/api";
+} from "@muximo/contract";
 
 type StoredBrowserDevice = {
   serverId: string;

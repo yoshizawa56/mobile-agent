@@ -168,6 +168,23 @@ The transport split is:
 - Unrelated application events should not be multiplexed into the terminal
   byte stream when SSE is sufficient.
 
+The ownership split is deliberately explicit:
+
+- `packages/contract` defines the shared schemas, oRPC contract, and protocol
+  codecs only.
+- `apps/muximod/src/http` owns the muximod-specific oRPC handler, HTTP
+  endpoint policy, authentication context, SSE subscription, and WebSocket
+  upgrade wiring.
+- `apps/muximod/src/control.ts` owns the muximod-specific private IPC
+  handler, because it interprets the contract and invokes application ports.
+- `packages/infrastructure/src/http` contains only the concrete Bun socket
+  adapter. It does not import `contract`.
+
+This means the composition root in `apps/muximod` injects infrastructure
+implementations into the application and then injects that application into
+the transport handler. The handler is not exported from the infrastructure
+package.
+
 ## Infrastructure
 
 `packages/infrastructure` contains concrete adapters and host integrations.
@@ -176,11 +193,11 @@ implementation of a port is easy to locate:
 
 ```text
 infrastructure/src/
-  repositories/
-    sqlite/
+  persistence/
+    repositories/
+      sqlite/
   agents/
   http/
-  cli/
   terminal/
   logging/
   tailscale/
@@ -201,6 +218,11 @@ repositories, such as migration and database lifecycle code.
 Provider-neutral ports remain in application. Provider-specific registries,
 default provider lists, monitors, sidecars, and RPC clients remain in
 infrastructure and are registered by a composition root.
+
+CLI transport definitions are app-owned. `apps/muximo-cli/src/cli` contains
+argument parsing, command dispatch, presenters, and the private control
+socket client. It may call application use cases and injected infrastructure
+adapters, but no CLI handler is exported by `infrastructure`.
 
 ## Composition roots and CLI
 

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceDirectory } from "@muximo/api";
+import type { WorkspaceDirectory } from "@muximo/contract";
 import { fetchWorkspaceDirectories, fetchWorkspaces, registerWorkspace } from "../../../../app/api/muximod-api";
 import { useMuximodConnection } from "../../../../app/api/use-muximod-connection";
 

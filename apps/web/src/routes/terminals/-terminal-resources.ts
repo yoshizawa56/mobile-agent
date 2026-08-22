@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { TmuxSession } from "@muximo/api";
+import type { TmuxSession } from "@muximo/contract";
 import { fetchSessions, fetchTerminals } from "../../app/api/muximod-api";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";

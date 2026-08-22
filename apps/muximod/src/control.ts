@@ -1,14 +1,14 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { validateMuximodControlSocketPath } from "./persistence/index.js";
+import { validateMuximodControlSocketPath } from "@muximo/infrastructure";
 import type { AuthPairingClaimNotification, MuximodAuthControlPort } from "@muximo/application";
 import {
+  decodeMuximodControlRequest,
+  encodeMuximodControlResponse,
   encodePairingCode,
-  muximodControlRequestSchema,
-  muximodControlResponseSchema,
   type MuximodControlResponse,
-} from "@muximo/api";
+} from "@muximo/contract";
 import type { PaneState } from "@muximo/domain";
 
 export type MuximodControlServerOptions = {
@@ -97,19 +97,12 @@ export class MuximodControlServer {
   }
 
   private handleRequest(socket: Socket, line: string): void {
-    let rawRequest: unknown;
-    try {
-      rawRequest = JSON.parse(line) as unknown;
-    } catch {
-      this.send(socket, { type: "error", code: "invalid_request", message: "control request must be valid JSON" });
+    const parsedRequest = decodeMuximodControlRequest(line);
+    if (!parsedRequest.ok) {
+      this.send(socket, { type: "error", code: "invalid_request", message: `control request ${parsedRequest.message}` });
       return;
     }
-    const parsedRequest = muximodControlRequestSchema.safeParse(rawRequest);
-    if (!parsedRequest.success) {
-      this.send(socket, { type: "error", code: "invalid_request", message: "control request has an invalid shape" });
-      return;
-    }
-    const request = parsedRequest.data;
+    const request = parsedRequest.value;
 
     try {
       if (request.type === "create_pairing") {
@@ -161,7 +154,7 @@ export class MuximodControlServer {
   }
 
   private send(socket: Socket, response: MuximodControlResponse): void {
-    if (!socket.destroyed) socket.write(`${JSON.stringify(muximodControlResponseSchema.parse(response))}\n`);
+    if (!socket.destroyed) socket.write(`${encodeMuximodControlResponse(response)}\n`);
   }
 }
 

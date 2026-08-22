@@ -13,7 +13,7 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { muximodHealthSchema, type AuthInfo } from "@muximo/api";
+import { muximodHealthSchema, type AuthInfo } from "@muximo/contract";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
 
 const authContext = {

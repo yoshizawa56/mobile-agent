@@ -1,7 +1,7 @@
 import { ORPCError, createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import { muximodContract } from "@muximo/api";
+import { muximodContract } from "@muximo/contract";
 import {
   createPaneRequestSchema,
   createSessionRequestSchema,
@@ -18,7 +18,7 @@ import {
   type TmuxSession,
   type UpdateWorkspaceRequest,
   type WorkspaceDirectory,
-} from "@muximo/api";
+} from "@muximo/contract";
 
 export type MuximodRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 

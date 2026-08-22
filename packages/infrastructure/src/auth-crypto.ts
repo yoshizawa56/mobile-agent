@@ -1,10 +1,5 @@
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
-import {
-  canonicalPublicJwk,
-  decodeBase64Url,
-  pairingClaimMessage,
-  sessionMessage,
-} from "@muximo/api";
+import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import { AuthStoreError, type AuthCryptoPort, type PublicKeyJwk } from "@muximo/application";
 
 export const nodeAuthCrypto: AuthCryptoPort = {
@@ -48,3 +43,7 @@ export const nodeAuthCrypto: AuthCryptoPort = {
     return { kty: "EC", crv: "P-256", x: record.x, y: record.y };
   },
 };
+
+function decodeBase64Url(value: string): Uint8Array {
+  return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}

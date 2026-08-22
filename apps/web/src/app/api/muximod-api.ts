@@ -12,7 +12,7 @@ import type {
   TerminalEndpoint,
   UpdateWorkspaceRequest,
   WorkspaceDirectory,
-} from "@muximo/api";
+} from "@muximo/contract";
 
 export function getMuximodWebSocketEndpoint(connection: MuximodConnection): string {
   return connection.websocketUrl;

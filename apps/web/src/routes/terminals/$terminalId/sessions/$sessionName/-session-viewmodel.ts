@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { PaneSummary } from "@muximo/api";
+import type { PaneSummary } from "@muximo/contract";
 import { fetchPanes } from "../../../../../app/api/muximod-api";
 import { paneQueryKey } from "../../../../../app/api/muximod-query-keys";
 import type { TerminalEndpoint, TmuxSession } from "../../../-connection-flow-viewmodel";

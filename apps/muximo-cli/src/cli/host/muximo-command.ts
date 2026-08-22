@@ -6,9 +6,9 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { buildMuximoShellCommand, configureManagedTmuxSession, resolveMuximoCommand, TmuxAdapter } from "../../tmux.js";
-import { AgentPluginRegistry, createDefaultAgentPluginRegistry, defaultOpenCodeRegistryFile, openCodeMonitorActions, OpenCodeServerManager, type AgentMonitor, type AgentObservation } from "../../agents/index.js";
-import { WorkspaceSelectionCatalog, workspaceIdForPath } from "../../workspace-selection.js";
+import { buildMuximoShellCommand, configureManagedTmuxSession, resolveMuximoCommand, TmuxAdapter } from "@muximo/infrastructure";
+import { AgentPluginRegistry, createDefaultAgentPluginRegistry, defaultOpenCodeRegistryFile, openCodeMonitorActions, OpenCodeServerManager, type AgentMonitor, type AgentObservation } from "@muximo/infrastructure";
+import { WorkspaceSelectionCatalog, workspaceIdForPath } from "@muximo/infrastructure";
 import { MuximodPairingControlAdapter, PairingControlError } from "./muximod-pairing-control-adapter.js";
 import { WorkspaceCrud, type UpdateWorkspaceInput } from "@muximo/application";
 import type {
@@ -34,7 +34,7 @@ import {
   errorFields,
   type Logger,
   type LogLevel,
-} from "../../logging/index.js";
+} from "@muximo/infrastructure";
 import {
   createAgentDatabase,
   DrizzleAgentSessionRepository,
@@ -43,7 +43,7 @@ import {
   resolveMuximodPaths,
   SqliteTransactionManager,
   type AgentDatabase,
-} from "../../persistence/index.js";
+} from "@muximo/infrastructure";
 import { manageCodexThread } from "./codex-remote.js";
 import {
   projectAgentSession,

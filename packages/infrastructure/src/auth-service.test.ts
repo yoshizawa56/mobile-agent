@@ -7,8 +7,8 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import { createAgentDatabase, AuthStore } from "./persistence/index.js";
-import { pairingClaimMessage, publicKeyFingerprint, sessionMessage, sha256Hex, signEcdsa } from "@muximo/api";
 import { AuthService } from "./auth-service.js";
 
 type AuthFixture = {
@@ -145,3 +145,22 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
 describe("muximod device authentication", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
+
+async function publicKeyFingerprint(publicKey: AuthFixture["publicKey"]): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalPublicJwk(publicKey)));
+  return Buffer.from(digest).toString("base64url");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function signEcdsa(privateKey: CryptoKey, message: string): Promise<string> {
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    new TextEncoder().encode(message),
+  );
+  return Buffer.from(signature).toString("base64url");
+}

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { describe, it, expect } from "vitest";
-import { TmuxAdapter } from "../../tmux.js";
+import { TmuxAdapter } from "@muximo/infrastructure";
 import {
   hasError,
   hasNoError,
@@ -31,8 +31,8 @@ import {
   WorkspaceId,
   type AgentSessionRecord,
 } from "@muximo/domain";
-import { createLogger, type LogRecord } from "../../logging/index.js";
-import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "../../persistence/index.js";
+import { createLogger, type LogRecord } from "@muximo/infrastructure";
+import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
 import { MuximoCommand, buildResumeCommand, buildRunCommand } from "./muximo-command.js";
 
 type EmptyContext = {};

@@ -2,12 +2,9 @@ export type AuthDeviceType = "browser" | "native" | "cli";
 export type AuthDeviceStatus = "active" | "revoked";
 export type AuthPairingStatus = "offered" | "awaiting_approval" | "approved" | "rejected" | "expired";
 
-export type PublicKeyJwk = {
-  kty: "EC";
-  crv: "P-256";
-  x: string;
-  y: string;
-};
+import type { PublicKeyJwk } from "@muximo/domain";
+
+export type { PublicKeyJwk } from "@muximo/domain";
 
 export type AuthDeviceRecord = {
   deviceId: string;

@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { defaultOpenCodeRegistryFile, OpenCodeServerManager } from "./agents/index.js";
-import { createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, type LogLevel, type Logger } from "./logging/index.js";
-import { resolveMuximodPaths, validateMuximodControlSocketPath } from "./persistence/index.js";
+import { defaultOpenCodeRegistryFile, OpenCodeServerManager, createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, resolveMuximodPaths, validateMuximodControlSocketPath, type LogLevel, type Logger } from "@muximo/infrastructure";
 import { createMuximodServer } from "./server.js";
 
 export type MuximodCliOptions = {

@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { muximodEventSchema } from "@muximo/api";
+import { muximodEventSchema } from "@muximo/contract";
 import {
   noFixture,
   returns,

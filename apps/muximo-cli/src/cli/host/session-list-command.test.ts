@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { workspaceIdForPath } from "../../workspace-selection.js";
+import { workspaceIdForPath } from "@muximo/infrastructure";
 import {
   hasError,
   hasNoError,
@@ -18,7 +18,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { AgentSession, AgentSessionId, Workspace, WorkspaceId, type AgentSessionRecord } from "@muximo/domain";
-import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "../../persistence/index.js";
+import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
 import { MuximoCommand } from "./muximo-command.js";
 
 type ListFixture = {

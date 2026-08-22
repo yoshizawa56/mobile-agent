@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   runOperationTable,
   noFixture,
+  returns,
   type Assertion,
   type OperationCase,
   type OperationTable,
@@ -12,11 +13,13 @@ import {
   muximodControlResponseSchema,
   muximodEventSchema,
   clientControlMessageSchema,
+  decodeClientControlFrame,
   createPaneRequestSchema,
   createSessionRequestSchema,
   maxPasteImageBase64Length,
   paneListResponseSchema,
   serverControlMessageSchema,
+  encodeServerControlFrame,
   terminalProtocolVersion,
   workspaceSelectionSchema,
 } from "./protocol.js";
@@ -164,6 +167,41 @@ const paneWorkspaceCases = [
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 const paneWorkspaceTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> = createValidationTable(paneWorkspaceCases, createPaneRequestSchema);
 
+type FrameInput = { data: string | Uint8Array };
+type FrameResult = ReturnType<typeof decodeClientControlFrame>;
+const frameCases = [
+  {
+    name: "decodes a UTF-8 text control frame at the protocol boundary",
+    input: { data: new TextEncoder().encode(JSON.stringify({ type: "claim", version: terminalProtocolVersion })) },
+    assert: [returns<EmptyContext, FrameResult>({ ok: true, message: { type: "claim", version: terminalProtocolVersion } })],
+  },
+  {
+    name: "classifies malformed JSON before schema validation",
+    input: { data: "not-json" },
+    assert: [returns<EmptyContext, FrameResult>({ ok: false, code: "invalid_json", message: "Invalid JSON control frame" })],
+  },
+  {
+    name: "classifies a protocol version mismatch explicitly",
+    input: { data: JSON.stringify({ type: "claim", version: 99 }) },
+    assert: [returns<EmptyContext, FrameResult>({ ok: false, code: "unsupported_version", message: "Unsupported terminal protocol version: 99" })],
+  },
+] satisfies readonly OperationCase<"default", FrameInput, FrameResult, EmptyContext>[];
+
+const frameTable: OperationTable<undefined, "default", FrameInput, FrameResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: frameCases,
+  execute: (_fixture, input) => decodeClientControlFrame(input.data),
+  observe: () => ({}),
+};
+
+const serverFrame = { type: "viewport", version: terminalProtocolVersion, owner: "mobile", reason: "attached" } as const;
+const encodingTable: OperationTable<undefined, "default", typeof serverFrame, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: [{ name: "encodes a validated server control message", input: serverFrame, assert: [returns<EmptyContext, string>(JSON.stringify(serverFrame))] }],
+  execute: (_fixture, input) => encodeServerControlFrame(input),
+  observe: () => ({}),
+};
+
 describe("protocol schemas", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, createValidationTable(clientCases, clientControlMessageSchema));
@@ -175,4 +213,6 @@ describe("protocol schemas", () => {
   runOperationTable(register, sessionTable);
   runOperationTable(register, workspaceTable);
   runOperationTable(register, paneWorkspaceTable);
+  runOperationTable(register, frameTable);
+  runOperationTable(register, encodingTable);
 });

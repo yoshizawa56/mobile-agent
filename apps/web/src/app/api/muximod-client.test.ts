@@ -1,7 +1,7 @@
 import { describe, it } from "vitest";
 import { ORPCError, implement } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import { muximodContract } from "@muximo/api";
+import { muximodContract } from "@muximo/contract";
 import {
   hasError,
   hasObserved,

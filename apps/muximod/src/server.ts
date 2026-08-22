@@ -2,22 +2,40 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { isIP } from "node:net";
 import { hostname, platform } from "node:os";
-import { muximodWebsocket, createMuximodApp, type MuximodSocket } from "@muximo/muximod-http";
-import { WorkspaceCrud } from "@muximo/application";
-import { createLogger, errorFields, type Logger, type LogLevel } from "@muximo/logging";
-import type { TerminalEndpoint } from "@muximo/protocol";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveMuximodPaths } from "@muximo/persistence";
-import { buildTailscaleInvocation } from "@muximo/tailscale";
-import { MuximodControlServer } from "./auth/control.js";
-import { AuthService } from "./auth/service.js";
-import { createMuximodApplication } from "./application/muximod.js";
+import { createMuximodApp, type MuximodApp } from "./http/app.js";
+import { createMuximodApplication, WorkspaceCrud, type MuximodTerminalEndpoint } from "@muximo/application";
+import {
+  AuthService,
+  AuthStore,
+  allowedRootsFromEnvironment,
+  buildMuximoShellCommand,
+  buildTailscaleInvocation,
+  configureManagedTmuxSession,
+  createAgentDatabase,
+  createImagePaster,
+  createLogger,
+  defaultPaneCleanupIntervalMs,
+  defaultPaneRetentionMs,
+  defaultTmuxPollIntervalMs,
+  DrizzleAgentSessionRepository,
+  DrizzlePaneRepository,
+  DrizzleWorkspaceRepository,
+  errorFields,
+  recordAuditEvent,
+  resolveMuximodPaths,
+  SqliteTransactionManager,
+  TmuxAdapter,
+  TmuxMuximodHostAdapter,
+  TmuxStateMonitor,
+  TmuxViewportManager,
+  WorkspaceSelectionCatalog,
+  type Logger,
+  type LogLevel,
+  type MuximodSocket,
+} from "@muximo/infrastructure";
+import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
-import { createImagePaster } from "./image-paste.js";
 import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
-import { buildMuximoShellCommand, configureManagedTmuxSession, TmuxAdapter } from "./tmux.js";
-import { defaultPaneCleanupIntervalMs, defaultPaneRetentionMs, defaultTmuxPollIntervalMs, TmuxStateMonitor } from "./tmux-state.js";
-import { TmuxViewportManager } from "./viewport-manager.js";
-import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
 
 export type MuximodOptions = {
   host: string;
@@ -34,12 +52,16 @@ export type MuximodOptions = {
   logFile?: string;
 };
 
-export type { MuximodApp } from "@muximo/muximod-http";
-export { MuximodHttpError, createMuximodApp } from "@muximo/muximod-http";
-export { TmuxAdapter } from "./tmux.js";
-export type { TmuxPane } from "./tmux.js";
+export type { MuximodApp } from "./http/app.js";
+export { MuximodHttpError, createMuximodApp } from "./http/app.js";
 
-export function createMuximodServer(options: MuximodOptions) {
+export type MuximodServer = {
+  app: MuximodApp;
+  start(): Promise<void>;
+  stop(): void;
+};
+
+export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const ownsLogger = !options.logger;
   const logger = options.logger ?? createLogger({
     service: "muximod",
@@ -50,6 +72,7 @@ export function createMuximodServer(options: MuximodOptions) {
     showStack: options.logLevel === "debug",
   });
   const tmux = new TmuxAdapter();
+  const host = new TmuxMuximodHostAdapter(tmux);
   const viewportManager = new TmuxViewportManager(tmux);
   const paths = resolveMuximodPaths(process.env, {
     databaseFile: options.databaseFile,
@@ -61,18 +84,20 @@ export function createMuximodServer(options: MuximodOptions) {
   const database = createAgentDatabase(databaseFile, {
     instanceDirectory: databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
   });
+  const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
   const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
-    audit: {
-      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
-    },
+      audit: {
+        record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+      },
+      transactionManager,
   });
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
-    tmux,
+    host,
     paneRepository,
     agentSessionRepository,
     workspaceCatalog,
@@ -142,10 +167,7 @@ export function createMuximodServer(options: MuximodOptions) {
         imagePaster,
       });
     },
-    onEventsConnection: (socket: MuximodSocket, context) => {
-      auth.trackSocket(context, socket);
-      eventHub.add(socket);
-    },
+    subscribeEvents: (signal) => eventHub.subscribe(signal),
     logger,
   });
   let httpServer: ReturnType<typeof Bun.serve> | undefined;
@@ -183,7 +205,7 @@ export function createMuximodServer(options: MuximodOptions) {
           hostname: options.host,
           port: options.port,
           fetch: app.fetch,
-          websocket: muximodWebsocket,
+          websocket: app.websocket,
         });
         tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${httpServer.port}/internal/tmux-hook`, hookToken);
@@ -211,13 +233,14 @@ export function createMuximodServer(options: MuximodOptions) {
       controlServer.stop();
       httpServer?.stop(true);
       httpServer = undefined;
+      transactionManager?.close();
       database.close();
       if (ownsLogger) logger.close();
     },
   };
 }
 
-async function getLocalTerminal(): Promise<TerminalEndpoint> {
+async function getLocalTerminal(): Promise<MuximodTerminalEndpoint> {
   const host = hostname();
   return {
     id: host,

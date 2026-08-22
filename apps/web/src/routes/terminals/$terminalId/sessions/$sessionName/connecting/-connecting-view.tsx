@@ -1,4 +1,4 @@
-import { ConnectionFlowLayout, FlowIntro } from "../../../../../../features/connection/connection-flow-layout";
+import { ConnectionFlowLayout, FlowIntro } from "../../../../-connection-flow-layout";
 import type { ConnectingViewModel } from "./-connecting-viewmodel";
 
 export function ConnectingView({ viewModel }: { viewModel: ConnectingViewModel }) {

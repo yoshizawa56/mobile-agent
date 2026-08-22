@@ -6,7 +6,7 @@ import { createConnection, createServer } from "node:net";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "../packages/tailscale/src/index.ts";
+import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "../packages/infrastructure/src/tailscale/index.ts";
 import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {

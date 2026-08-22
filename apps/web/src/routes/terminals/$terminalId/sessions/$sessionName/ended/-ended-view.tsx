@@ -1,4 +1,4 @@
-import { ConnectionFlowLayout, FlowIntro } from "../../../../../../features/connection/connection-flow-layout";
+import { ConnectionFlowLayout, FlowIntro } from "../../../../-connection-flow-layout";
 import type { EndedViewModel } from "./-ended-viewmodel";
 
 export function EndedView({ viewModel }: { viewModel: EndedViewModel }) {

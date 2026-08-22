@@ -1,15 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { muximodSocketReadyState, type MuximodSocket, type MuximodSocketData } from "@muximo/application";
-import { spawnPty, type PtyProcess } from "./pty.js";
+import { spawnPty, TmuxViewportManager, type PreparedViewport, type PtyProcess, type ViewportLease } from "@muximo/infrastructure";
 import {
-  clientControlMessageSchema,
+  decodeBase64,
+  decodeClientControlFrame,
+  encodeServerControlFrame,
   maxPasteImageBytes,
   terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
-} from "@muximo/protocol";
-import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
-import { TmuxViewportManager, type PreparedViewport, type ViewportLease } from "./viewport-manager.js";
+} from "@muximo/contract";
+import type { ImagePasteInput, ImagePasteResult } from "@muximo/infrastructure";
 
 type TerminalViewportManager = {
   prepare: (target: string, cwd: string, cols?: number, rows?: number) => PreparedViewport;
@@ -195,26 +196,13 @@ export class TerminalSession {
       return;
     }
 
-    let input: unknown;
-    try {
-      input = JSON.parse(rawDataToBuffer(data).toString("utf8"));
-    } catch {
-      this.sendError("invalid_json", "Invalid JSON control frame");
+    const decoded = decodeClientControlFrame(rawDataToBuffer(data));
+    if (!decoded.ok) {
+      this.sendError(decoded.code, decoded.message);
       return;
     }
 
-    if (isRecord(input) && "version" in input && input.version !== terminalProtocolVersion) {
-      this.sendError("unsupported_version", `Unsupported terminal protocol version: ${String(input.version)}`);
-      return;
-    }
-
-    const parsed = clientControlMessageSchema.safeParse(input);
-    if (!parsed.success) {
-      this.sendError("invalid_message", parsed.error.message);
-      return;
-    }
-
-    await this.handleControlMessage(parsed.data);
+    await this.handleControlMessage(decoded.message);
   }
 
   private async handleControlMessage(message: ClientControlMessage): Promise<void> {
@@ -425,7 +413,7 @@ export class TerminalSession {
       this.sendError("not_attached", "Attach before pasting an image");
       return;
     }
-    const bytes = Buffer.from(message.data, "base64");
+    const bytes = Buffer.from(decodeBase64(message.data));
     if (bytes.length > maxPasteImageBytes) {
       this.sendError("paste_image_too_large", `Image exceeds the ${maxPasteImageBytes} byte paste limit`);
       return;
@@ -466,7 +454,7 @@ export class TerminalSession {
 
   private send(message: ServerControlMessage): void {
     if (this.socket?.readyState !== muximodSocketReadyState.open) return;
-    this.socket.send(JSON.stringify(message));
+    this.socket.send(encodeServerControlFrame(message));
   }
 
   private sendBinary(data: Buffer): void {
@@ -611,8 +599,4 @@ function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, strin
 
 function rawDataToBuffer(data: MuximodSocketData): Buffer {
   return typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

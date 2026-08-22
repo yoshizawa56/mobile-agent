@@ -1,5 +1,5 @@
-import { ConnectionFlowLayout, FlowIntro } from "../../../../features/connection/connection-flow-layout";
-import type { TmuxSession, TerminalEndpoint } from "../../../../features/connection/connection-flow-viewmodel";
+import { ConnectionFlowLayout, FlowIntro } from "../../-connection-flow-layout";
+import type { TmuxSession } from "../../-connection-flow-viewmodel";
 import type { SessionsViewModel } from "./-sessions-viewmodel";
 
 export function SessionsView({ viewModel }: { viewModel: SessionsViewModel }) {

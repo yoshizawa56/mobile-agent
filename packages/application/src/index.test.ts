@@ -11,38 +11,39 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { ListPanes, ResizePane, SendPaneInput, type PaneGateway, type PaneRepository } from "./index.js";
+import { Pane, PaneId } from "@muximo/domain";
 import type { PaneRecord } from "@muximo/domain";
 
-const pane: PaneRecord = {
-  id: "pane-1",
+const pane: PaneRecord = Pane.create({
+  id: PaneId.create("pane-1"),
   tmuxPaneId: "%1",
   sessionName: "muximod",
   windowId: "@0",
   kind: "shell",
   name: "shell",
   cwd: "/tmp",
-  workspaceId: null,
-  agentId: null,
+  workspaceId: undefined,
+  agentId: undefined,
   state: "running",
-  title: null,
+  title: undefined,
   lastSeenAt: "2026-08-09T00:00:00.000Z",
-};
+});
 
 class FakePanes implements PaneRepository {
   public records = [pane];
   public async list() { return this.records; }
-  public async findById(id: string) { return this.records.find((record) => record.id === id); }
+  public async findById(id: PaneRecord["id"]) { return this.records.find((record) => record.id === id); }
   public async findByTmuxPaneId(tmuxPaneId: string) { return this.records.find((record) => record.tmuxPaneId === tmuxPaneId); }
   public async findByTmuxPaneIdentity(_tmuxServerId: string, tmuxPaneId: string) { return this.records.find((record) => record.tmuxPaneId === tmuxPaneId); }
   public async upsert(record: PaneRecord) { this.records = [record]; }
-  public async pruneStalePanes(_activePaneIds: readonly string[], _olderThan: string, _tmuxServerScope: string) { return 0; }
+  public async pruneStalePanes(_activePaneIds: readonly PaneRecord["id"][], _olderThan: string, _tmuxServerScope: string) { return 0; }
 }
 
 class FakeGateway implements PaneGateway {
   public inputs: string[] = [];
   public sizes: Array<[number, number]> = [];
-  public async sendInput(_paneId: string, input: string) { this.inputs.push(input); }
-  public async resize(_paneId: string, cols: number, rows: number) { this.sizes.push([cols, rows]); }
+  public async sendInput(_paneId: PaneRecord["id"], input: string) { this.inputs.push(input); }
+  public async resize(_paneId: PaneRecord["id"], cols: number, rows: number) { this.sizes.push([cols, rows]); }
   public async close() {}
 }
 
@@ -94,11 +95,11 @@ const applicationTable: ScenarioTable<ApplicationFixture, "default", Application
     for (const step of steps) {
       if (step.type === "list") result = await new ListPanes(fixture.repository).execute();
       if (step.type === "send") {
-        await new SendPaneInput(fixture.repository, fixture.gateway).execute(step.paneId, step.input);
+        await new SendPaneInput(fixture.repository, fixture.gateway).execute(PaneId.create(step.paneId), step.input);
         result = undefined;
       }
       if (step.type === "resize") {
-        await new ResizePane(fixture.repository, fixture.gateway).execute(step.paneId, step.cols, step.rows);
+        await new ResizePane(fixture.repository, fixture.gateway).execute(PaneId.create(step.paneId), step.cols, step.rows);
         result = undefined;
       }
     }

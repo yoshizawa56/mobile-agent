@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, it, vi } from "vitest";
 import { muximodSocketReadyState } from "@muximo/application";
-import { clientControlMessageSchema, maxPasteImageBase64Length, serverControlMessageSchema, terminalProtocolVersion } from "@muximo/protocol";
+import { clientControlMessageSchema, maxPasteImageBase64Length, serverControlMessageSchema, terminalProtocolVersion } from "@muximo/contract";
 import {
   hasObserved,
   runScenarioTable,
@@ -10,8 +10,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { PtyProcess } from "./pty.js";
-import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
+import type { ImagePasteInput, ImagePasteResult, PtyProcess } from "@muximo/infrastructure";
 import { TerminalSession, TerminalSessionRegistry, type TerminalSessionOptions } from "./terminal-session.js";
 
 type SessionStep =
